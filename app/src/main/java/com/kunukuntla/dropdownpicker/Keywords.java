@@ -13,7 +13,29 @@ final class Keywords {
     private static final String PREFS = "settings";
     private static final String KEY = "keywords";
 
+    /** What to do once the dropdown is open. */
+    static final int PICK_BELOW = 0;
+    static final int PICK_CONTAINS = 1;
+    static final int PICK_EXACT = 2;
+
     private Keywords() {}
+
+    static int loadPickMode(Context context) {
+        return prefs(context).getInt("pick_mode", PICK_CONTAINS);
+    }
+
+    static void savePickMode(Context context, int mode) {
+        prefs(context).edit().putInt("pick_mode", mode).apply();
+    }
+
+    /** Whether to tick the radio button and checkbox and press Continue after the date. */
+    static boolean loadFinish(Context context) {
+        return prefs(context).getBoolean("finish_form", true);
+    }
+
+    static void saveFinish(Context context, boolean on) {
+        prefs(context).edit().putBoolean("finish_form", on).apply();
+    }
 
     static String load(Context context) {
         return prefs(context).getString(KEY, "");

@@ -14,6 +14,7 @@ import android.view.Gravity;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.RadioButton;
@@ -72,8 +73,9 @@ public class MainActivity extends Activity {
 
         root.addView(text("Keywords (optional)\n"
                 + "Words to look for in the options, separated by commas, most wanted first. "
-                + "With keywords, Start searches the open dropdown for them, scrolling the "
-                + "list until it finds one. Leave empty to just tap the first option.", pad));
+                + "Used when a Keyword choice is picked below: Start searches the open "
+                + "dropdown for them, scrolling the list 25 mm at a time until it finds one.",
+                pad));
         EditText keywords = new EditText(this);
         keywords.setHint("e.g. Tirumala, Male Only");
         keywords.setSingleLine(true);
@@ -91,6 +93,23 @@ public class MainActivity extends Activity {
             }
         });
         root.addView(keywords, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        root.addView(text("When the dropdown opens", pad / 2));
+        RadioGroup pickModes = new RadioGroup(this);
+        String[] pickLabels = {"Tap 4 mm below the line (first option)",
+                "Keyword: option contains it", "Keyword: option is exactly it"};
+        int[] pickValues = {Keywords.PICK_BELOW, Keywords.PICK_CONTAINS, Keywords.PICK_EXACT};
+        int savedPick = Keywords.loadPickMode(this);
+        for (int i = 0; i < pickLabels.length; i++) {
+            RadioButton rb = new RadioButton(this);
+            rb.setId(200 + pickValues[i]);
+            rb.setText(pickLabels[i]);
+            pickModes.addView(rb);
+            if (pickValues[i] == savedPick) rb.setChecked(true);
+        }
+        pickModes.setOnCheckedChangeListener((g, id) -> Keywords.savePickMode(this, id - 200));
+        root.addView(pickModes, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         root.addView(text("Calendar day (optional)\n"
@@ -131,6 +150,16 @@ public class MainActivity extends Activity {
         modes.setOnCheckedChangeListener((g, id) -> DayChoice.saveMode(this, id - 100));
         root.addView(modes, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        CheckBox finish = new CheckBox(this);
+        finish.setText("After the date: tick the radio button, then the checkbox, then press "
+                + "Continue (scrolls down 10 mm at a time to find them)");
+        finish.setChecked(Keywords.loadFinish(this));
+        finish.setOnCheckedChangeListener((b, on) -> Keywords.saveFinish(this, on));
+        LinearLayout.LayoutParams finishLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        finishLp.topMargin = pad / 2;
+        root.addView(finish, finishLp);
 
         root.addView(text("Step 3 - Start\n"
                 + "Open the page with the dropdown and tap the purple Start button. The app "
