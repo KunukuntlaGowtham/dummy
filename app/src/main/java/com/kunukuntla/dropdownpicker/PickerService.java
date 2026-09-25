@@ -36,6 +36,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.OutputStream;
+import java.time.LocalDate;
+import java.util.Locale;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -52,7 +54,8 @@ import java.util.function.Consumer;
  */
 public class PickerService extends AccessibilityService {
 
-    private static final long OPEN_WAIT_MS = 700;
+    private static final long OPEN_WAIT_MS = 450;
+    private static final int MAX_MONTH_CHANGES = 12;
     private static final int OPEN_CHECKS = 3;
     private static final int MAX_SCROLLS = 25;
 
@@ -277,21 +280,21 @@ public class PickerService extends AccessibilityService {
                 // Nothing seen in the picture: try native dropdown widgets instead.
                 open(targets.isEmpty() ? nodeTargets() : targets);
             });
-        })), 250);
+        })), 120);
     }
 
     private void open(List<Target> targets) {
         if (!running) return;
         if (targets.isEmpty()) {
-            stop(screenshotError != null
+            afterDropdown(screenshotError != null
                     ? "Couldn't take a screenshot: " + screenshotError
-                    : "No dropdown found. Tap See to see what the app sees.");
+                    : "No dropdown found");
             return;
         }
         Target t = targets.get(0);
         log("Dropdown line " + t.line.toShortString() + ", opening it at " + t.tapX + "," + t.tapY);
         showHighlight(t.line, t.arrow, null, t.tapX, t.tapY);
-        handler.postDelayed(safe(() -> openAndPick(t)), 400);
+        openAndPick(t);
     }
 
     /**
@@ -441,7 +444,7 @@ public class PickerService extends AccessibilityService {
         log("Tapping 4 mm below the line at " + x + "," + y);
         showHighlight(null, null, null, x, y);
         tap(x, y);
-        stop("Tapped 4 mm below the line");
+        afterDropdown("Tapped 4 mm below the line");
     }
 
     /**
@@ -460,7 +463,7 @@ public class PickerService extends AccessibilityService {
                     log("Found \"" + o.text + "\" for keyword \"" + k + "\"");
                     showHighlight(null, null, o.bounds, -1, -1);
                     tap(o.bounds.centerX(), o.bounds.centerY());
-                    stop("Selected: " + o.text + " (keyword \"" + k + "\")");
+                    afterDropdown("Selected: " + o.text + " (keyword \"" + k + "\")");
                     return;
                 }
             }
@@ -469,7 +472,7 @@ public class PickerService extends AccessibilityService {
         if (options.isEmpty() && lastSeen == null && checksLeft > 1) {
             // The list may still be opening.
             handler.postDelayed(safe(() -> search(t, before, keywords, checksLeft - 1,
-                    scrollsLeft, null)), 400);
+                    scrollsLeft, null)), 300);
             return;
         }
 
@@ -480,14 +483,19 @@ public class PickerService extends AccessibilityService {
                 + (options.isEmpty() ? "" : " (" + options.get(0).text + " ... "
                 + options.get(options.size() - 1).text + ")"));
         if (options.isEmpty() || seen.equals(lastSeen) || scrollsLeft <= 0) {
-            stop("No option matching your keywords found" + (options.isEmpty()
+            afterDropdown("No option matching your keywords found" + (options.isEmpty()
                     ? " (couldn't read the options)" : " (reached the end of the list)"));
             return;
         }
 
-        scrollDown(t, options);
+        // Scroll the list up by 10 mm, just below the line, and look again.
+        int x = t.line.centerX();
+        int from = t.line.bottom + mm(12);
+        int to = t.line.bottom + mm(2);
+        log("Swiping the list up 10 mm (" + from + " -> " + to + ")");
+        swipe(x, from, x, to);
         handler.postDelayed(safe(() -> search(t, before, keywords, checksLeft,
-                scrollsLeft - 1, seen)), 600);
+                scrollsLeft - 1, seen)), 450);
     }
 
     /** Text that appeared after the dropdown opened, in the dropdown's columns, top to bottom. */
@@ -501,34 +509,6 @@ public class PickerService extends AccessibilityService {
         }
         out.sort((a, b) -> Integer.compare(a.bounds.top, b.bounds.top));
         return out;
-    }
-
-    /** Scrolls the list the options are in; swipes up inside it if it can't be scrolled directly. */
-    private void scrollDown(Target t, List<TextNode> options) {
-        TextNode last = options.get(options.size() - 1);
-        for (AccessibilityNodeInfo p = last.node.getParent(); p != null; p = p.getParent()) {
-            if (p.isScrollable()) {
-                Rect r = new Rect();
-                p.getBoundsInScreen(r);
-                Rect screen = screenBounds();
-                // Don't scroll the whole page.
-                if ((long) r.width() * r.height() > (long) screen.width() * screen.height() / 2) break;
-                if (p.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-                    log("Scrolled the list");
-                    return;
-                }
-                break;
-            }
-        }
-        int x = t.line.centerX();
-        int fromY = last.bounds.centerY();
-        int toY = options.get(0).bounds.centerY();
-        if (fromY - toY < mm(5)) {
-            fromY = t.line.bottom + mm(30);
-            toY = t.line.bottom + mm(8);
-        }
-        log("Swiping the list up from " + fromY + " to " + toY);
-        swipe(x, fromY, x, toY);
     }
 
     /** Every piece of visible text on screen (a node's own text or description). */
@@ -552,6 +532,208 @@ public class PickerService extends AccessibilityService {
             }
         }
         return out;
+    }
+
+    // ---- Calendar day --------------------------------------------------------
+
+    /** Dropdown step finished: go on to the calendar if a day is set, else stop. */
+    private void afterDropdown(String message) {
+        if (!running) return;
+        log(message);
+        int mode = DayChoice.loadMode(this);
+        if (mode == DayChoice.MODE_OFF) {
+            stop(message);
+            return;
+        }
+        LocalDate date = DayChoice.parse(DayChoice.loadDate(this));
+        if (date == null) {
+            stop(message + ". Calendar skipped: enter the day as DD/MM/YYYY in the app");
+            return;
+        }
+        log("Calendar: want " + date + (mode == DayChoice.MODE_EXACT ? " (exact)" : " (or best)"));
+        handler.postDelayed(safe(() -> calendarStep(date, mode, MAX_MONTH_CHANGES)), 500);
+    }
+
+    /** Moves the calendar to the wanted month, then reads the day colours and taps a day. */
+    private void calendarStep(LocalDate date, int mode, int changesLeft) {
+        if (!running) return;
+        List<TextNode> all = texts();
+        List<TextNode> headers = new ArrayList<>();
+        for (TextNode n : all) if (DayChoice.monthOf(n.text) >= 0) headers.add(n);
+        if (headers.isEmpty()) {
+            stop("Couldn't find the calendar's month name (like \"October 2026\")");
+            return;
+        }
+        headers.sort((a, b) -> Integer.compare(a.bounds.top, b.bounds.top));
+        int want = DayChoice.monthOf(date);
+
+        TextNode header = null;
+        for (TextNode h : headers) if (DayChoice.monthOf(h.text) == want) header = h;
+        if (header == null) {
+            TextNode shown = headers.get(0);
+            int diff = want - DayChoice.monthOf(shown.text);
+            if (changesLeft <= 0) {
+                stop("Couldn't reach " + date.getMonth() + " " + date.getYear() + " in the calendar");
+                return;
+            }
+            Rect grid = gridBounds(days(shown, headers, all));
+            log("Calendar shows " + shown.text + ", tapping " + (diff > 0 ? "next" : "previous"));
+            tapArrow(shown, grid, diff > 0);
+            handler.postDelayed(safe(() -> calendarStep(date, mode, changesLeft - 1)), 600);
+            return;
+        }
+
+        TextNode[] days = days(header, headers, all);
+        if (days[date.getDayOfMonth()] == null) {
+            stop("Couldn't find day " + date.getDayOfMonth() + " under " + header.text);
+            return;
+        }
+        // Read the colours from a fresh screenshot.
+        removeHighlight();
+        setButtonVisible(false);
+        handler.postDelayed(safe(() -> capture(bmp -> {
+            setButtonVisible(true);
+            if (bmp == null) {
+                stop("Couldn't take a screenshot to read the day colours: " + screenshotError);
+                return;
+            }
+            String[] colours = new String[32];
+            StringBuilder seen = new StringBuilder();
+            for (int d = 1; d <= 31; d++) {
+                if (days[d] == null) continue;
+                colours[d] = cellColour(bmp, days[d].bounds);
+                seen.append(d).append(colours[d].charAt(0)).append(' ');
+            }
+            bmp.recycle();
+            log("Day colours: " + seen.toString().trim());
+            chooseDay(date.getDayOfMonth(), mode, days, colours);
+        })), 120);
+    }
+
+    private void chooseDay(int want, int mode, TextNode[] days, String[] colours) {
+        int pick = -1;
+        if (DayChoice.isOpen(colours[want])) {
+            pick = want;
+        } else if (mode == DayChoice.MODE_BEST) {
+            // Nearest open day; on a tie, the earlier one.
+            for (int dist = 1; dist <= 31 && pick < 0; dist++) {
+                for (int d : new int[] {want - dist, want + dist}) {
+                    if (d >= 1 && d <= 31 && days[d] != null && DayChoice.isOpen(colours[d])) {
+                        pick = d;
+                        break;
+                    }
+                }
+            }
+        }
+        if (pick < 0) {
+            stop("Day " + want + " is " + colours[want].toLowerCase(Locale.ROOT)
+                    + (mode == DayChoice.MODE_BEST ? " and no green or yellow day this month"
+                    : ", not available"));
+            return;
+        }
+        TextNode cell = days[pick];
+        showHighlight(null, null, cell.bounds, -1, -1);
+        if (!cell.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            tap(cell.bounds.centerX(), cell.bounds.centerY());
+        }
+        stop(pick == want ? "Selected day " + pick + " (" + colours[pick].toLowerCase(Locale.ROOT) + ")"
+                : "Day " + want + " is " + colours[want].toLowerCase(Locale.ROOT)
+                + ", selected nearest open day " + pick + " ("
+                + colours[pick].toLowerCase(Locale.ROOT) + ")");
+    }
+
+    /** The day-number cells (index 1-31) under a month header, before the next header. */
+    private TextNode[] days(TextNode header, List<TextNode> headers, List<TextNode> all) {
+        int limit = header.bounds.top + screenBounds().height() * 3 / 4;
+        for (TextNode h : headers) {
+            if (h.bounds.top > header.bounds.top) {
+                limit = Math.min(limit, h.bounds.top);
+                break;
+            }
+        }
+        TextNode[] out = new TextNode[32];
+        for (TextNode n : all) {
+            if (n.bounds.top < header.bounds.bottom || n.bounds.top > limit) continue;
+            if (!n.text.matches("\\d{1,2}")) continue;
+            int d = Integer.parseInt(n.text);
+            if (d < 1 || d > 31) continue;
+            if (out[d] == null || n.bounds.top < out[d].bounds.top) out[d] = n;
+        }
+        return out;
+    }
+
+    private static Rect gridBounds(TextNode[] days) {
+        Rect grid = null;
+        for (TextNode n : days) {
+            if (n == null) continue;
+            if (grid == null) grid = new Rect(n.bounds);
+            else grid.union(n.bounds);
+        }
+        return grid;
+    }
+
+    /** Taps the calendar's next (or previous) arrow: whatever is clickable beside the grid. */
+    private void tapArrow(TextNode header, Rect grid, boolean next) {
+        Rect area = grid != null ? grid : header.bounds;
+        int cell = grid != null ? Math.max(1, grid.width() / 7) : mm(8);
+        AccessibilityNodeInfo best = null;
+        Rect bestBounds = null;
+        for (AccessibilityNodeInfo root : roots()) {
+            List<AccessibilityNodeInfo> stack = new ArrayList<>();
+            stack.add(root);
+            while (!stack.isEmpty()) {
+                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+                if (n == null) continue;
+                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
+                if (!n.isClickable() || !n.isVisibleToUser()) continue;
+                Rect r = new Rect();
+                n.getBoundsInScreen(r);
+                if (r.isEmpty() || r.width() > cell * 2) continue;
+                if (r.centerY() < header.bounds.top || r.centerY() > area.bottom) continue;
+                boolean side = next ? r.left >= area.right - cell / 4 : r.right <= area.left + cell / 4;
+                if (!side) continue;
+                int gap = next ? r.left - area.right : area.left - r.right;
+                int bestGap = bestBounds == null ? Integer.MAX_VALUE
+                        : next ? bestBounds.left - area.right : area.left - bestBounds.right;
+                if (gap < bestGap) {
+                    best = n;
+                    bestBounds = r;
+                }
+            }
+        }
+        if (best != null) {
+            if (!best.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                tap(bestBounds.centerX(), bestBounds.centerY());
+            }
+            return;
+        }
+        // No arrow found in the tree: tap where it usually is, beside the middle of the grid.
+        int x = next ? area.right + cell * 2 / 3 : area.left - cell * 2 / 3;
+        log("No arrow found, tapping " + x + "," + area.centerY());
+        tap(x, area.centerY());
+    }
+
+    /** The cell's background colour: the most common colour around the edge of its box. */
+    private static String cellColour(Bitmap bmp, Rect b) {
+        int insetX = Math.max(2, b.width() / 8), insetY = Math.max(2, b.height() / 8);
+        int[][] points = {
+                {b.left + insetX, b.top + insetY}, {b.right - insetX, b.top + insetY},
+                {b.left + insetX, b.bottom - insetY}, {b.right - insetX, b.bottom - insetY},
+                {b.left + insetX, b.centerY()}, {b.right - insetX, b.centerY()},
+                {b.centerX(), b.top + insetY}, {b.centerX(), b.bottom - insetY}};
+        java.util.Map<String, Integer> votes = new java.util.HashMap<>();
+        String best = "WHITE";
+        int bestVotes = 0;
+        for (int[] p : points) {
+            if (p[0] < 0 || p[1] < 0 || p[0] >= bmp.getWidth() || p[1] >= bmp.getHeight()) continue;
+            String c = DayChoice.colourName(bmp.getPixel(p[0], p[1]));
+            int v = votes.merge(c, 1, Integer::sum);
+            if (v > bestVotes) {
+                bestVotes = v;
+                best = c;
+            }
+        }
+        return best;
     }
 
     /** Runs {@code r}, turning any crash into a message instead of stopping the app. */

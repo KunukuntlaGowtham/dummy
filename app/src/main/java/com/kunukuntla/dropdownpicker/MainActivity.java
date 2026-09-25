@@ -16,6 +16,8 @@ import android.text.TextWatcher;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.RadioButton;
+import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -89,6 +91,45 @@ public class MainActivity extends Activity {
             }
         });
         root.addView(keywords, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        root.addView(text("Calendar day (optional)\n"
+                + "After the dropdown, Start opens this day in the calendar: it taps the "
+                + "calendar's left/right arrows until the month is right, then taps the day if "
+                + "it is green or yellow. Red, grey or blue days are not available.", pad));
+        EditText day = new EditText(this);
+        day.setHint("Day as DD/MM/YYYY, e.g. 21/10/2026");
+        day.setSingleLine(true);
+        day.setText(DayChoice.loadDate(this));
+        day.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                DayChoice.saveDate(MainActivity.this, s.toString());
+            }
+        });
+        root.addView(day, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        RadioGroup modes = new RadioGroup(this);
+        String[] labels = {"Off (don't touch the calendar)", "Exact day only",
+                "Exact day, else best available (nearest green/yellow)"};
+        int[] values = {DayChoice.MODE_OFF, DayChoice.MODE_EXACT, DayChoice.MODE_BEST};
+        int saved = DayChoice.loadMode(this);
+        for (int i = 0; i < labels.length; i++) {
+            RadioButton rb = new RadioButton(this);
+            rb.setId(100 + values[i]);
+            rb.setText(labels[i]);
+            modes.addView(rb);
+            if (values[i] == saved) rb.setChecked(true);
+        }
+        modes.setOnCheckedChangeListener((g, id) -> DayChoice.saveMode(this, id - 100));
+        root.addView(modes, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         root.addView(text("Step 3 - Start\n"
