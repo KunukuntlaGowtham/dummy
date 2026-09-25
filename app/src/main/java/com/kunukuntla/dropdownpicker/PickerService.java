@@ -435,7 +435,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 Bitmap bmp = null;
                 try {
                     Bitmap hw = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
-                    if (hw != null) bmp = hw.copy(Bitmap.Config.ARGB_8888, false);
+                    // Standard colours, at the size the tap coordinates use.
+                    if (hw != null) {
+                        bmp = com.example.checkboxticker.ScreenPictures.normalise(
+                                PickerService.this, hw, 1);
+                    }
                 } catch (RuntimeException e) {
                     bmp = null;
                 } finally {

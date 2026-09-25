@@ -1,7 +1,13 @@
 package com.example.checkboxticker
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.ColorSpace
+import android.graphics.Paint
+import android.hardware.display.DisplayManager
+import android.util.DisplayMetrics
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
@@ -113,8 +119,8 @@ class ShotEyes(
                     val buffer = result.hardwareBuffer
                     val shot = try {
                         val hw = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)
-                        val bmp = hw?.copy(Bitmap.Config.ARGB_8888, false)
-                        bmp?.let { toShot(it) }
+                        hw?.let { ScreenPictures.normalise(service, it, ScreenService.SCALE) }
+                            ?.let { toShot(it) }
                     } catch (t: Throwable) {
                         Log.e(ScreenService.TAG, "screenshot unreadable", t)
                         null
@@ -140,21 +146,59 @@ class ShotEyes(
             })
     }
 
-    /** Shrinks the screenshot to the size the box finder is tuned for. */
-    private fun toShot(full: Bitmap): Shot {
-        val w = full.width / ScreenService.SCALE
-        val h = full.height / ScreenService.SCALE
-        val small = Bitmap.createScaledBitmap(full, w, h, true)
+    /** Turns the (already shrunk, standard-colour) screenshot into a frame for the finder. */
+    private fun toShot(small: Bitmap): Shot {
+        val w = small.width
+        val h = small.height
         val rgb = IntArray(w * h)
         small.getPixels(rgb, 0, w, 0, 0, w, h)
         for (i in rgb.indices) rgb[i] = rgb[i] and 0xffffff
-        val shot = Shot(Frame(rgb, w, h), full.width, full.height)
-        if (small != full) small.recycle()
-        full.recycle()
-        return shot
+        small.recycle()
+        return Shot(Frame(rgb, w, h), w * ScreenService.SCALE, h * ScreenService.SCALE)
     }
 
     companion object {
         private const val MIN_GAP_MS = 350L
+    }
+}
+
+/**
+ * Makes an accessibility screenshot match what taps and colours expect. Some phones hand it
+ * over in a wide colour space (Display P3), which shifts colours such as the pop-up's purple,
+ * or at a different resolution than the screen's tap coordinates, which shifts every tap.
+ */
+object ScreenPictures {
+    /**
+     * The screenshot in standard sRGB colours, at the screen's own size divided by [divide]
+     * (so a pixel at x,y is the tap point x*divide, y*divide).
+     */
+    @JvmStatic
+    fun normalise(context: Context, screenshot: Bitmap, divide: Int): Bitmap? {
+        val soft = screenshot.copy(Bitmap.Config.ARGB_8888, false) ?: return null
+        val dm = DisplayMetrics()
+        @Suppress("DEPRECATION")
+        context.getSystemService(DisplayManager::class.java)
+            .getDisplay(android.view.Display.DEFAULT_DISPLAY).getRealMetrics(dm)
+        var w = dm.widthPixels
+        var h = dm.heightPixels
+        if (w <= 0 || h <= 0) {
+            w = soft.width
+            h = soft.height
+        }
+        // Rotated since the metrics were read: follow the picture.
+        if ((soft.width > soft.height) != (w > h)) {
+            val t = w
+            w = h
+            h = t
+        }
+        val out = Bitmap.createBitmap(
+            (w / divide).coerceAtLeast(1), (h / divide).coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888, true, ColorSpace.get(ColorSpace.Named.SRGB)
+        )
+        // Drawing converts the colours into the sRGB target.
+        Canvas(out).drawBitmap(soft, null, Rect(0, 0, out.width, out.height),
+            Paint(Paint.FILTER_BITMAP_FLAG))
+        soft.recycle()
+        return out
     }
 }
