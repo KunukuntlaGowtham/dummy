@@ -702,13 +702,13 @@ public class PickerService extends AccessibilityService {
 
     private void chooseDay(int want, int mode, TextNode[] days, String[] colours) {
         int pick = -1;
-        if (DayChoice.isOpen(colours[want])) {
+        if (DayChoice.isOpen(this, colours[want])) {
             pick = want;
         } else if (mode == DayChoice.MODE_BEST) {
             // Nearest open day; on a tie, the earlier one.
             for (int dist = 1; dist <= 31 && pick < 0; dist++) {
                 for (int d : new int[] {want - dist, want + dist}) {
-                    if (d >= 1 && d <= 31 && days[d] != null && DayChoice.isOpen(colours[d])) {
+                    if (d >= 1 && d <= 31 && days[d] != null && DayChoice.isOpen(this, colours[d])) {
                         pick = d;
                         break;
                     }
@@ -717,7 +717,8 @@ public class PickerService extends AccessibilityService {
         }
         if (pick < 0) {
             stop("Day " + want + " is " + colours[want].toLowerCase(Locale.ROOT)
-                    + (mode == DayChoice.MODE_BEST ? " and no green or yellow day this month"
+                    + (mode == DayChoice.MODE_BEST ? " and no day this month has an allowed colour "
+                    + DayChoice.loadOpenColours(this)
                     : ", not available"));
             return;
         }

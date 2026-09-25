@@ -117,7 +117,7 @@ public class MainActivity extends Activity {
         root.addView(text("Calendar day (optional)\n"
                 + "After the dropdown, Start opens this day in the calendar: it taps the "
                 + "calendar's left/right arrows until the month is right, then taps the day if "
-                + "it is green or yellow. Red, grey or blue days are not available.", pad));
+                + "its colour is one you tick below (green and yellow by default).", pad));
         EditText day = new EditText(this);
         day.setHint("Day as DD/MM/YYYY, e.g. 21/10/2026");
         day.setSingleLine(true);
@@ -152,6 +152,19 @@ public class MainActivity extends Activity {
         modes.setOnCheckedChangeListener((g, id) -> DayChoice.saveMode(this, id - 100));
         root.addView(modes, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        root.addView(text("Day colours that count as available:", pad / 2));
+        LinearLayout colourRow = new LinearLayout(this);
+        java.util.Set<String> open = DayChoice.loadOpenColours(this);
+        for (String[] c : new String[][] {{"GREEN", "Green"}, {"YELLOW", "Yellow"},
+                {"GREY", "Grey"}, {"WHITE", "White"}}) {
+            CheckBox box = new CheckBox(this);
+            box.setText(c[1]);
+            box.setChecked(open.contains(c[0]));
+            box.setOnCheckedChangeListener((b, on) -> DayChoice.setOpenColour(this, c[0], on));
+            colourRow.addView(box);
+        }
+        root.addView(colourRow);
 
         CheckBox finish = new CheckBox(this);
         finish.setText("After the date: tick the radio button, then the checkbox, then press "

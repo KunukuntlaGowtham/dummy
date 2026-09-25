@@ -94,8 +94,22 @@ final class DayChoice {
         return "PURPLE";
     }
 
-    static boolean isOpen(String colour) {
-        return "GREEN".equals(colour) || "YELLOW".equals(colour);
+    /** Colours the user counts as "available" (default green and yellow). */
+    static boolean isOpen(Context c, String colour) {
+        return colour != null && loadOpenColours(c).contains(colour);
+    }
+
+    static java.util.Set<String> loadOpenColours(Context c) {
+        return new java.util.HashSet<>(java.util.Arrays.asList(
+                prefs(c).getString("open_colours", "GREEN,YELLOW").split(",")));
+    }
+
+    static void setOpenColour(Context c, String colour, boolean open) {
+        java.util.Set<String> set = loadOpenColours(c);
+        if (open) set.add(colour);
+        else set.remove(colour);
+        set.remove("");
+        prefs(c).edit().putString("open_colours", String.join(",", set)).apply();
     }
 
     private static SharedPreferences prefs(Context c) {
