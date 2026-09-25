@@ -555,13 +555,16 @@ public class PickerService extends AccessibilityService {
                         scrollsLeft, stuck, lastSeen)), 200);
                 return;
             }
-            // Still not in view: click the option directly through the page.
-            AccessibilityNodeInfo target = clickableSelfOrParent(match.node);
-            if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                log("Clicked \"" + match.text + "\" directly");
-                afterDropdown("Selected: " + match.text + " (keyword \"" + matched + "\")");
+            if (match.node.isVisibleToUser() && onScreen(match.bounds)) {
+                // On screen after all: tap it like a finger.
+                log("Tapping \"" + match.text + "\" at " + match.bounds.toShortString());
+                showHighlight(null, null, match.bounds, -1, -1);
+                tap(match.bounds.centerX(), match.bounds.centerY());
+                String picked = match.text, key = matched;
+                handler.postDelayed(safe(() -> confirmPick(t, before, key, exact, picked)), 400);
                 return;
             }
+            // Otherwise keep scrolling (below) until it shows up on screen.
         }
 
         StringBuilder seenBuilder = new StringBuilder();
@@ -619,7 +622,7 @@ public class PickerService extends AccessibilityService {
         swipeList(t, visible);
         // Let the list settle before looking again.
         handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
-                scrollsLeft - 1, nowStuck, seen)), 500);
+                scrollsLeft - 1, nowStuck, seen)), 700);
     }
 
     /**
@@ -682,10 +685,13 @@ public class PickerService extends AccessibilityService {
     /** On screen and inside the box of the list it scrolls in (not hidden by scrolling). */
     private boolean inView(TextNode o) {
         if (!o.node.isVisibleToUser() || !onScreen(o.bounds)) return false;
+        Rect screen = screenBounds();
         for (AccessibilityNodeInfo p = o.node.getParent(); p != null; p = p.getParent()) {
             if (!p.isScrollable()) continue;
             Rect r = new Rect();
             p.getBoundsInScreen(r);
+            // Only a list box (not the whole page) can hide an option by scrolling.
+            if ((long) r.width() * r.height() > (long) screen.width() * screen.height() / 2) return true;
             return r.contains(o.bounds.centerX(), o.bounds.centerY());
         }
         return true;
@@ -1198,16 +1204,7 @@ public class PickerService extends AccessibilityService {
                     hit = text.matches(".*\\bavailable\\b.*")
                             && !text.matches(".*\\b(not|un)\\s*available\\b.*")
                             && !text.contains("unavailable");
-                    if (hit) {
-                        AccessibilityNodeInfo clickable = clickableSelfOrParent(n);
-                        // Prefer a tappable slot over plain text such as the colour legend.
-                        if (clickable.isClickable()) {
-                            n = clickable;
-                        } else {
-                            hit = false;
-                            weak = true;
-                        }
-                    }
+                    // The first one from the top; it is tapped on the word itself.
                 } else if (stage == 1) {
                     hit = c.contains("CheckBox")
                             || (n.isCheckable() && !c.contains("Radio") && !c.contains("Switch"));
