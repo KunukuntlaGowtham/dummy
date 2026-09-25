@@ -28,7 +28,7 @@ import android.view.WindowManager
  *
  * Nothing leaves the phone: a frame is grabbed, measured, and dropped.
  */
-class ScreenService : Service() {
+class ScreenService : Service(), Eyes {
 
     companion object {
         const val TAG = "CheckboxTicker"
@@ -155,7 +155,7 @@ class ScreenService : Service() {
      * Grabs a frame, finds the empty boxes on it and hands them back on the main thread,
      * in screen coordinates.
      */
-    fun findBoxes(minScreenPx: Int, maxScreenPx: Int, done: (List<Rect>) -> Unit) {
+    override fun findBoxes(minScreenPx: Int, maxScreenPx: Int, done: (List<Rect>) -> Unit) {
         worker.post {
             val boxes = try {
                 detect(minScreenPx / SCALE, maxScreenPx / SCALE)
@@ -172,7 +172,7 @@ class ScreenService : Service() {
      * copy of the screen to recognise them by later, with our own windows ([skip], in screen
      * pixels) left out.
      */
-    fun findBoxesWithSketch(
+    override fun findBoxesWithSketch(
         minScreenPx: Int,
         maxScreenPx: Int,
         skip: List<Rect>,
@@ -199,43 +199,11 @@ class ScreenService : Service() {
      * side. Our own windows - whose text changes from one snap to the next - are marked
      * [BoxLook.SKIP].
      */
-    private fun sketchOf(frame: Frame, skip: List<Rect>): BoxLook.Sketch {
-        val cols = frame.w / CELL
-        val rows = frame.h
-        val cells = IntArray(cols * rows)
-        for (y in 0 until rows) {
-            val row = y * frame.w
-            for (cx in 0 until cols) {
-                var sum = 0
-                val x0 = cx * CELL
-                for (x in x0 until x0 + CELL) {
-                    val c = frame.rgb[row + x]
-                    sum += (((c shr 16) and 0xff) * 299 + ((c shr 8) and 0xff) * 587 +
-                            (c and 0xff) * 114) / 1000
-                }
-                cells[y * cols + cx] = sum / CELL
-            }
-        }
-        val sw = if (screenW > 0) screenW else frame.w * SCALE
-        val sh = if (screenH > 0) screenH else frame.h * SCALE
-        for (r in skip) {
-            val left = (r.left.toLong() * frame.w / sw / CELL).toInt().coerceIn(0, cols)
-            val right = ((r.right.toLong() * frame.w / sw + CELL - 1) / CELL).toInt().coerceIn(0, cols)
-            val top = (r.top.toLong() * rows / sh).toInt().coerceIn(0, rows)
-            val bottom = (r.bottom.toLong() * rows / sh + 1).toInt().coerceIn(0, rows)
-            for (y in top until bottom) {
-                for (x in left until right) cells[y * cols + x] = BoxLook.SKIP
-            }
-        }
-        return BoxLook.Sketch(
-            cells, cols, rows,
-            pxPerCol = sw.toFloat() * CELL / frame.w,
-            pxPerRow = sh.toFloat() / rows
-        )
-    }
+    private fun sketchOf(frame: Frame, skip: List<Rect>): BoxLook.Sketch =
+        Frames.sketch(frame, skip, screenW, screenH)
 
     /** Finds the biggest patch of one colour, ignoring the top [skipTopPct] % of the screen. */
-    fun findColour(target: Int, tolerance: Int, skipTopPct: Int, done: (Rect?) -> Unit) {
+    override fun findColour(target: Int, tolerance: Int, skipTopPct: Int, done: (Rect?) -> Unit) {
         worker.post {
             val box = try {
                 val frame = grab()
@@ -254,7 +222,6 @@ class ScreenService : Service() {
         }
     }
 
-    private class Frame(val rgb: IntArray, val w: Int, val h: Int)
 
     /** The last picture taken - still the screen, until Android sends a new one. */
     /**
@@ -330,7 +297,22 @@ class ScreenService : Service() {
         return detectIn(frame, minPx, maxPx)
     }
 
-    private fun detectIn(frame: Frame, minPx: Int, maxPx: Int): List<Rect> {
+    private fun detectIn(frame: Frame, minPx: Int, maxPx: Int): List<Rect> =
+        Frames.boxes(frame, minPx, maxPx)
+}
+
+/** One picture of the screen, at 1/[ScreenService.SCALE] size, as plain RGB colours. */
+internal class Frame(val rgb: IntArray, val w: Int, val h: Int)
+
+/**
+ * What the ticker reads from a picture of the screen - the empty boxes, a sketch to know
+ * them again by, the pop-up button's colour - whichever way the picture was taken.
+ */
+internal object Frames {
+    private const val SCALE = ScreenService.SCALE
+    private const val CELL = ScreenService.CELL
+
+    fun boxes(frame: Frame, minPx: Int, maxPx: Int): List<Rect> {
         val lum = IntArray(frame.rgb.size)
         for (k in frame.rgb.indices) {
             val c = frame.rgb[k]
@@ -342,5 +324,47 @@ class ScreenService : Service() {
         return BoxFinder.find(lum, frame.w, frame.h, minPx, maxPx).map {
             Rect(it.left * SCALE, it.top * SCALE, it.right * SCALE, it.bottom * SCALE)
         }
+    }
+
+    fun sketch(frame: Frame, skip: List<Rect>, screenW: Int, screenH: Int): BoxLook.Sketch {
+        val cols = frame.w / CELL
+        val rows = frame.h
+        val cells = IntArray(cols * rows)
+        for (y in 0 until rows) {
+            val row = y * frame.w
+            for (cx in 0 until cols) {
+                var sum = 0
+                val x0 = cx * CELL
+                for (x in x0 until x0 + CELL) {
+                    val c = frame.rgb[row + x]
+                    sum += (((c shr 16) and 0xff) * 299 + ((c shr 8) and 0xff) * 587 +
+                            (c and 0xff) * 114) / 1000
+                }
+                cells[y * cols + cx] = sum / CELL
+            }
+        }
+        val sw = if (screenW > 0) screenW else frame.w * SCALE
+        val sh = if (screenH > 0) screenH else frame.h * SCALE
+        for (r in skip) {
+            val left = (r.left.toLong() * frame.w / sw / CELL).toInt().coerceIn(0, cols)
+            val right = ((r.right.toLong() * frame.w / sw + CELL - 1) / CELL).toInt().coerceIn(0, cols)
+            val top = (r.top.toLong() * rows / sh).toInt().coerceIn(0, rows)
+            val bottom = (r.bottom.toLong() * rows / sh + 1).toInt().coerceIn(0, rows)
+            for (y in top until bottom) {
+                for (x in left until right) cells[y * cols + x] = BoxLook.SKIP
+            }
+        }
+        return BoxLook.Sketch(
+            cells, cols, rows,
+            pxPerCol = sw.toFloat() * CELL / frame.w,
+            pxPerRow = sh.toFloat() / rows
+        )
+    }
+
+    /** The biggest patch of one colour, ignoring the top [skipTopPct] %, in screen pixels. */
+    fun colour(frame: Frame, target: Int, tolerance: Int, skipTopPct: Int): Rect? {
+        val minY = frame.h * skipTopPct.coerceIn(0, 90) / 100
+        return BoxFinder.findColour(frame.rgb, frame.w, frame.h, target, tolerance, minY)
+            ?.let { Rect(it.left * SCALE, it.top * SCALE, it.right * SCALE, it.bottom * SCALE) }
     }
 }

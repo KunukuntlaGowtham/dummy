@@ -95,6 +95,19 @@ open class CheckboxService : AccessibilityService() {
 
     private fun prefs() = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    private var shotEyes: Eyes? = null
+
+    /**
+     * How the ticker looks at the screen: the accessibility screenshot on Android 11 and
+     * newer (no screen sharing needed), screen sharing on older phones.
+     */
+    private fun eyes(): Eyes? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            return shotEyes ?: ShotEyes(this).also { shotEyes = it }
+        }
+        return ScreenService.instance
+    }
+
     /** Re-reads the saved options. Called by the settings screen after saving. */
     fun applySettings() {
         val p = prefs()
@@ -132,7 +145,7 @@ open class CheckboxService : AccessibilityService() {
         if (targets.isEmpty()) {
             // Nothing in the tree: look at the screen itself instead. Only on a run you
             // asked for - guessing from pixels on every screen change would tap wildly.
-            if (!fromAuto && p.getBoolean("pixels", true) && ScreenService.instance != null) {
+            if (!fromAuto && p.getBoolean("pixels", true) && eyes() != null) {
                 tickByPixels(fromAuto)
                 return
             }
@@ -171,8 +184,8 @@ open class CheckboxService : AccessibilityService() {
      */
     fun startLoop() {
         if (looping) return
-        if (ScreenService.instance == null) {
-            toast("Turn on screen reading in the app first")
+        if (eyes() == null) {
+            toast("Share the screen in the app first")
             return
         }
         looping = true
@@ -217,7 +230,7 @@ open class CheckboxService : AccessibilityService() {
     /** Step 1: snap, find the boxes, number the new ones. */
     private fun snap() {
         if (!looping) return
-        val screen = ScreenService.instance
+        val screen = eyes()
         if (screen == null) {
             stopLoop("Screen reading stopped")
             return
@@ -270,7 +283,7 @@ open class CheckboxService : AccessibilityService() {
 
     /** Step 3: snap again - a box still empty where it was did not tick. */
     private fun checkSnap() {
-        val screen = ScreenService.instance
+        val screen = eyes()
         if (screen == null) {
             stopLoop("Screen reading stopped")
             return
@@ -612,9 +625,9 @@ open class CheckboxService : AccessibilityService() {
      * find the empty boxes on it, and tap where they are.
      */
     private fun tickByPixels(fromAuto: Boolean) {
-        val screen = ScreenService.instance
+        val screen = eyes()
         if (screen == null) {
-            if (!fromAuto) toast("Turn on screen reading in the app first")
+            if (!fromAuto) toast("Share the screen in the app first")
             return
         }
 
@@ -628,10 +641,10 @@ open class CheckboxService : AccessibilityService() {
     }
 
     private fun popupExpected() =
-        prefs().getBoolean("tapColour", true) && ScreenService.instance != null
+        prefs().getBoolean("tapColour", true) && eyes() != null
 
     private fun allAtOnce(fromAuto: Boolean) {
-        val screen = ScreenService.instance ?: return finishRun(0)
+        val screen = eyes() ?: return finishRun(0)
         bubble?.visibility = View.INVISIBLE   // keep our own button out of the picture
         main.postDelayed({
             screen.findBoxes(dp(14), dp(48)) { boxes ->
@@ -668,7 +681,7 @@ open class CheckboxService : AccessibilityService() {
      * guards against a box that refuses to be ticked holding the run up for ever.
      */
     private fun oneAtATime(done: Int, last: Rect?) {
-        val screen = ScreenService.instance ?: return finishRun(done)
+        val screen = eyes() ?: return finishRun(done)
         val p = prefs()
         val max = p.getInt("maxTicks", 50).coerceIn(1, 500)
         if (done >= max) {
@@ -713,7 +726,7 @@ open class CheckboxService : AccessibilityService() {
      */
     private fun afterTick(next: () -> Unit) {
         val p = prefs()
-        val screen = ScreenService.instance
+        val screen = eyes()
         if (!p.getBoolean("tapColour", true) || screen == null) {
             next()
             return
