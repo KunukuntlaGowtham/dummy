@@ -203,6 +203,16 @@ public class MainActivity extends Activity {
         });
         root.addView(shareLog);
 
+        root.addView(text("Checkbox Ticker (the green Tick button)\n"
+                + "Also turn on \"Checkbox Ticker\" in Accessibility settings. Tap Tick on your "
+                + "page to tick every checkbox, scrolling down; tap again to stop. Long-press "
+                + "Tick to see what the app sees.", pad));
+        Button tickerSettings = new Button(this);
+        tickerSettings.setText("Checkbox Ticker settings");
+        tickerSettings.setOnClickListener(v -> startActivity(
+                new Intent(this, com.example.checkboxticker.MainActivity.class)));
+        root.addView(tickerSettings);
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
@@ -225,7 +235,7 @@ public class MainActivity extends Activity {
     private void refresh() {
         accessibilityStatus.setText(isServiceEnabled()
                 ? "Status: ON ✅" : "Status: OFF - turn it on in settings");
-        boolean sharing = ScreenCaptureService.isSharing();
+        boolean sharing = com.example.checkboxticker.ScreenService.Companion.getInstance() != null;
         shareButton.setText(sharing ? "Stop sharing" : "Share screen");
         shareStatus.setText(sharing ? "Screen sharing: ON ✅" : "Screen sharing: OFF");
         String log = Keywords.loadLastRun(this);
@@ -233,9 +243,8 @@ public class MainActivity extends Activity {
     }
 
     private void toggleSharing() {
-        if (ScreenCaptureService.isSharing()) {
-            startService(new Intent(this, ScreenCaptureService.class)
-                    .setAction(ScreenCaptureService.ACTION_STOP));
+        if (com.example.checkboxticker.ScreenService.Companion.getInstance() != null) {
+            stopService(new Intent(this, com.example.checkboxticker.ScreenService.class));
             handler.postDelayed(this::refresh, 300);
             return;
         }
@@ -263,9 +272,10 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Screen sharing was not allowed", Toast.LENGTH_SHORT).show();
             return;
         }
-        Intent service = new Intent(this, ScreenCaptureService.class)
-                .putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
-                .putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data);
+        // One shared screen for both parts: the Checkbox Ticker's screen reading.
+        Intent service = new Intent(this, com.example.checkboxticker.ScreenService.class)
+                .putExtra("code", resultCode)
+                .putExtra("data", data);
         startForegroundService(service);
         Toast.makeText(this, "Screen shared. Now open your page and tap Start.",
                 Toast.LENGTH_LONG).show();

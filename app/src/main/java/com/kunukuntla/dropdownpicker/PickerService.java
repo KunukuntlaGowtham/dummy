@@ -74,6 +74,8 @@ public class PickerService extends AccessibilityService {
     private static final int STEP_DROP = 0, STEP_CAL = 1, STEP_CHECK = 2;
     private static final String[] STEP_LABELS = {"▼\nDrop", "📅☑\nCal", "☑\nCheck"};
     private TextView[] stepButtons;
+    private static final String TICK_LABEL = "✔\nTick";
+    private TextView tickButton;
     /** Which button started the current run. */
     private int stepMode = STEP_DROP;
     private final ScreenReader reader = new ScreenReader();
@@ -117,8 +119,9 @@ public class PickerService extends AccessibilityService {
         stepButtons = new TextView[] {
                 roundButton(STEP_LABELS[STEP_DROP], 0xDD6A3FA0, dp(52)),
                 roundButton(STEP_LABELS[STEP_CAL], 0xDD1565C0, dp(52))};
-        TextView see = roundButton("👁\nSee", 0xDD00897B, dp(52));
-        see.setContentDescription("See what the app sees");
+        // Tick: runs the Checkbox Ticker (ticks every checkbox, scrolling down the page).
+        tickButton = roundButton(TICK_LABEL, 0xDD00897B, dp(52));
+        tickButton.setContentDescription("Tick the checkboxes");
 
         for (int i = 0; i < stepButtons.length; i++) {
             int step = i;
@@ -127,7 +130,7 @@ public class PickerService extends AccessibilityService {
             controls.addView(stepButtons[i], lp);
             stepButtons[i].setOnTouchListener(new DragOrTap(() -> run(step), null));
         }
-        controls.addView(see, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        controls.addView(tickButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
         button = stepButtons[STEP_DROP];
 
         buttonParams = new WindowManager.LayoutParams(
@@ -141,7 +144,7 @@ public class PickerService extends AccessibilityService {
         buttonParams.y = dp(120);
 
         // Every button drags the column around; a plain tap runs the button's action.
-        see.setOnTouchListener(new DragOrTap(this::showWhatISee, null));
+        tickButton.setOnTouchListener(new DragOrTap(this::toggleTicker, this::showWhatISee));
         windowManager.addView(controls, buttonParams);
     }
 
@@ -239,6 +242,19 @@ public class PickerService extends AccessibilityService {
             this.tapY = tapY;
             this.node = node;
         }
+    }
+
+    /** Tick button: start or stop the Checkbox Ticker's run. Long-press still shows See. */
+    private void toggleTicker() {
+        com.example.checkboxticker.CheckboxService ticker =
+                com.example.checkboxticker.CheckboxService.Companion.getInstance();
+        if (ticker == null) {
+            Toast.makeText(this, "Turn on \"Checkbox Ticker\" in Accessibility settings first",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        ticker.toggleLoop();
+        handler.postDelayed(() -> tickButton.setText(ticker.isLooping() ? "■\nStop" : TICK_LABEL), 300);
     }
 
     /** A step button was tapped: run that step alone, or stop if something is running. */
@@ -346,15 +362,11 @@ public class PickerService extends AccessibilityService {
 
     private void capture(Consumer<Bitmap> done, boolean retry) {
         screenshotError = null;
-        // Screen shared from the app: use its latest frame.
-        Bitmap shared = ScreenCaptureService.grab();
-        if (shared != null) {
-            done.accept(shared);
-            return;
-        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            screenshotError = "open Dropdown Picker and tap Share screen first";
-            done.accept(null);
+            // Android 10 and older: only the shared screen can be read.
+            Bitmap shared = sharedSnapshot();
+            if (shared == null) screenshotError = "open Dropdown Picker and tap Share screen first";
+            done.accept(shared);
             return;
         }
         takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
@@ -380,6 +392,14 @@ public class PickerService extends AccessibilityService {
 
             @Override
             public void onFailure(int errorCode) {
+                // A secure page or any other failure: fall back to the shared screen.
+                if (errorCode != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+                    Bitmap shared = sharedSnapshot();
+                    if (shared != null) {
+                        safe(() -> done.accept(shared)).run();
+                        return;
+                    }
+                }
                 if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && retry) {
                     // Android allows only a few screenshots per second; wait and try again.
                     handler.postDelayed(() -> capture(done, false), 500);
@@ -404,6 +424,13 @@ public class PickerService extends AccessibilityService {
                 safe(() -> done.accept(null)).run();
             }
         });
+    }
+
+    /** The latest picture from the shared screen (Checkbox Ticker's screen reading), or null. */
+    private static Bitmap sharedSnapshot() {
+        com.example.checkboxticker.ScreenService screen =
+                com.example.checkboxticker.ScreenService.Companion.getInstance();
+        return screen == null ? null : screen.snapshot();
     }
 
     /** Runs the detector off the main thread and delivers the result on it. */
@@ -1326,7 +1353,7 @@ public class PickerService extends AccessibilityService {
     private void showWhatISee() {
         if (busy || running) return;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            if (!ScreenCaptureService.isSharing()) {
+            if (com.example.checkboxticker.ScreenService.Companion.getInstance() == null) {
                 Toast.makeText(this, "Open Dropdown Picker and tap Share screen first",
                         Toast.LENGTH_LONG).show();
                 return;
