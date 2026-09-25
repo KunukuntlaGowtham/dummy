@@ -418,14 +418,19 @@ public class PickerService extends AccessibilityService {
             this.bounds = bounds;
             this.text = text;
         }
+
+        String key() {
+            return text + "@" + bounds.toShortString();
+        }
     }
 
     /** Taps the dropdown once, then picks an option. */
     private void openAndPick(Target t) {
         if (!running) return;
-        // Remember the text already on screen; the options are text that shows up after opening.
+        // Remember the text already on screen and where it is; options are text that shows
+        // up (or moves) after opening. Text that stays put, like the field's own value, is not.
         Set<String> before = new HashSet<>();
-        for (TextNode n : texts(true)) before.add(n.text);
+        for (TextNode n : texts(true)) before.add(n.key());
 
         boolean clicked = t.node != null && t.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         if (!clicked) tap(t.tapX, t.tapY);
@@ -487,8 +492,27 @@ public class PickerService extends AccessibilityService {
             return;
         }
 
-        // Not visible in the page's text: take a screenshot and read the list from it.
-        TextNode offscreen = match;
+        if (match != null && checksLeft > 0) {
+            // The page knows the match is further down the list: jump to it (fast, no swiping).
+            log("\"" + match.text + "\" is off screen, bringing it into view");
+            if (match.node.performAction(
+                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId())) {
+                handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft - 1,
+                        scrollsLeft, stuck, lastSeen)), 150);
+                return;
+            }
+        }
+
+        StringBuilder seenBuilder = new StringBuilder();
+        for (TextNode o : visible) seenBuilder.append(o.text).append('|');
+        if (!visible.isEmpty()) {
+            // The page's text shows the options, so a screenshot wouldn't add anything: scroll on.
+            scrollOn(t, before, keywords, exact, checksLeft, scrollsLeft, stuck, lastSeen,
+                    visible, seenBuilder.toString());
+            return;
+        }
+
+        // The page doesn't expose the options: take a screenshot and read the list from it.
         ocrLook(t, keywords, exact, (found, ocrText, error) -> {
             if (!running) return;
             if (found != null) {
@@ -500,26 +524,23 @@ public class PickerService extends AccessibilityService {
                 return;
             }
             if (error != null) log("Couldn't read the screen: " + error);
-
-            StringBuilder seenBuilder = new StringBuilder();
-            for (TextNode o : visible) seenBuilder.append(o.text).append('|');
-            seenBuilder.append(ocrText);
-            String seen = seenBuilder.toString();
-            int nowStuck = seen.equals(lastSeen) ? stuck + 1 : 0;
-            if (scrollsLeft <= 0 || nowStuck >= 2) {
-                afterDropdown("No option matching your keywords found (list stopped scrolling)");
-                return;
-            }
-            if (offscreen != null) {
-                // The page knows the match is further down: ask the list to show it too.
-                log("\"" + offscreen.text + "\" is off screen, scrolling to it");
-                offscreen.node.performAction(
-                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-            }
-            swipeList(t, visible);
-            handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
-                    scrollsLeft - 1, nowStuck, seen)), 350);
+            scrollOn(t, before, keywords, exact, checksLeft, scrollsLeft, stuck, lastSeen,
+                    visible, ocrText);
         });
+    }
+
+    /** Swipes the list once more, or gives up when it has stopped moving. */
+    private void scrollOn(Target t, Set<String> before, List<String> keywords, boolean exact,
+                          int checksLeft, int scrollsLeft, int stuck, String lastSeen,
+                          List<TextNode> visible, String seen) {
+        int nowStuck = seen.equals(lastSeen) ? stuck + 1 : 0;
+        if (scrollsLeft <= 0 || nowStuck >= 2) {
+            afterDropdown("No option matching your keywords found (list stopped scrolling)");
+            return;
+        }
+        swipeList(t, visible);
+        handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
+                scrollsLeft - 1, nowStuck, seen)), 250);
     }
 
     /** Screenshots the area below the dropdown's line and looks for a keyword in it. */
@@ -545,15 +566,33 @@ public class PickerService extends AccessibilityService {
 
     /** A fast 15 mm swipe up inside the open list, just below the line. */
     private void swipeList(Target t, List<TextNode> visible) {
-        int x = t.line.centerX();
-        int to = t.line.bottom + mm(2);
-        int from = t.line.bottom + mm(17);
-        // Stay inside the list if it is shorter than that.
-        int listBottom = 0;
-        for (TextNode o : visible) listBottom = Math.max(listBottom, o.bounds.bottom);
-        if (listBottom > to + mm(5) && listBottom - mm(1) < from) from = listBottom - mm(1);
+        // Swipe inside the list itself when we can find it.
+        Rect list = null;
+        Rect screen = screenBounds();
+        if (!visible.isEmpty()) {
+            for (AccessibilityNodeInfo p = visible.get(0).node.getParent(); p != null; p = p.getParent()) {
+                if (!p.isScrollable()) continue;
+                Rect r = new Rect();
+                p.getBoundsInScreen(r);
+                if ((long) r.width() * r.height() <= (long) screen.width() * screen.height() / 2
+                        && r.height() > mm(8)) {
+                    list = r;
+                }
+                break;
+            }
+        }
+        int x, from, to;
+        if (list != null) {
+            x = list.centerX();
+            from = Math.min(list.bottom - mm(1), list.centerY() + mm(7.5f));
+            to = Math.max(list.top + mm(1), from - mm(15));
+        } else {
+            x = t.line.centerX();
+            to = t.line.bottom + mm(2);
+            from = to + mm(15);
+        }
         log("Swiping the list up (" + from + " -> " + to + ")");
-        swipe(x, from, x, to, 150);
+        swipe(x, from, x, to, 120);
     }
 
     private boolean onScreen(Rect r) {
@@ -565,7 +604,7 @@ public class PickerService extends AccessibilityService {
     private List<TextNode> options(Target t, Set<String> before, boolean includeHidden) {
         List<TextNode> out = new ArrayList<>();
         for (TextNode n : texts(includeHidden)) {
-            if (before.contains(n.text)) continue;
+            if (before.contains(n.key())) continue;
             if (n.bounds.contains(t.tapX, t.tapY)) continue;
             if (n.bounds.right < t.line.left || n.bounds.left > t.line.right) continue;
             out.add(n);
@@ -888,12 +927,16 @@ public class PickerService extends AccessibilityService {
     private void formStep(boolean[] done, int scrollsLeft, String summary) {
         if (!running) return;
         AccessibilityNodeInfo cont = formNode(2);
+        // 1) Controls the page reports (real radio buttons and checkboxes).
+        AccessibilityNodeInfo agreeText = null;
         for (int stage = 0; stage < 2; stage++) {
             if (done[stage]) continue;
             AccessibilityNodeInfo n = formNode(stage);
-            if (n == null) {
-                // Keep the order (radio button before checkbox) until Continue is in view.
-                if (cont == null) break;
+            if (n == null) continue;
+            CharSequence cls = n.getClassName();
+            if (stage == 1 && !n.isCheckable() && (cls == null || !cls.toString().contains("CheckBox"))) {
+                // Only an "I hereby / I agree" text: find its drawn box in the screenshot below.
+                agreeText = n;
                 continue;
             }
             done[stage] = true;
@@ -914,7 +957,72 @@ public class PickerService extends AccessibilityService {
             }), 300);
             return;
         }
+        if (done[0] && done[1]) {
+            continueOrScroll(done, cont, scrollsLeft, summary);
+            return;
+        }
 
+        // 2) Drawn controls: look for empty circles (radio) and squares (checkbox) on screen.
+        AccessibilityNodeInfo agree = agreeText;
+        removeHighlight();
+        setButtonVisible(false);
+        handler.postDelayed(safe(() -> capture(bmp -> {
+            setButtonVisible(true);
+            if (bmp == null) {
+                log("No screenshot for the form (" + screenshotError + ")");
+                continueOrScroll(done, cont, scrollsLeft, summary);
+                return;
+            }
+            float mmPx = mm(10) / 10f;
+            new Thread(() -> {
+                FormDetector.Result shapes;
+                try {
+                    shapes = FormDetector.find(bmp, mmPx);
+                } catch (Throwable e) {
+                    shapes = null;
+                }
+                bmp.recycle();
+                FormDetector.Result found = shapes;
+                handler.post(safe(() -> {
+                    if (!running) return;
+                    Rect target = null;
+                    int stage = -1;
+                    if (found != null && !done[0] && !found.circles.isEmpty()) {
+                        target = found.circles.get(0);
+                        stage = 0;
+                    } else if (found != null && !done[1] && !found.squares.isEmpty()) {
+                        target = found.squares.get(0);
+                        stage = 1;
+                    }
+                    if (target == null && !done[1] && agree != null) {
+                        // No box drawn where we could see it: tap just left of the agreement text.
+                        Rect r = new Rect();
+                        agree.getBoundsInScreen(r);
+                        done[1] = true;
+                        int x = Math.max(0, r.left - mm(5)), y = Math.min(r.bottom, r.top + mm(3));
+                        log("Tapping left of \"" + agree.getText() + "\" at " + x + "," + y);
+                        showHighlight(null, null, null, x, y);
+                        tap(x, y);
+                        handler.postDelayed(safe(() -> formStep(done, scrollsLeft, summary)), 300);
+                        return;
+                    }
+                    if (target == null) {
+                        continueOrScroll(done, cont, scrollsLeft, summary);
+                        return;
+                    }
+                    done[stage] = true;
+                    log("Tapping the drawn " + FORM_STEPS[stage] + " at " + target.toShortString());
+                    showHighlight(null, null, target, -1, -1);
+                    tap(target.centerX(), target.centerY());
+                    handler.postDelayed(safe(() -> formStep(done, scrollsLeft, summary)), 300);
+                }));
+            }).start();
+        })), 80);
+    }
+
+    /** Presses Continue if it is on screen, else scrolls the page 10 mm and looks again. */
+    private void continueOrScroll(boolean[] done, AccessibilityNodeInfo cont, int scrollsLeft,
+                                  String summary) {
         if (cont != null) {
             for (int stage = 0; stage < 2; stage++) {
                 if (!done[stage]) log("No " + FORM_STEPS[stage] + " found before Continue");
@@ -983,7 +1091,7 @@ public class PickerService extends AccessibilityService {
                 } else if (stage == 1) {
                     hit = c.contains("CheckBox")
                             || (n.isCheckable() && !c.contains("Radio") && !c.contains("Switch"));
-                    weak = !hit && text.matches(".*\\b(i agree|agree|accept|declare|i confirm)\\b.*");
+                    weak = !hit && text.matches(".*\\b(i hereby|hereby|i agree|agree|accept|declare|i confirm|undertake)\\b.*");
                 } else {
                     hit = text.startsWith("continue");
                     if (hit) n = clickableSelfOrParent(n);
