@@ -281,13 +281,15 @@ open class CheckboxService : AccessibilityService() {
             return
         }
         val item = onScreen[i]
-        val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
-        if (ok) ticked++
-        status("box ${item.number}: tapped" + (if (ok) "" else " - refused"))
-        val p = prefs()
-        main.postDelayed({
-            if (looping) afterTick { tickNext(i + 1) }
-        }, waitMs(p, "tickWaitMs", 300))
+        notePageColour {
+            if (!looping) return@notePageColour
+            val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
+            if (ok) ticked++
+            status("box ${item.number}: tapped" + (if (ok) "" else " - refused"))
+            main.postDelayed({
+                if (looping) afterTick { tickNext(i + 1) }
+            }, waitMs(prefs(), "tickWaitMs", 300))
+        }
     }
 
     /** Step 3: snap again - a box still empty where it was did not tick. */
@@ -735,10 +737,44 @@ open class CheckboxService : AccessibilityService() {
      */
     private fun afterTick(next: () -> Unit) = clearPopup(POPUP_LOOKS, false, next)
 
+    /** Patches of the pop-up colour on the page just before the last tick (the page's own). */
+    private var pagePatches: List<Rect> = emptyList()
+
+    /** Notes the page's own patches of the pop-up colour, then carries on. */
+    private fun notePageColour(then: () -> Unit) {
+        val p = prefs()
+        val screen = eyes()
+        if (!p.getBoolean("tapColour", true) || screen == null) {
+            pagePatches = emptyList()
+            then()
+            return
+        }
+        screen.findColourPatches(
+            p.getInt("colour", DEFAULT_COLOUR),
+            p.getInt("colourTol", 60).coerceIn(0, 200),
+            p.getInt("skipTopPct", 20).coerceIn(0, 90)
+        ) { patches ->
+            pagePatches = patches.map { it.first }
+            then()
+        }
+    }
+
+    /** The pop-up's button: the biggest patch of the colour that the page did not already have. */
+    private fun popupButton(patches: List<Pair<Rect, Int>>): Rect? {
+        val near = dp(8)
+        return patches.filter { (r, _) ->
+            !hitsBubble(r) && pagePatches.none {
+                abs(it.centerX() - r.centerX()) <= near && abs(it.centerY() - r.centerY()) <= near &&
+                    abs(it.width() - r.width()) <= near && abs(it.height() - r.height()) <= near
+            }
+        }.maxByOrNull { it.second }?.first
+    }
+
     /**
-     * Looks for the pop-up's button; if it is not there yet, looks again (the page is sometimes
-     * slower), up to [looksLeft] times. After tapping it, looks once more: a pop-up still
-     * showing gets one more tap.
+     * Looks for the pop-up's button - only a patch of its colour that was not on the page
+     * before the tick, so the page behind the pop-up is never tapped. If it is not there
+     * yet, looks again (the page is sometimes slower), up to [looksLeft] times. After tapping
+     * it, looks once more: a pop-up still showing gets one more tap.
      */
     private fun clearPopup(looksLeft: Int, tappedOnce: Boolean, next: () -> Unit) {
         val p = prefs()
@@ -752,9 +788,9 @@ open class CheckboxService : AccessibilityService() {
         val tolerance = p.getInt("colourTol", 60).coerceIn(0, 200)
         val skipTop = p.getInt("skipTopPct", 20).coerceIn(0, 90)
 
-        // The pop-up has already had the after-a-tick wait to appear.
-        screen.findColour(colour, tolerance, skipTop) { box ->
-            if (!looping && !running) return@findColour
+        screen.findColourPatches(colour, tolerance, skipTop) { patches ->
+            if (!looping && !running) return@findColourPatches
+            val box = popupButton(patches)
             if (box == null) {
                 if (tappedOnce) {
                     status("pop-up: cleared")
@@ -762,7 +798,7 @@ open class CheckboxService : AccessibilityService() {
                 } else if (looksLeft > 1) {
                     main.postDelayed({ clearPopup(looksLeft - 1, false, next) }, POPUP_RETRY_MS)
                 } else {
-                    status("pop-up: no ${String.format("#%06X", colour)} below the top $skipTop%")
+                    status("pop-up: no new ${String.format("#%06X", colour)} below the top $skipTop%")
                     next()
                 }
             } else if (tappedOnce && looksLeft <= 0) {

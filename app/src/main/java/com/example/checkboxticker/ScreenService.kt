@@ -203,6 +203,20 @@ class ScreenService : Service(), Eyes {
         Frames.sketch(frame, skip, screenW, screenH)
 
     /** Finds the biggest patch of one colour, ignoring the top [skipTopPct] % of the screen. */
+    override fun findColourPatches(
+        target: Int, tolerance: Int, skipTopPct: Int, done: (List<Pair<Rect, Int>>) -> Unit
+    ) {
+        worker.post {
+            val patches = try {
+                grab()?.let { Frames.colourPatches(it, target, tolerance, skipTopPct) } ?: emptyList()
+            } catch (t: Throwable) {
+                Log.e(TAG, "colour scan failed", t)
+                emptyList()
+            }
+            main.post { done(patches) }
+        }
+    }
+
     override fun findColour(target: Int, tolerance: Int, skipTopPct: Int, done: (Rect?) -> Unit) {
         worker.post {
             val box = try {
@@ -359,6 +373,14 @@ internal object Frames {
             pxPerCol = sw.toFloat() * CELL / frame.w,
             pxPerRow = sh.toFloat() / rows
         )
+    }
+
+    /** Every patch of one colour (with its pixel count), ignoring the top %, in screen pixels. */
+    fun colourPatches(frame: Frame, target: Int, tolerance: Int, skipTopPct: Int): List<Pair<Rect, Int>> {
+        val minY = frame.h * skipTopPct.coerceIn(0, 90) / 100
+        return BoxFinder.colourPatches(frame.rgb, frame.w, frame.h, target, tolerance, minY).map { (r, n) ->
+            Pair(Rect(r.left * SCALE, r.top * SCALE, r.right * SCALE, r.bottom * SCALE), n)
+        }
     }
 
     /** The biggest patch of one colour, ignoring the top [skipTopPct] %, in screen pixels. */

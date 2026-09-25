@@ -700,16 +700,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
         }
 
-        if (match != null && inView(match)) {
-            log("Found \"" + match.text + "\" for keyword \"" + matched + "\", tapping it");
-            showHighlight(null, null, match.bounds, -1, -1);
-            tap(match.bounds.centerX(), match.bounds.centerY());
-            String picked = match.text, key = matched;
-            handler.postDelayed(safe(() -> confirmPick(t, before, key, exact, picked)), 400);
-            return;
-        }
-
-        if (match != null) {
+        // The page's text only says where to scroll; the tap itself always goes where the option
+        // is actually seen in a screenshot (below), never at a position that may be hidden
+        // behind the list.
+        if (match != null && !inView(match)) {
             if (checksLeft > 0) {
                 // The page knows the match is further down the list: bring it into view, fast.
                 log("\"" + match.text + "\" is out of view, bringing it into view");
@@ -719,16 +713,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                         scrollsLeft, stuck, lastSeen)), 200);
                 return;
             }
-            if (match.node.isVisibleToUser() && onScreen(match.bounds)) {
-                // On screen after all: tap it like a finger.
-                log("Tapping \"" + match.text + "\" at " + match.bounds.toShortString());
-                showHighlight(null, null, match.bounds, -1, -1);
-                tap(match.bounds.centerX(), match.bounds.centerY());
-                String picked = match.text, key = matched;
-                handler.postDelayed(safe(() -> confirmPick(t, before, key, exact, picked)), 400);
-                return;
-            }
-            // Otherwise keep scrolling (below) until it shows up on screen.
         }
 
         StringBuilder seenBuilder = new StringBuilder();
@@ -761,16 +745,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
      */
     private void confirmPick(Target t, Set<String> before, String keyword, boolean exact, String picked) {
         if (!running) return;
-        for (TextNode o : options(t, before, true)) {
-            String text = Keywords.norm(o.text);
-            if (!(exact ? text.equals(keyword) : text.contains(keyword)) || !inView(o)) continue;
-            log("The list is still open, clicking \"" + o.text + "\" directly");
-            AccessibilityNodeInfo target = clickableSelfOrParent(o.node);
-            if (!target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                tap(o.bounds.centerX(), o.bounds.centerY());
-            }
-            break;
-        }
         afterDropdown("Selected: " + picked + " (keyword \"" + keyword + "\")");
     }
 

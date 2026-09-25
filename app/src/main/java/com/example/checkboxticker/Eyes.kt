@@ -23,6 +23,11 @@ interface Eyes {
     )
 
     fun findColour(target: Int, tolerance: Int, skipTopPct: Int, done: (Rect?) -> Unit)
+
+    /** Every patch of one colour, with its size in pixels (at the finder's scale). */
+    fun findColourPatches(
+        target: Int, tolerance: Int, skipTopPct: Int, done: (List<Pair<Rect, Int>>) -> Unit
+    )
 }
 
 /**
@@ -78,6 +83,19 @@ class ShotEyes(
             }
             main.post { done(box) }
         }
+
+    override fun findColourPatches(
+        target: Int, tolerance: Int, skipTopPct: Int, done: (List<Pair<Rect, Int>>) -> Unit
+    ) = shoot { shot ->
+        val patches = shot?.let {
+            try {
+                Frames.colourPatches(it.frame, target, tolerance, skipTopPct)
+            } catch (t: Throwable) {
+                null
+            }
+        } ?: emptyList()
+        main.post { done(patches) }
+    }
 
     private class Shot(val frame: Frame, val screenW: Int, val screenH: Int)
 
