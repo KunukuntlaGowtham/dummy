@@ -7,7 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-/** The user's option keywords, saved between runs. */
+/** The user's option keywords and the last run's report, saved between runs. */
 final class Keywords {
 
     private static final String PREFS = "settings";
@@ -21,6 +21,14 @@ final class Keywords {
 
     static void save(Context context, String text) {
         prefs(context).edit().putString(KEY, text).apply();
+    }
+
+    static String loadLastRun(Context context) {
+        return prefs(context).getString("last_run", "");
+    }
+
+    static void saveLastRun(Context context, String text) {
+        prefs(context).edit().putString("last_run", text).apply();
     }
 
     /** The keywords in order, lower-cased, blanks dropped. */

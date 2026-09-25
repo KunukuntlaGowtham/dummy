@@ -39,6 +39,9 @@ final class DropdownDetector {
         /** The top-most dropdown, or null. */
         final Hit hit;
 
+        /** Size of the screenshot. */
+        int width, height;
+
         Result(List<Rect> lines, List<Hit> hits) {
             this.lines = lines;
             this.hits = hits;
@@ -69,7 +72,10 @@ final class DropdownDetector {
             Rect arrow = findArrow(dark, w, line);
             if (arrow != null) hits.add(new Hit(line, arrow));
         }
-        return new Result(lines, hits);
+        Result result = new Result(lines, hits);
+        result.width = w;
+        result.height = h;
+        return result;
     }
 
     /** Long, thin horizontal dark lines, top to bottom. */

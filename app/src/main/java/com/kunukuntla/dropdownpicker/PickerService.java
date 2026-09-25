@@ -64,6 +64,8 @@ public class PickerService extends AccessibilityService {
     private String screenshotError;
     private boolean busy;
     private boolean running;
+    /** What happened during the last Start, shown on the app's main screen. */
+    private final StringBuilder runLog = new StringBuilder();
     private View highlight;
     private View preview;
 
@@ -71,12 +73,12 @@ public class PickerService extends AccessibilityService {
     private static final class Clickable {
         final AccessibilityNodeInfo node;
         final Rect bounds;
-        final String key;
+        final String label;
 
         Clickable(AccessibilityNodeInfo node, Rect bounds, String label) {
             this.node = node;
             this.bounds = bounds;
-            this.key = bounds.toShortString() + "|" + label;
+            this.label = label;
         }
     }
 
@@ -242,10 +244,14 @@ public class PickerService extends AccessibilityService {
         busy = true;
         running = true;
         button.setText("■\nStop");
+        runLog.setLength(0);
+        log("Start");
         findAndOpen();
     }
 
     private void stop(String message) {
+        if (message != null) log(message);
+        Keywords.saveLastRun(this, runLog.toString());
         running = false;
         busy = false;
         handler.removeCallbacksAndMessages(null);
@@ -261,9 +267,10 @@ public class PickerService extends AccessibilityService {
         // Keep the button and old outlines out of the screenshot.
         removeHighlight();
         setButtonVisible(false);
-        handler.postDelayed(() -> capture(bmp -> {
+        handler.postDelayed(safe(() -> capture(bmp -> {
             if (bmp == null) {
                 setButtonVisible(true);
+                log("No screenshot (" + screenshotError + "), looking for native dropdowns");
                 open(nodeTargets());
                 return;
             }
@@ -274,10 +281,12 @@ public class PickerService extends AccessibilityService {
                 for (DropdownDetector.Hit h : result.hits) {
                     targets.add(new Target(h.line, h.arrow, h.tapX, h.tapY, null));
                 }
+                log("Screenshot " + result.width + "x" + result.height + ": "
+                        + result.lines.size() + " long line(s), " + targets.size() + " dropdown(s)");
                 // Nothing seen in the picture: try native dropdown widgets instead.
                 open(targets.isEmpty() ? nodeTargets() : targets);
             });
-        }), 250);
+        })), 250);
     }
 
     private void open(List<Target> targets) {
@@ -289,8 +298,9 @@ public class PickerService extends AccessibilityService {
             return;
         }
         Target t = targets.get(0);
+        log("Dropdown line " + t.line.toShortString() + ", opening it at " + t.tapX + "," + t.tapY);
         showHighlight(t.line, t.arrow, null, t.tapX, t.tapY);
-        handler.postDelayed(() -> openAndPick(t), 400);
+        handler.postDelayed(safe(() -> openAndPick(t)), 400);
     }
 
     /**
@@ -331,7 +341,8 @@ public class PickerService extends AccessibilityService {
                     screenshotError = "couldn't read the picture - open Dropdown Picker and tap "
                             + "Share screen";
                 }
-                done.accept(bmp);
+                Bitmap shot = bmp;
+                safe(() -> done.accept(shot)).run();
             }
 
             @Override
@@ -357,7 +368,7 @@ public class PickerService extends AccessibilityService {
                         screenshotError = "Android error " + errorCode + " - open Dropdown "
                                 + "Picker and tap Share screen";
                 }
-                done.accept(null);
+                safe(() -> done.accept(null)).run();
             }
         });
     }
@@ -365,8 +376,12 @@ public class PickerService extends AccessibilityService {
     /** Runs the detector off the main thread and delivers the result on it. */
     private void analyze(Bitmap bmp, Consumer<DropdownDetector.Result> done) {
         new Thread(() -> {
-            DropdownDetector.Result result = DropdownDetector.analyze(bmp);
-            handler.post(() -> done.accept(result));
+            try {
+                DropdownDetector.Result result = DropdownDetector.analyze(bmp);
+                handler.post(safe(() -> done.accept(result)));
+            } catch (Throwable e) {
+                handler.post(() -> fail(e));
+            }
         }).start();
     }
 
@@ -397,83 +412,96 @@ public class PickerService extends AccessibilityService {
     /** Taps the dropdown once, then selects its first option. */
     private void openAndPick(Target t) {
         if (!running) return;
+        // Remember the text already on screen; the options are text that shows up after opening.
         Set<String> before = new HashSet<>();
-        for (Clickable c : clickables()) before.add(c.key);
+        for (Clickable c : clickables()) before.add(c.label);
 
         boolean clicked = t.node != null && t.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         if (!clicked) tap(t.tapX, t.tapY);
-        handler.postDelayed(() -> pickFirst(t, before, PICK_ATTEMPTS), OPEN_WAIT_MS);
+        handler.postDelayed(safe(() -> pickFirst(t, before, PICK_ATTEMPTS)), OPEN_WAIT_MS);
     }
 
     /**
-     * Clicks the option that appeared after the dropdown opened: the one
-     * matching the user's first keyword that matches anything, else the
-     * top-most option with text. If none can be read, taps half a centimetre
-     * below the line, where the first option normally is.
+     * Clicks an option that appeared next to the dropdown after it opened: the
+     * one matching the user's earliest keyword, else the first one. If none
+     * can be read, taps half a centimetre below the line (the blue dot).
      */
     private void pickFirst(Target t, Set<String> before, int attemptsLeft) {
         if (!running) return;
         Rect screen = screenBounds();
         long screenArea = (long) screen.width() * screen.height();
         List<String> keywords = Keywords.list(this);
-        Clickable first = null;
-        String firstLabel = "";
-        Clickable match = null;
-        String matchLabel = "";
-        int matchRank = Integer.MAX_VALUE;
+        List<Clickable> options = new ArrayList<>();
         for (Clickable c : clickables()) {
-            if (before.contains(c.key)) continue;
+            if (c.label.isEmpty() || before.contains(c.label)) continue;
             if (c.bounds.contains(t.tapX, t.tapY)) continue;
             // Skip full-screen backdrops that close the menu when tapped.
             if ((long) c.bounds.width() * c.bounds.height() > screenArea / 2) continue;
-            String label = label(c.node);
-            if (label.isEmpty()) continue;
-
-            // Earlier keywords win; for the same keyword, the higher option wins.
-            String lower = label.toLowerCase(java.util.Locale.ROOT);
-            for (int k = 0; k < keywords.size() && k <= matchRank; k++) {
-                if (!lower.contains(keywords.get(k))) continue;
-                if (k < matchRank || c.bounds.top < match.bounds.top) {
-                    match = c;
-                    matchLabel = label;
-                    matchRank = k;
-                }
-                break;
-            }
-            if (first == null || c.bounds.top < first.bounds.top
-                    || (c.bounds.top == first.bounds.top && c.bounds.left < first.bounds.left)) {
-                first = c;
-                firstLabel = label;
-            }
+            // Must sit in the same columns as the dropdown's line.
+            if (c.bounds.right < t.line.left || c.bounds.left > t.line.right) continue;
+            options.add(c);
         }
+        // Options below the line first (top to bottom), then any above it.
+        options.sort((a, b) -> {
+            boolean aBelow = a.bounds.top >= t.line.top, bBelow = b.bounds.top >= t.line.top;
+            if (aBelow != bBelow) return aBelow ? -1 : 1;
+            return aBelow ? Integer.compare(a.bounds.top, b.bounds.top)
+                    : Integer.compare(b.bounds.top, a.bounds.top);
+        });
 
-        if (first == null) {
+        if (options.isEmpty()) {
             if (attemptsLeft > 1) {
-                handler.postDelayed(() -> pickFirst(t, before, attemptsLeft - 1), 400);
+                handler.postDelayed(safe(() -> pickFirst(t, before, attemptsLeft - 1)), 400);
                 return;
             }
             // No option text found: tap half a centimetre below the line.
             int x = t.line.centerX();
             int y = t.line.bottom + halfCm();
+            log("No option text found, tapping the blue dot at " + x + "," + y);
             showHighlight(null, null, null, x, y);
             tap(x, y);
             stop("Tapped half a cm below the line");
             return;
         }
 
-        String note = "";
-        if (match != null) {
-            first = match;
-            firstLabel = matchLabel;
-            note = " (keyword \"" + keywords.get(matchRank) + "\")";
-        } else if (!keywords.isEmpty()) {
-            note = " (no keyword matched, took the first option)";
+        Clickable pick = options.get(0);
+        String note = keywords.isEmpty() ? "" : " (no keyword matched, took the first option)";
+        search:
+        for (String k : keywords) {
+            for (Clickable c : options) {
+                if (c.label.toLowerCase(java.util.Locale.ROOT).contains(k)) {
+                    pick = c;
+                    note = " (keyword \"" + k + "\")";
+                    break search;
+                }
+            }
         }
-        showHighlight(null, null, first.bounds, -1, -1);
-        if (!first.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            tap(first.bounds.centerX(), first.bounds.centerY());
+        log(options.size() + " option(s) found, first: " + options.get(0).label);
+        showHighlight(null, null, pick.bounds, -1, -1);
+        if (!pick.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            tap(pick.bounds.centerX(), pick.bounds.centerY());
         }
-        stop("Selected: " + firstLabel + note);
+        stop("Selected: " + pick.label + note);
+    }
+
+    /** Runs {@code r}, turning any crash into a message instead of stopping the app. */
+    private Runnable safe(Runnable r) {
+        return () -> {
+            try {
+                r.run();
+            } catch (Throwable e) {
+                fail(e);
+            }
+        };
+    }
+
+    private void fail(Throwable e) {
+        setButtonVisible(true);
+        stop("Error: " + e);
+    }
+
+    private void log(String line) {
+        runLog.append(line).append('\n');
     }
 
     /** Half a centimetre in screen pixels. */
@@ -526,7 +554,7 @@ public class PickerService extends AccessibilityService {
         }
         busy = true;
         setButtonVisible(false);
-        handler.postDelayed(() -> capture(bmp -> {
+        handler.postDelayed(safe(() -> capture(bmp -> {
             if (bmp == null) {
                 stop("Couldn't take a screenshot: " + screenshotError);
                 return;
@@ -535,7 +563,7 @@ public class PickerService extends AccessibilityService {
                 busy = false;
                 showPreview(bmp, result);
             });
-        }), 200);
+        })), 200);
     }
 
     private void showPreview(Bitmap bmp, DropdownDetector.Result result) {

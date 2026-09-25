@@ -32,6 +32,7 @@ public class MainActivity extends Activity {
     private TextView accessibilityStatus;
     private TextView shareStatus;
     private Button shareButton;
+    private TextView lastRun;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -100,6 +101,13 @@ public class MainActivity extends Activity {
                 + "underline (red) and arrow (green) marked. Share saves that picture to your "
                 + "Gallery (Pictures/DropdownPicker) and sends it.", pad));
 
+        root.addView(text("Last run", pad));
+        lastRun = text("", 0);
+        lastRun.setTextSize(13);
+        lastRun.setTextIsSelectable(true);
+        root.addView(lastRun, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
         setContentView(scroll);
@@ -125,6 +133,8 @@ public class MainActivity extends Activity {
         boolean sharing = ScreenCaptureService.isSharing();
         shareButton.setText(sharing ? "Stop sharing" : "Share screen");
         shareStatus.setText(sharing ? "Screen sharing: ON ✅" : "Screen sharing: OFF");
+        String log = Keywords.loadLastRun(this);
+        lastRun.setText(log.isEmpty() ? "Nothing yet - tap Start on your page." : log);
     }
 
     private void toggleSharing() {
