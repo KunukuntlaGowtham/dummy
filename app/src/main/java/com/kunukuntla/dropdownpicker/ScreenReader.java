@@ -40,13 +40,14 @@ final class ScreenReader {
      * {@code offX, offY}) and reports the top-most text matching the earliest
      * keyword. Recycles {@code image} when done.
      */
-    void find(Bitmap image, int offX, int offY, List<String> keywords, boolean exact, Callback cb) {
+    void find(Bitmap image, int offX, int offY, List<String> keywords, boolean exact,
+              List<Found> ignore, int tolerance, Callback cb) {
         if (recognizer == null) {
             recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         }
         recognizer.process(InputImage.fromBitmap(image, 0))
                 .addOnSuccessListener(text -> {
-                    Found found = match(text, offX, offY, keywords, exact);
+                    Found found = match(text, offX, offY, keywords, exact, ignore, tolerance);
                     image.recycle();
                     cb.done(found, text.getText(), null);
                 })
@@ -56,15 +57,80 @@ final class ScreenReader {
                 });
     }
 
+    interface AllCallback {
+        void done(List<Found> lines);
+    }
+
+    /** Reads every line (and multi-line block) in {@code image}; recycles it when done. */
+    void readAll(Bitmap image, int offX, int offY, AllCallback cb) {
+        if (recognizer == null) {
+            recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+        }
+        recognizer.process(InputImage.fromBitmap(image, 0))
+                .addOnSuccessListener(text -> {
+                    List<Found> out = new ArrayList<>();
+                    List<String> texts = new ArrayList<>();
+                    List<Rect> boxes = new ArrayList<>();
+                    collect(text, texts, boxes);
+                    for (int i = 0; i < texts.size(); i++) {
+                        Rect r = new Rect(boxes.get(i));
+                        r.offset(offX, offY);
+                        out.add(new Found(r, texts.get(i), null));
+                    }
+                    image.recycle();
+                    cb.done(out);
+                })
+                .addOnFailureListener(e -> {
+                    image.recycle();
+                    cb.done(new ArrayList<>());
+                });
+    }
+
     void close() {
         if (recognizer != null) recognizer.close();
         recognizer = null;
     }
 
-    private static Found match(Text text, int offX, int offY, List<String> keywords, boolean exact) {
-        // Each line on its own, and each block (a wrapped option spans several lines).
+    private static Found match(Text text, int offX, int offY, List<String> keywords, boolean exact,
+                               List<Found> ignore, int tolerance) {
         List<String> texts = new ArrayList<>();
         List<Rect> boxes = new ArrayList<>();
+        collect(text, texts, boxes);
+        for (String k : keywords) {
+            int best = -1;
+            for (int i = 0; i < texts.size(); i++) {
+                String t = Keywords.norm(texts.get(i));
+                boolean hit = exact ? closeEnough(t, k) : t.contains(k);
+                if (!hit) continue;
+                Rect r = new Rect(boxes.get(i));
+                r.offset(offX, offY);
+                if (wasThere(ignore, t, r, tolerance)) continue; // e.g. the field's own label
+                if (best < 0 || boxes.get(i).top < boxes.get(best).top) best = i;
+            }
+            if (best >= 0) {
+                Rect r = new Rect(boxes.get(best));
+                r.offset(offX, offY);
+                return new Found(r, texts.get(best), k);
+            }
+        }
+        return null;
+    }
+
+    /** Same text at about the same place before the dropdown opened. */
+    private static boolean wasThere(List<Found> ignore, String normText, Rect r, int tolerance) {
+        if (ignore == null) return false;
+        for (Found f : ignore) {
+            if (Math.abs(f.box.centerX() - r.centerX()) <= tolerance
+                    && Math.abs(f.box.centerY() - r.centerY()) <= tolerance
+                    && Keywords.norm(f.text).equals(normText)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Each line on its own, and each block (a wrapped option spans several lines). */
+    private static void collect(Text text, List<String> texts, List<Rect> boxes) {
         for (Text.TextBlock block : text.getTextBlocks()) {
             for (Text.Line line : block.getLines()) {
                 if (line.getBoundingBox() == null) continue;
@@ -76,20 +142,6 @@ final class ScreenReader {
                 boxes.add(block.getBoundingBox());
             }
         }
-        for (String k : keywords) {
-            int best = -1;
-            for (int i = 0; i < texts.size(); i++) {
-                String t = Keywords.norm(texts.get(i));
-                boolean hit = exact ? closeEnough(t, k) : t.contains(k);
-                if (hit && (best < 0 || boxes.get(i).top < boxes.get(best).top)) best = i;
-            }
-            if (best >= 0) {
-                Rect r = new Rect(boxes.get(best));
-                r.offset(offX, offY);
-                return new Found(r, texts.get(best), k);
-            }
-        }
-        return null;
     }
 
     /** Equal, allowing a few OCR mistakes (about one letter in twelve). */

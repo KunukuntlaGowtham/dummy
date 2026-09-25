@@ -77,6 +77,8 @@ public class PickerService extends AccessibilityService {
     /** Which button started the current run. */
     private int stepMode = STEP_DROP;
     private final ScreenReader reader = new ScreenReader();
+    /** Text read in the dropdown's column before it was opened. */
+    private List<ScreenReader.Found> beforeOcr;
     /** What happened during the last Start, shown on the app's main screen. */
     private final StringBuilder runLog = new StringBuilder();
     private View highlight;
@@ -288,7 +290,6 @@ public class PickerService extends AccessibilityService {
                 return;
             }
             analyze(bmp, result -> {
-                bmp.recycle();
                 setButtonVisible(true);
                 List<Target> targets = new ArrayList<>();
                 for (DropdownDetector.Hit h : result.hits) {
@@ -298,8 +299,25 @@ public class PickerService extends AccessibilityService {
                 }
                 log("Screenshot " + result.width + "x" + result.height + ": "
                         + result.lines.size() + " long line(s), " + targets.size() + " dropdown(s)");
-                // Nothing seen in the picture: try native dropdown widgets instead.
-                open(targets.isEmpty() ? nodeTargets() : targets);
+                beforeOcr = null;
+                if (targets.isEmpty() || Keywords.loadPickMode(this) == Keywords.PICK_BELOW) {
+                    bmp.recycle();
+                    // Nothing seen in the picture: try native dropdown widgets instead.
+                    open(targets.isEmpty() ? nodeTargets() : targets);
+                    return;
+                }
+                // Remember the text in the dropdown's column before opening it (the field's
+                // label and value), so it isn't mistaken for an option afterwards.
+                Rect line = targets.get(0).line;
+                int left = Math.max(0, line.left);
+                int right = Math.min(bmp.getWidth(), line.right + 1);
+                Bitmap column = Bitmap.createBitmap(bmp, left, 0, Math.max(1, right - left),
+                        bmp.getHeight());
+                if (column != bmp) bmp.recycle();
+                reader.readAll(column, left, 0, lines -> safe(() -> {
+                    beforeOcr = lines;
+                    open(targets);
+                }).run());
             });
         })), 120);
     }
@@ -519,10 +537,11 @@ public class PickerService extends AccessibilityService {
         }
 
         if (match != null && inView(match)) {
-            log("Found \"" + match.text + "\" for keyword \"" + matched + "\"");
+            log("Found \"" + match.text + "\" for keyword \"" + matched + "\", tapping it");
             showHighlight(null, null, match.bounds, -1, -1);
             tap(match.bounds.centerX(), match.bounds.centerY());
-            afterDropdown("Selected: " + match.text + " (keyword \"" + matched + "\")");
+            String picked = match.text, key = matched;
+            handler.postDelayed(safe(() -> confirmPick(t, before, key, exact, picked)), 400);
             return;
         }
 
@@ -555,17 +574,37 @@ public class PickerService extends AccessibilityService {
         ocrLook(t, keywords, exact, (found, ocrText, error) -> {
             if (!running) return;
             if (found != null) {
-                log("Read \"" + found.text + "\" on screen for keyword \"" + found.keyword + "\"");
+                log("Read \"" + found.text + "\" on screen for keyword \"" + found.keyword
+                        + "\" at " + found.box.toShortString() + ", tapping it");
                 showHighlight(null, null, found.box, -1, -1);
                 tap(found.box.centerX(), found.box.centerY());
-                afterDropdown("Selected: " + found.text + " (keyword \"" + found.keyword
-                        + "\", read from the screen)");
+                String picked = found.text, key = found.keyword;
+                handler.postDelayed(safe(() -> confirmPick(t, before, key, exact, picked)), 400);
                 return;
             }
             if (error != null) log("Couldn't read the screen: " + error);
             scrollOn(t, before, keywords, exact, checksLeft, scrollsLeft, stuck, lastSeen,
                     visible, pageSeen + "#" + ocrText);
         });
+    }
+
+    /**
+     * After tapping an option: if the list is still open with that option in view, the tap
+     * didn't take, so click the option directly through the page.
+     */
+    private void confirmPick(Target t, Set<String> before, String keyword, boolean exact, String picked) {
+        if (!running) return;
+        for (TextNode o : options(t, before, true)) {
+            String text = Keywords.norm(o.text);
+            if (!(exact ? text.equals(keyword) : text.contains(keyword)) || !inView(o)) continue;
+            log("The list is still open, clicking \"" + o.text + "\" directly");
+            AccessibilityNodeInfo target = clickableSelfOrParent(o.node);
+            if (!target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                tap(o.bounds.centerX(), o.bounds.centerY());
+            }
+            break;
+        }
+        afterDropdown("Selected: " + picked + " (keyword \"" + keyword + "\")");
     }
 
     /** Swipes the list once more, or gives up when it has stopped moving. */
@@ -602,7 +641,7 @@ public class PickerService extends AccessibilityService {
             Bitmap crop = Bitmap.createBitmap(bmp, left, top, Math.max(1, right - left),
                     bmp.getHeight() - top);
             if (crop != bmp) bmp.recycle();
-            reader.find(crop, left, top, keywords, exact, (found, text, error) ->
+            reader.find(crop, left, top, keywords, exact, beforeOcr, mm(3), (found, text, error) ->
                     safe(() -> cb.done(found, text, error)).run());
         })), 80);
     }
