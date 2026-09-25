@@ -119,6 +119,8 @@ public class MainActivity extends Activity {
                     Integer c = parseColour(s);
                     if (c != null) tickPrefs(e -> e.putInt("colour", c));
                 }));
+        tick.addView(numberRow("Colour tolerance", tp.getInt("colourTol", 60), "colourTol", 0, 200));
+        tick.addView(numberRow("Ignore top of screen (%)", tp.getInt("skipTopPct", 20), "skipTopPct", 0, 90));
         tick.addView(numberRow("Max boxes", tp.getInt("maxBoxes", 15), "maxBoxes", 1, 500));
         tick.addView(numberRow("After tick (ms)", tp.getInt("tickWaitMs", 300), "tickWaitMs", 0, 10000));
         tick.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 300), "clearWaitMs", 0, 10000));
