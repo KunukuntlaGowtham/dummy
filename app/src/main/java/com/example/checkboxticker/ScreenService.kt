@@ -254,26 +254,6 @@ class ScreenService : Service() {
         }
     }
 
-    /** Every patch of one colour, in screen coordinates, ignoring the top [skipTopPct] %. */
-    fun findColourPatches(target: Int, tolerance: Int, skipTopPct: Int, done: (List<Rect>) -> Unit) {
-        worker.post {
-            val boxes = try {
-                val frame = grab()
-                if (frame == null) {
-                    emptyList()
-                } else {
-                    val minY = frame.h * skipTopPct.coerceIn(0, 90) / 100
-                    BoxFinder.colourPatches(frame.rgb, frame.w, frame.h, target, tolerance, minY)
-                        .map { (r, _) -> Rect(r.left * SCALE, r.top * SCALE, r.right * SCALE, r.bottom * SCALE) }
-                }
-            } catch (t: Throwable) {
-                Log.e(TAG, "colour scan failed", t)
-                emptyList()
-            }
-            main.post { done(boxes) }
-        }
-    }
-
     private class Frame(val rgb: IntArray, val w: Int, val h: Int)
 
     /** The last picture taken - still the screen, until Android sends a new one. */

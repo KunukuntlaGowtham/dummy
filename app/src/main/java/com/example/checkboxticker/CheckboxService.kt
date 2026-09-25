@@ -259,15 +259,13 @@ open class CheckboxService : AccessibilityService() {
             return
         }
         val item = onScreen[i]
-        beforeTick { patches, buttons ->
-            if (!looping) return@beforeTick
-            val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
-            if (ok) ticked++
-            status("box ${item.number}: tapped" + (if (ok) "" else " - refused"))
-            main.postDelayed({
-                if (looping) afterTick(patches, buttons) { tickNext(i + 1) }
-            }, waitMs(prefs(), "tickWaitMs", 300))
-        }
+        val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
+        if (ok) ticked++
+        status("box ${item.number}: tapped" + (if (ok) "" else " - refused"))
+        val p = prefs()
+        main.postDelayed({
+            if (looping) afterTick { tickNext(i + 1) }
+        }, waitMs(p, "tickWaitMs", 300))
     }
 
     /** Step 3: snap again - a box still empty where it was did not tick. */
@@ -713,101 +711,28 @@ open class CheckboxService : AccessibilityService() {
      * the run carry on. The top slice of the screen is left alone throughout, so a coloured
      * status bar or header is never mistaken for the button.
      */
-    private fun afterTick(next: () -> Unit) = afterTick(emptyList(), emptySet(), next)
-
-    /** Words on a button that closes a pop-up. */
-    private val closeWords = setOf("ok", "okay", "close", "yes", "agree", "i agree", "accept", "got it")
-
-    /**
-     * Notes what is on the page before a tick - the patches of the pop-up button's colour
-     * and the close-style buttons - so that afterwards only what the pop-up added is tapped,
-     * never a purple part of the page itself.
-     */
-    private fun beforeTick(then: (List<Rect>, Set<String>) -> Unit) {
-        val p = prefs()
-        val screen = ScreenService.instance
-        val buttons = closeButtons().map { it.second }.toSet()
-        if (!p.getBoolean("tapColour", true) || screen == null) {
-            then(emptyList(), buttons)
-            return
-        }
-        screen.findColourPatches(
-            p.getInt("colour", DEFAULT_COLOUR),
-            p.getInt("colourTol", 60).coerceIn(0, 200),
-            p.getInt("skipTopPct", 20).coerceIn(0, 90)
-        ) { patches -> then(patches, buttons) }
-    }
-
-    /** Visible close-style buttons, with a key made of their text and place. */
-    private fun closeButtons(): List<Pair<AccessibilityNodeInfo, String>> {
-        val out = ArrayList<Pair<AccessibilityNodeInfo, String>>()
-        val stack = ArrayList<AccessibilityNodeInfo>()
-        for (root in roots()) stack.add(root)
-        while (stack.isNotEmpty()) {
-            val n = stack.removeAt(stack.size - 1)
-            for (k in 0 until n.childCount) n.getChild(k)?.let { stack.add(it) }
-            if (!n.isVisibleToUser) continue
-            val text = (n.text ?: n.contentDescription)?.toString()?.trim()?.lowercase() ?: continue
-            if (text !in closeWords) continue
-            val r = Rect()
-            n.getBoundsInScreen(r)
-            if (r.isEmpty || inGestureArea(r)) continue
-            out.add(Pair(n, "$text@${r.toShortString()}"))
-        }
-        return out
-    }
-
-    /**
-     * Some apps answer a tick with a pop-up that has to be dealt with before the next box
-     * can be ticked. This keeps looking (about two seconds) for what the pop-up added: a
-     * new patch of the button colour, or failing that a new OK / Close / Agree button, taps
-     * it, and only then lets the run carry on. The top slice of the screen is left alone,
-     * so a coloured status bar or header is never mistaken for the button.
-     */
-    private fun afterTick(before: List<Rect>, beforeButtons: Set<String>, next: () -> Unit) =
-        clearPopup(before, beforeButtons, 10, next)
-
-    private fun clearPopup(before: List<Rect>, beforeButtons: Set<String>, triesLeft: Int, next: () -> Unit) {
+    private fun afterTick(next: () -> Unit) {
         val p = prefs()
         val screen = ScreenService.instance
         if (!p.getBoolean("tapColour", true) || screen == null) {
             next()
             return
         }
+
         val colour = p.getInt("colour", DEFAULT_COLOUR)
         val tolerance = p.getInt("colourTol", 60).coerceIn(0, 200)
         val skipTop = p.getInt("skipTopPct", 20).coerceIn(0, 90)
-        val near = dp(6)
 
-        screen.findColourPatches(colour, tolerance, skipTop) { patches ->
-            if (!looping && !running) return@findColourPatches
-            // Only what was not there before the tick: the pop-up's button.
-            val fresh = patches.filter { r ->
-                !hitsBubble(r) && before.none {
-                    abs(it.centerX() - r.centerX()) <= near && abs(it.centerY() - r.centerY()) <= near
-                }
-            }
-            val box = fresh.maxByOrNull { it.width() * it.height() }
-            if (box != null) {
+        // The pop-up has already had the after-a-tick wait to appear.
+        screen.findColour(colour, tolerance, skipTop) { box ->
+            if (box == null) {
+                status("pop-up: no ${String.format("#%06X", colour)} below the top $skipTop%")
+                next()
+            } else {
+                showMarkers(listOf(box))
                 gestureTap(box.exactCenterX(), box.exactCenterY())
                 status("pop-up: tapped ${box.centerX()},${box.centerY()}")
                 main.postDelayed({ next() }, waitMs(p, "clearWaitMs", 300))
-                return@findColourPatches
-            }
-            val button = closeButtons().firstOrNull { it.second !in beforeButtons }
-            if (button != null) {
-                val r = Rect()
-                button.first.getBoundsInScreen(r)
-                gestureTap(r.exactCenterX(), r.exactCenterY())
-                status("pop-up: tapped \"${button.first.text ?: button.first.contentDescription}\"")
-                main.postDelayed({ next() }, waitMs(p, "clearWaitMs", 300))
-                return@findColourPatches
-            }
-            if (triesLeft > 1) {
-                main.postDelayed({ clearPopup(before, beforeButtons, triesLeft - 1, next) }, 200L)
-            } else {
-                status("pop-up: none seen (${String.format("#%06X", colour)} or OK/Close)")
-                next()
             }
         }
     }

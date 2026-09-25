@@ -154,14 +154,9 @@ object BoxFinder {
      * The biggest patch of one colour below [minY] - the coloured button in a pop-up.
      * Returns null when no patch is big enough to be worth tapping.
      */
-    fun findColour(rgb: IntArray, w: Int, h: Int, target: Int, tol: Int, minY: Int): Rect? =
-        colourPatches(rgb, w, h, target, tol, minY).maxByOrNull { it.second }?.first
-
-    /** Every patch of one colour below [minY] (at least 25 pixels), with its pixel count. */
-    fun colourPatches(rgb: IntArray, w: Int, h: Int, target: Int, tol: Int, minY: Int): List<Pair<Rect, Int>> {
-        val out = ArrayList<Pair<Rect, Int>>()
+    fun findColour(rgb: IntArray, w: Int, h: Int, target: Int, tol: Int, minY: Int): Rect? {
         val size = w * h
-        if (size == 0) return out
+        if (size == 0) return null
 
         val tr = (target shr 16) and 0xff
         val tg = (target shr 8) and 0xff
@@ -179,6 +174,8 @@ object BoxFinder {
 
         val seen = BooleanArray(size)
         val stack = IntArray(size)
+        var best: Rect? = null
+        var bestCount = 0
 
         for (start in from until size) {
             if (!match[start] || seen[start]) continue
@@ -206,9 +203,12 @@ object BoxFinder {
                 if (idx - w >= from && match[idx - w] && !seen[idx - w]) { seen[idx - w] = true; stack[sp++] = idx - w }
             }
 
-            if (count >= 25) out.add(Pair(Rect(minX, top, maxX + 1, bottom + 1), count))
+            if (count > bestCount && count >= 25) {
+                bestCount = count
+                best = Rect(minX, top, maxX + 1, bottom + 1)
+            }
         }
-        return out
+        return best
     }
 
     private fun dedupe(list: List<Rect>): List<Rect> {
