@@ -72,7 +72,7 @@ public class PickerService extends AccessibilityService {
     private boolean busy;
     private boolean running;
     private static final int STEP_DROP = 0, STEP_CAL = 1, STEP_CHECK = 2;
-    private static final String[] STEP_LABELS = {"▼\nDrop", "📅\nCal", "☑\nCheck"};
+    private static final String[] STEP_LABELS = {"▼\nDrop", "📅☑\nCal", "☑\nCheck"};
     private TextView[] stepButtons;
     /** Which button started the current run. */
     private int stepMode = STEP_DROP;
@@ -113,10 +113,10 @@ public class PickerService extends AccessibilityService {
         controls.setOrientation(LinearLayout.VERTICAL);
 
         // One button per step, to test each on its own: Drop, Cal, Check (+ Continue), See.
+        // Drop, and Cal + Check combined (date, fast 100 mm scroll, Available, checkbox, Continue).
         stepButtons = new TextView[] {
                 roundButton(STEP_LABELS[STEP_DROP], 0xDD6A3FA0, dp(52)),
-                roundButton(STEP_LABELS[STEP_CAL], 0xDD1565C0, dp(52)),
-                roundButton(STEP_LABELS[STEP_CHECK], 0xDDEF6C00, dp(52))};
+                roundButton(STEP_LABELS[STEP_CAL], 0xDD1565C0, dp(52))};
         TextView see = roundButton("👁\nSee", 0xDD00897B, dp(52));
         see.setContentDescription("See what the app sees");
 
@@ -1029,13 +1029,15 @@ public class PickerService extends AccessibilityService {
         if (!running) return;
         log(message);
         if (stepMode == STEP_CAL) {
-            // Cal button: after the date, just a fast scroll down, and done.
+            // Cal + Check button: after the date, a fast 100 mm scroll down, then Check.
             handler.postDelayed(safe(() -> {
-                log("Fast 10 mm scroll down");
                 Rect screen = screenBounds();
-                int x = screen.centerX(), y = screen.height() * 3 / 5;
-                swipe(x, y, x, y - mm(10), 80);
-                stop(message + ". Scrolled down");
+                int x = screen.centerX();
+                int from = screen.bottom - mm(8);
+                int to = Math.max(mm(5), from - mm(100));
+                log("Fast scroll down " + (from - to) + " px (100 mm)");
+                swipe(x, from, x, to, 150);
+                handler.postDelayed(safe(() -> formStep(new boolean[3], FORM_SCROLLS, message)), 600);
             }), 400);
             return;
         }
