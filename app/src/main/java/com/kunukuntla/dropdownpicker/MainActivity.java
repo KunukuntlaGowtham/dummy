@@ -103,6 +103,8 @@ public class MainActivity extends Activity {
         cal.addView(colourChips());
         cal.addView(toggle("Then Available, checkbox, Continue", Keywords.loadFinish(this),
                 on -> Keywords.saveFinish(this, on)));
+        cal.addView(toggle("Start Tick 1 s after Continue", Keywords.loadAutoTick(this),
+                on -> Keywords.saveAutoTick(this, on)));
 
         // Tick (Checkbox Ticker)
         SharedPreferences tp = getSharedPreferences(CheckboxService.PREFS, Context.MODE_PRIVATE);

@@ -37,6 +37,15 @@ final class Keywords {
         prefs(context).edit().putBoolean("finish_form", on).apply();
     }
 
+    /** Whether to start Tick by itself 1 s after Continue is pressed. */
+    static boolean loadAutoTick(Context context) {
+        return prefs(context).getBoolean("auto_tick", true);
+    }
+
+    static void saveAutoTick(Context context, boolean on) {
+        prefs(context).edit().putBoolean("auto_tick", on).apply();
+    }
+
     static String load(Context context) {
         return prefs(context).getString(KEY, "");
     }

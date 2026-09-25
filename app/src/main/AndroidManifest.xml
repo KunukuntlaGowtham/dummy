@@ -30,6 +30,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Invisible: only shows the share-your-screen prompt over the current page. -->
+        <activity
+            android:name=".ShareActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- Checkbox Ticker (merged from Dummydum f81cae4) runs inside PickerService. -->
 
         <service

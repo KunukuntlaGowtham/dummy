@@ -78,6 +78,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private TextView[] stepButtons;
     private static final String TICK_LABEL = "✔\nTick";
     private TextView tickButton;
+    private static final String SHARE_OFF_LABEL = "📡\noff";
+    private static final String SHARE_ON_LABEL = "📡\non";
+    private TextView shareButton;
     /** Which button started the current run. */
     private int stepMode = STEP_DROP;
     private final ScreenReader reader = new ScreenReader();
@@ -98,6 +101,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         super.onAccessibilityEvent(event);
+        updateShareButton();
         // Keep the Tick button in step when a ticker run ends by itself.
         if (tickButton != null) {
             String want = isLooping() ? "■\nStop" : TICK_LABEL;
@@ -159,6 +163,16 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             stepButtons[i].setOnTouchListener(new DragOrTap(() -> run(step), null));
         }
         controls.addView(tickButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        // Small screen-share switch, usable right on the page.
+        shareButton = roundButton(SHARE_OFF_LABEL, 0xFF5F5B6E, dp(40));
+        shareButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        shareButton.setContentDescription("Screen sharing on or off");
+        shareButton.setOnTouchListener(new DragOrTap(this::toggleShare, null));
+        LinearLayout.LayoutParams shareLp = new LinearLayout.LayoutParams(dp(40), dp(40));
+        shareLp.topMargin = dp(8);
+        shareLp.gravity = Gravity.CENTER_HORIZONTAL;
+        controls.addView(shareButton, shareLp);
+        updateShareButton();
         button = stepButtons[STEP_DROP];
 
         buttonParams = new WindowManager.LayoutParams(
@@ -469,6 +483,41 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private long lastShareAsk;
 
+    /** Shows the share-your-screen prompt over the current page (no page change). */
+    private void askShare() {
+        startActivity(new Intent(this, ShareActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_ANIMATION));
+    }
+
+    /** Share button: switch screen sharing on (prompt over the page) or off. */
+    private void toggleShare() {
+        if (com.example.checkboxticker.ScreenService.Companion.getInstance() != null) {
+            stopService(new Intent(this, com.example.checkboxticker.ScreenService.class));
+            Toast.makeText(this, "Screen sharing off", Toast.LENGTH_SHORT).show();
+            handler.postDelayed(this::updateShareButton, 400);
+        } else {
+            askShare();
+        }
+    }
+
+    private void updateShareButton() {
+        if (shareButton == null) return;
+        boolean on = com.example.checkboxticker.ScreenService.Companion.getInstance() != null;
+        String want = on ? SHARE_ON_LABEL : SHARE_OFF_LABEL;
+        if (!want.contentEquals(shareButton.getText())) {
+            shareButton.setText(want);
+            shareButton.setBackground(shareDisc(on));
+        }
+    }
+
+    private GradientDrawable shareDisc(boolean on) {
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(on ? 0xFF2E9E62 : 0xFF5F5B6E);
+        bg.setStroke(Math.max(1, dp(2)), 0x66FFFFFF);
+        return bg;
+    }
+
     /**
      * This phone won't give an accessibility screenshot (Android 10 or older, or the maker
      * blocks it) and screen sharing is off: open the Share screen prompt, at most every 20 s.
@@ -479,9 +528,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         long now = android.os.SystemClock.uptimeMillis();
         if (now - lastShareAsk < 20000) return;
         lastShareAsk = now;
-        startActivity(new Intent(this, MainActivity.class)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                .putExtra(MainActivity.EXTRA_ASK_SHARE, true));
+        Toast.makeText(this, "This phone needs screen sharing - tap Start now",
+                Toast.LENGTH_LONG).show();
+        askShare();
     }
 
     /** The latest picture from the shared screen (Checkbox Ticker's screen reading), or null. */
@@ -1249,6 +1298,15 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             showHighlight(null, null, r, -1, -1);
             tap(r.centerX(), r.centerY());
             stop(summary + ". Pressed Continue");
+            if (Keywords.loadAutoTick(this)) {
+                // Next page loads, then the ticker takes over by itself.
+                handler.postDelayed(() -> {
+                    if (!running && !isLooping()) {
+                        startLoop();
+                        if (tickButton != null) tickButton.setText(isLooping() ? "■\nStop" : TICK_LABEL);
+                    }
+                }, 1000);
+            }
             return;
         }
         if (scrollsLeft <= 0) {
