@@ -1185,6 +1185,7 @@ public class PickerService extends AccessibilityService {
         Rect screen = screenBounds();
         AccessibilityNodeInfo best = null, fallback = null;
         int bestTop = Integer.MAX_VALUE, fallbackTop = Integer.MAX_VALUE;
+        List<TextNode> availables = new ArrayList<>();
         for (AccessibilityNodeInfo root : roots()) {
             List<AccessibilityNodeInfo> stack = new ArrayList<>();
             stack.add(root);
@@ -1204,7 +1205,7 @@ public class PickerService extends AccessibilityService {
                     hit = text.matches(".*\\bavailable\\b.*")
                             && !text.matches(".*\\b(not|un)\\s*available\\b.*")
                             && !text.contains("unavailable");
-                    // The first one from the top; it is tapped on the word itself.
+                    // The second one from the top (see below); tapped on the word itself.
                 } else if (stage == 1) {
                     hit = c.contains("CheckBox")
                             || (n.isCheckable() && !c.contains("Radio") && !c.contains("Switch"));
@@ -1218,6 +1219,7 @@ public class PickerService extends AccessibilityService {
                 n.getBoundsInScreen(r);
                 if (r.isEmpty() || r.bottom < 0 || r.top > screen.bottom) continue;
                 if (r.top < 0 || r.bottom > screen.bottom) continue;
+                if (hit && stage == 0) availables.add(new TextNode(n, r, text));
                 if (hit && r.top < bestTop) {
                     best = n;
                     bestTop = r.top;
@@ -1226,6 +1228,13 @@ public class PickerService extends AccessibilityService {
                     fallbackTop = r.top;
                 }
             }
+        }
+        if (stage == 0 && availables.size() >= 2) {
+            // Take the second "Available" from the top (the first is usually not the slot).
+            availables.sort((a, b) -> a.bounds.top != b.bounds.top
+                    ? Integer.compare(a.bounds.top, b.bounds.top)
+                    : Integer.compare(a.bounds.left, b.bounds.left));
+            return availables.get(1).node;
         }
         return best != null ? best : fallback;
     }
