@@ -74,7 +74,9 @@ public class MainActivity extends Activity {
         root.addView(text("Keywords (optional)\n"
                 + "Words to look for in the options, separated by commas, most wanted first. "
                 + "Used when a Keyword choice is picked below: Start searches the open "
-                + "dropdown for them, scrolling the list 25 mm at a time until it finds one.",
+                + "dropdown for them, scrolling the list 15 mm at a time until it finds one. "
+                + "You can type a full option name even if it has commas in it; commas, "
+                + "brackets and extra spaces are ignored when comparing.",
                 pad));
         EditText keywords = new EditText(this);
         keywords.setHint("e.g. Tirumala, Male Only");

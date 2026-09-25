@@ -53,14 +53,26 @@ final class Keywords {
         prefs(context).edit().putString("last_run", text).apply();
     }
 
-    /** The keywords in order, lower-cased, blanks dropped. */
+    /**
+     * The keywords in order, normalised (see {@link #norm}). The whole box
+     * comes first, so an option name that itself contains commas still
+     * matches; then each part split on new lines, "|", ";" or ",".
+     */
     static List<String> list(Context context) {
         List<String> out = new ArrayList<>();
-        for (String part : load(context).split(",")) {
-            String k = part.trim().toLowerCase(Locale.ROOT);
-            if (!k.isEmpty()) out.add(k);
+        String all = load(context);
+        String whole = norm(all);
+        if (!whole.isEmpty()) out.add(whole);
+        for (String part : all.split("[\\n|;,]")) {
+            String k = norm(part);
+            if (!k.isEmpty() && !out.contains(k)) out.add(k);
         }
         return out;
+    }
+
+    /** Lower case, punctuation and repeated spaces removed: "Seva, Tirumala (Male)" -> "seva tirumala male". */
+    static String norm(String s) {
+        return s.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}]+", " ").trim();
     }
 
     private static SharedPreferences prefs(Context context) {
