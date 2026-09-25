@@ -921,8 +921,8 @@ public class PickerService extends AccessibilityService {
         Rect screen = screenBounds();
         int x = screen.centerX();
         int y = screen.height() * 3 / 5;
-        if (down) swipe(x, y, x, y - mm(10), 250);
-        else swipe(x, y - mm(10), x, y, 250);
+        if (down) swipe(x, y, x, y - mm(10), 150);
+        else swipe(x, y - mm(10), x, y, 150);
     }
 
     /** The day-number cells (index 1-31) under a month header, before the next header. */
@@ -1028,11 +1028,16 @@ public class PickerService extends AccessibilityService {
     private void afterCalendar(String message) {
         if (!running) return;
         log(message);
-        if (stepMode == STEP_CAL || !Keywords.loadFinish(this)) {
+        if (!Keywords.loadFinish(this)) {
             stop(message);
             return;
         }
-        handler.postDelayed(safe(() -> formStep(new boolean[3], FORM_SCROLLS, message)), 700);
+        // Date picked: a quick 10 mm scroll down, then the Check step.
+        handler.postDelayed(safe(() -> {
+            log("Quick 10 mm scroll, then Check");
+            pageSwipe(true);
+            handler.postDelayed(safe(() -> formStep(new boolean[3], FORM_SCROLLS, message)), 350);
+        }), 500);
     }
 
     /**
@@ -1153,7 +1158,7 @@ public class PickerService extends AccessibilityService {
             return;
         }
         pageSwipe(true);
-        handler.postDelayed(safe(() -> formStep(done, scrollsLeft - 1, summary)), 350);
+        handler.postDelayed(safe(() -> formStep(done, scrollsLeft - 1, summary)), 300);
     }
 
     /** Taps a radio button or checkbox like a finger (on its label if the box itself is tiny). */

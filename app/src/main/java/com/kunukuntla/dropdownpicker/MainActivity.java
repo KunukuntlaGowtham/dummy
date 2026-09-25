@@ -192,6 +192,16 @@ public class MainActivity extends Activity {
         lastRun.setTextIsSelectable(true);
         root.addView(lastRun, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        Button shareLog = new Button(this);
+        shareLog.setText("Share last run");
+        shareLog.setOnClickListener(v -> {
+            Intent send = new Intent(Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, "Dropdown Picker last run:\n"
+                            + Keywords.loadLastRun(this));
+            startActivity(Intent.createChooser(send, "Share last run"));
+        });
+        root.addView(shareLog);
 
         ScrollView scroll = new ScrollView(this);
         scroll.addView(root);
