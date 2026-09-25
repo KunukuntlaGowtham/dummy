@@ -1028,6 +1028,17 @@ public class PickerService extends AccessibilityService {
     private void afterCalendar(String message) {
         if (!running) return;
         log(message);
+        if (stepMode == STEP_CAL) {
+            // Cal button: after the date, just a fast scroll down, and done.
+            handler.postDelayed(safe(() -> {
+                log("Fast 10 mm scroll down");
+                Rect screen = screenBounds();
+                int x = screen.centerX(), y = screen.height() * 3 / 5;
+                swipe(x, y, x, y - mm(10), 80);
+                stop(message + ". Scrolled down");
+            }), 400);
+            return;
+        }
         if (!Keywords.loadFinish(this)) {
             stop(message);
             return;
