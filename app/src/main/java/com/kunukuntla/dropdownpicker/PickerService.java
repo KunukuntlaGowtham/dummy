@@ -56,6 +56,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private static final long OPEN_WAIT_MS = 450;
     private static final int MAX_MONTH_CHANGES = 12;
+    /** Draw outlines where the app taps. Off: taps happen without any marker. */
+    private static final boolean SHOW_TAPS = false;
     private static final int OPEN_CHECKS = 3;
     private static final int MAX_SCROLLS = 40;
     private static final int FORM_SCROLLS = 40;
@@ -1353,6 +1355,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     /** Briefly outlines things on the real screen. Touches pass through. */
     private void showHighlight(Rect line, Rect arrow, Rect option, int tapX, int tapY) {
         removeHighlight();
+        if (!SHOW_TAPS) return; // taps are not shown on screen
         MarkupView v = new MarkupView(this);
         v.line = line;
         v.arrow = arrow;

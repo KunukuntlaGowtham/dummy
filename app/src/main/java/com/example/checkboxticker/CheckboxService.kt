@@ -739,6 +739,8 @@ open class CheckboxService : AccessibilityService() {
 
     /** Flashes a ring round everything the screen scan found, so it is clear what was tapped. */
     private fun showMarkers(boxes: List<Rect>) {
+        // Taps are not shown on screen.
+        if (boxes.isNotEmpty()) return
         // A ring is a square outline with a flat middle, which is exactly what the scanner
         // looks for, so during a run it would photograph its own markers and tap those.
         if (looping) return
