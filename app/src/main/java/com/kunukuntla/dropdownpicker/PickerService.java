@@ -81,6 +81,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private static final String SHARE_OFF_LABEL = "📡\noff";
     private static final String SHARE_ON_LABEL = "📡\non";
     private TextView shareButton;
+    private TextView backButton;
     /** Which button started the current run. */
     private int stepMode = STEP_DROP;
     private final ScreenReader reader = new ScreenReader();
@@ -163,6 +164,13 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             stepButtons[i].setOnTouchListener(new DragOrTap(() -> run(step), null));
         }
         controls.addView(tickButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        // Back, scroll on the other page, Back again.
+        backButton = roundButton("↩\nBack", 0xFF8D6E63, dp(52));
+        backButton.setContentDescription("Back, scroll, Back");
+        backButton.setOnTouchListener(new DragOrTap(this::backScrollBack, null));
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dp(52), dp(52));
+        backLp.topMargin = dp(6);
+        controls.addView(backButton, backLp);
         // Small screen-share switch, usable right on the page.
         shareButton = roundButton(SHARE_OFF_LABEL, 0xFF5F5B6E, dp(40));
         shareButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
@@ -482,6 +490,28 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     private long lastShareAsk;
+
+    /** Back button: press Back, wait, scroll down on that page, press Back again. */
+    private void backScrollBack() {
+        if (running || busy) return;
+        int waitMs = Keywords.loadBackWait(this);
+        int scrollMm = Keywords.loadBackScroll(this);
+        backButton.setAlpha(0.5f);
+        performGlobalAction(GLOBAL_ACTION_BACK);
+        handler.postDelayed(() -> {
+            if (scrollMm > 0) {
+                Rect screen = screenBounds();
+                int x = screen.centerX();
+                int from = screen.height() * 3 / 4;
+                int to = Math.max(mm(5), from - mm(scrollMm));
+                swipe(x, from, x, to, 250);
+            }
+            handler.postDelayed(() -> {
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                backButton.setAlpha(1f);
+            }, 600);
+        }, waitMs);
+    }
 
     /** Shows the share-your-screen prompt over the current page (no page change). */
     private void askShare() {

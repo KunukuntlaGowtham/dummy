@@ -37,6 +37,23 @@ final class Keywords {
         prefs(context).edit().putBoolean("finish_form", on).apply();
     }
 
+    /** Back button: wait after the first Back (ms) and how far to scroll (mm, 0 = none). */
+    static int loadBackWait(Context context) {
+        return prefs(context).getInt("back_wait", 1000);
+    }
+
+    static void saveBackWait(Context context, int ms) {
+        prefs(context).edit().putInt("back_wait", ms).apply();
+    }
+
+    static int loadBackScroll(Context context) {
+        return prefs(context).getInt("back_scroll", 30);
+    }
+
+    static void saveBackScroll(Context context, int mm) {
+        prefs(context).edit().putInt("back_scroll", mm).apply();
+    }
+
     /** Whether to start Tick by itself 1 s after Continue is pressed. */
     static boolean loadAutoTick(Context context) {
         return prefs(context).getBoolean("auto_tick", true);

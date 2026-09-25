@@ -124,6 +124,23 @@ public class MainActivity extends Activity {
         tick.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 300), "clearWaitMs", 0, 10000));
         tick.addView(numberRow("After scroll (ms)", tp.getInt("scrollWaitMs", 300), "scrollWaitMs", 0, 10000));
 
+        // Back, scroll, Back
+        LinearLayout back = card(body, "↩", "Back", 0xFF8D6E63);
+        back.addView(valueRow("Wait after Back (ms)", String.valueOf(Keywords.loadBackWait(this)),
+                InputType.TYPE_CLASS_NUMBER, s -> {
+                    try {
+                        Keywords.saveBackWait(this, Math.max(0, Math.min(10000, Integer.parseInt(s.trim()))));
+                    } catch (NumberFormatException ignored) {
+                    }
+                }));
+        back.addView(valueRow("Scroll down (mm)", String.valueOf(Keywords.loadBackScroll(this)),
+                InputType.TYPE_CLASS_NUMBER, s -> {
+                    try {
+                        Keywords.saveBackScroll(this, Math.max(0, Math.min(200, Integer.parseInt(s.trim()))));
+                    } catch (NumberFormatException ignored) {
+                    }
+                }));
+
         // Last run
         LinearLayout log = card(body, "≡", "Last run", 0xFF6D6A7C);
         lastRun = new TextView(this);
