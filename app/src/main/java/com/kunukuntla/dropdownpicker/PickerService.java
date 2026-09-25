@@ -71,6 +71,11 @@ public class PickerService extends AccessibilityService {
     private String screenshotError;
     private boolean busy;
     private boolean running;
+    private static final int STEP_DROP = 0, STEP_CAL = 1, STEP_CHECK = 2;
+    private static final String[] STEP_LABELS = {"▼\nDrop", "📅\nCal", "☑\nCheck"};
+    private TextView[] stepButtons;
+    /** Which button started the current run. */
+    private int stepMode = STEP_DROP;
     private final ScreenReader reader = new ScreenReader();
     /** What happened during the last Start, shown on the app's main screen. */
     private final StringBuilder runLog = new StringBuilder();
@@ -105,17 +110,23 @@ public class PickerService extends AccessibilityService {
         controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
 
-        button = roundButton("▶\nStart", 0xDD6A3FA0, dp(56));
-        button.setContentDescription("Start selecting dropdowns");
-        TextView see = roundButton("👁\nSee", 0xDD00897B, dp(48));
+        // One button per step, to test each on its own: Drop, Cal, Check (+ Continue), See.
+        stepButtons = new TextView[] {
+                roundButton(STEP_LABELS[STEP_DROP], 0xDD6A3FA0, dp(52)),
+                roundButton(STEP_LABELS[STEP_CAL], 0xDD1565C0, dp(52)),
+                roundButton(STEP_LABELS[STEP_CHECK], 0xDDEF6C00, dp(52))};
+        TextView see = roundButton("👁\nSee", 0xDD00897B, dp(52));
         see.setContentDescription("See what the app sees");
 
-        LinearLayout.LayoutParams startLp = new LinearLayout.LayoutParams(dp(56), dp(56));
-        LinearLayout.LayoutParams seeLp = new LinearLayout.LayoutParams(dp(48), dp(48));
-        seeLp.gravity = Gravity.CENTER_HORIZONTAL;
-        seeLp.topMargin = dp(8);
-        controls.addView(button, startLp);
-        controls.addView(see, seeLp);
+        for (int i = 0; i < stepButtons.length; i++) {
+            int step = i;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(52), dp(52));
+            lp.bottomMargin = dp(6);
+            controls.addView(stepButtons[i], lp);
+            stepButtons[i].setOnTouchListener(new DragOrTap(() -> run(step), null));
+        }
+        controls.addView(see, new LinearLayout.LayoutParams(dp(52), dp(52)));
+        button = stepButtons[STEP_DROP];
 
         buttonParams = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
@@ -125,11 +136,9 @@ public class PickerService extends AccessibilityService {
                 PixelFormat.TRANSLUCENT);
         buttonParams.gravity = Gravity.TOP | Gravity.END;
         buttonParams.x = dp(12);
-        buttonParams.y = dp(160);
+        buttonParams.y = dp(120);
 
-        // Both buttons drag the pair around; a plain tap runs the button's action,
-        // and a long-press on Start also shows what the app sees.
-        button.setOnTouchListener(new DragOrTap(this::run, this::showWhatISee));
+        // Every button drags the column around; a plain tap runs the button's action.
         see.setOnTouchListener(new DragOrTap(this::showWhatISee, null));
         windowManager.addView(controls, buttonParams);
     }
@@ -230,8 +239,8 @@ public class PickerService extends AccessibilityService {
         }
     }
 
-    /** Button tap: Start, or Stop if already running. */
-    private void run() {
+    /** A step button was tapped: run that step alone, or stop if something is running. */
+    private void run(int step) {
         if (running) {
             stop("Stopped");
             return;
@@ -239,10 +248,18 @@ public class PickerService extends AccessibilityService {
         if (busy) return;
         busy = true;
         running = true;
+        stepMode = step;
+        button = stepButtons[step];
         button.setText("■\nStop");
         runLog.setLength(0);
-        log("Start");
-        findAndOpen();
+        log("Start: " + STEP_LABELS[step].replace('\n', ' '));
+        if (step == STEP_DROP) {
+            findAndOpen();
+        } else if (step == STEP_CAL) {
+            startCalendar("Calendar test");
+        } else {
+            formStep(new boolean[3], FORM_SCROLLS, "Check test");
+        }
     }
 
     private void stop(String message) {
@@ -253,7 +270,7 @@ public class PickerService extends AccessibilityService {
         handler.removeCallbacksAndMessages(null);
         // Leave the last outline up briefly so you can see what was tapped.
         handler.postDelayed(this::removeHighlight, 1200);
-        button.setText("▶\nStart");
+        for (int i = 0; i < stepButtons.length; i++) stepButtons[i].setText(STEP_LABELS[i]);
         setButtonVisible(true);
         if (message != null) Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
@@ -435,15 +452,32 @@ public class PickerService extends AccessibilityService {
         boolean clicked = t.node != null && t.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         if (!clicked) tap(t.tapX, t.tapY);
 
+        handler.postDelayed(safe(() -> ensureOpen(t, before)), OPEN_WAIT_MS);
+    }
+
+    /** If nothing new showed up, the dropdown didn't open: tap it once more (on the arrow). */
+    private void ensureOpen(Target t, Set<String> before) {
+        if (!running) return;
+        if (options(t, before, true).isEmpty() && t.arrow != null) {
+            log("The dropdown didn't seem to open, tapping its arrow");
+            tap(t.arrow.centerX(), t.arrow.centerY());
+            handler.postDelayed(safe(() -> pick(t, before)), OPEN_WAIT_MS);
+            return;
+        }
+        pick(t, before);
+    }
+
+    /** The dropdown is open: tap 4 mm below, or search for a keyword. */
+    private void pick(Target t, Set<String> before) {
+        if (!running) return;
         List<String> keywords = Keywords.list(this);
         int pickMode = Keywords.loadPickMode(this);
         if (pickMode == Keywords.PICK_BELOW || keywords.isEmpty()) {
             // The first option sits just below the line.
-            handler.postDelayed(safe(() -> tapBelow(t)), OPEN_WAIT_MS);
+            tapBelow(t);
         } else {
-            boolean exact = pickMode == Keywords.PICK_EXACT;
-            handler.postDelayed(safe(() -> search(t, before, keywords, exact, OPEN_CHECKS,
-                    MAX_SCROLLS, 0, null)), OPEN_WAIT_MS);
+            search(t, before, keywords, pickMode == Keywords.PICK_EXACT, OPEN_CHECKS,
+                    MAX_SCROLLS, 0, null);
         }
     }
 
@@ -546,7 +580,7 @@ public class PickerService extends AccessibilityService {
         swipeList(t, visible);
         // Let the list settle before looking again.
         handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
-                scrollsLeft - 1, nowStuck, seen)), 700);
+                scrollsLeft - 1, nowStuck, seen)), 500);
     }
 
     /**
@@ -573,7 +607,7 @@ public class PickerService extends AccessibilityService {
         })), 80);
     }
 
-    /** A slow 15 mm drag up inside the open list. */
+    /** A medium-speed 30 mm drag up inside the open list. */
     private void swipeList(Target t, List<TextNode> visible) {
         // Swipe inside the list itself when we can find it.
         Rect list = null;
@@ -593,17 +627,17 @@ public class PickerService extends AccessibilityService {
         int x, from, to;
         if (list != null) {
             x = list.centerX();
-            from = Math.min(list.bottom - mm(1), list.centerY() + mm(7.5f));
-            to = Math.max(list.top + mm(1), from - mm(15));
+            from = Math.min(list.bottom - mm(1), list.centerY() + mm(15));
+            to = Math.max(list.top + mm(1), from - mm(30));
         } else {
             // The list sits over the field, around the line.
             x = t.line.centerX();
-            from = t.line.bottom + mm(7);
-            to = from - mm(15);
+            from = t.line.bottom + mm(15);
+            to = from - mm(30);
         }
-        log("Dragging the list up 15 mm (" + from + " -> " + to + ")");
-        // A slow drag, so the list moves exactly 15 mm and doesn't keep sliding.
-        drag(x, from, x, to, 600);
+        log("Dragging the list up 30 mm (" + from + " -> " + to + ")");
+        // A medium-speed drag that holds before lifting, so the list moves 30 mm and stops.
+        drag(x, from, x, to, 350);
     }
 
     /** On screen and inside the box of the list it scrolls in (not hidden by scrolling). */
@@ -668,19 +702,33 @@ public class PickerService extends AccessibilityService {
     /** Dropdown step finished: go on to the calendar if a day is set, else stop. */
     private void afterDropdown(String message) {
         if (!running) return;
+        if (stepMode == STEP_DROP) {
+            // Testing the dropdown on its own.
+            stop(message);
+            return;
+        }
+        startCalendar(message);
+    }
+
+    private void startCalendar(String message) {
         log(message);
         int mode = DayChoice.loadMode(this);
         if (mode == DayChoice.MODE_OFF) {
-            afterCalendar(message);
-            return;
+            if (stepMode != STEP_CAL) {
+                afterCalendar(message);
+                return;
+            }
+            mode = DayChoice.MODE_EXACT; // the Cal button always tries the calendar
         }
+        int calMode = mode;
         LocalDate date = DayChoice.parse(DayChoice.loadDate(this));
         if (date == null) {
             stop(message + ". Calendar skipped: enter the day as DD/MM/YYYY in the app");
             return;
         }
-        log("Calendar: want " + date + (mode == DayChoice.MODE_EXACT ? " (exact)" : " (or best)"));
-        handler.postDelayed(safe(() -> calendarStep(date, mode, MAX_MONTH_CHANGES, PAGE_SCROLLS)), 500);
+        log("Calendar: want " + date + (calMode == DayChoice.MODE_EXACT ? " (exact)" : " (or best)"));
+        handler.postDelayed(safe(() -> calendarStep(date, calMode, MAX_MONTH_CHANGES, PAGE_SCROLLS)),
+                stepMode == STEP_CAL ? 0 : 500);
     }
 
     /**
@@ -935,7 +983,7 @@ public class PickerService extends AccessibilityService {
     private void afterCalendar(String message) {
         if (!running) return;
         log(message);
-        if (!Keywords.loadFinish(this)) {
+        if (stepMode == STEP_CAL || !Keywords.loadFinish(this)) {
             stop(message);
             return;
         }
