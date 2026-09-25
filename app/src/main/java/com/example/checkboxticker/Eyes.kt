@@ -30,7 +30,11 @@ interface Eyes {
  * sharing is needed and nothing runs between pictures. Android allows about three of these a
  * second, so pictures are spaced out a little. Only used on Android 11 and newer.
  */
-class ShotEyes(private val service: AccessibilityService) : Eyes {
+class ShotEyes(
+    private val service: AccessibilityService,
+    /** Called when the phone refuses a screenshot (not just "too soon"). */
+    private val onRefused: () -> Unit = {}
+) : Eyes {
 
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor()
@@ -99,6 +103,7 @@ class ShotEyes(private val service: AccessibilityService) : Eyes {
                     } finally {
                         buffer.close()
                     }
+                    if (shot == null) main.post(onRefused)
                     then(shot)
                 }
 
@@ -107,6 +112,10 @@ class ShotEyes(private val service: AccessibilityService) : Eyes {
                         main.postDelayed({ take(then, retry = false) }, MIN_GAP_MS)
                     } else {
                         Log.w(ScreenService.TAG, "screenshot failed: $errorCode")
+                        // A secure page blocks sharing too, so only ask for it otherwise.
+                        if (errorCode != AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) {
+                            main.post(onRefused)
+                        }
                         worker.execute { then(null) }
                     }
                 }

@@ -42,6 +42,8 @@ import java.util.function.Consumer;
 public class MainActivity extends Activity {
 
     private static final int REQUEST_SHARE = 1;
+    /** Opened by the service when this phone needs screen sharing: ask for it straight away. */
+    static final String EXTRA_ASK_SHARE = "askShare";
 
     // Palette
     private static final int BG = 0xFFF3F1F8;
@@ -59,6 +61,7 @@ public class MainActivity extends Activity {
     private TextView accessibilityChip;
     private TextView screenChip;
     private TextView lastRun;
+    private boolean askedByService;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -147,6 +150,23 @@ public class MainActivity extends Activity {
         scroll.setFillViewport(true);
         scroll.addView(page);
         setContentView(scroll);
+        askShareIfWanted(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        askShareIfWanted(intent);
+    }
+
+    private void askShareIfWanted(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_ASK_SHARE, false)) return;
+        intent.removeExtra(EXTRA_ASK_SHARE);
+        if (ScreenService.Companion.getInstance() != null) return;
+        askedByService = true;
+        Toast.makeText(this, "This phone needs screen sharing - tap Start now",
+                Toast.LENGTH_LONG).show();
+        toggleSharing();
     }
 
     // ---- Header ----------------------------------------------------------------------
@@ -520,6 +540,11 @@ public class MainActivity extends Activity {
                 .putExtra("code", resultCode)
                 .putExtra("data", data));
         handler.postDelayed(this::refresh, 500);
+        if (askedByService) {
+            // Asked for automatically: step back to the page being worked on.
+            askedByService = false;
+            handler.postDelayed(() -> moveTaskToBack(true), 700);
+        }
     }
 
     private boolean isServiceEnabled() {

@@ -102,11 +102,18 @@ open class CheckboxService : AccessibilityService() {
      * newer (no screen sharing needed), screen sharing on older phones.
      */
     private fun eyes(): Eyes? {
+        // Screen sharing when it is on (fastest, and the only way on phones that refuse the
+        // screenshot); otherwise the accessibility screenshot on Android 11 and newer.
+        ScreenService.instance?.let { return it }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return shotEyes ?: ShotEyes(this).also { shotEyes = it }
+            return shotEyes ?: ShotEyes(this) { screenshotRefused() }.also { shotEyes = it }
         }
-        return ScreenService.instance
+        screenshotRefused()
+        return null
     }
+
+    /** The phone won't give a screenshot: a subclass can ask for screen sharing instead. */
+    protected open fun screenshotRefused() {}
 
     /** Re-reads the saved options. Called by the settings screen after saving. */
     fun applySettings() {
@@ -185,7 +192,7 @@ open class CheckboxService : AccessibilityService() {
     fun startLoop() {
         if (looping) return
         if (eyes() == null) {
-            toast("Share the screen in the app first")
+            toast("This phone needs screen sharing - tap Start now")
             return
         }
         looping = true

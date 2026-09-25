@@ -399,7 +399,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             // Android 10 and older: only the shared screen can be read.
             Bitmap shared = sharedSnapshot();
-            if (shared == null) screenshotError = "open Dropdown Picker and tap Share screen first";
+            if (shared == null) {
+                screenshotError = "this phone needs screen sharing - tap Start now";
+                screenshotRefused();
+            }
             done.accept(shared);
             return;
         }
@@ -434,6 +437,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                         return;
                     }
                 }
+                if (errorCode != ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
+                        && errorCode != ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) {
+                    screenshotRefused();
+                }
                 if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && retry) {
                     // Android allows only a few screenshots per second; wait and try again.
                     handler.postDelayed(() -> capture(done, false), 500);
@@ -458,6 +465,23 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 safe(() -> done.accept(null)).run();
             }
         });
+    }
+
+    private long lastShareAsk;
+
+    /**
+     * This phone won't give an accessibility screenshot (Android 10 or older, or the maker
+     * blocks it) and screen sharing is off: open the Share screen prompt, at most every 20 s.
+     */
+    @Override
+    protected void screenshotRefused() {
+        if (com.example.checkboxticker.ScreenService.Companion.getInstance() != null) return;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastShareAsk < 20000) return;
+        lastShareAsk = now;
+        startActivity(new Intent(this, MainActivity.class)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra(MainActivity.EXTRA_ASK_SHARE, true));
     }
 
     /** The latest picture from the shared screen (Checkbox Ticker's screen reading), or null. */
