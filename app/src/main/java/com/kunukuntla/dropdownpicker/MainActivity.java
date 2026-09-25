@@ -65,10 +65,10 @@ public class MainActivity extends Activity {
         root.addView(shareStatus);
 
         root.addView(text("Step 3 - Start\n"
-                + "Open the page with the dropdowns and tap the purple Start button. The app "
-                + "takes a screenshot, finds the dropdowns (an underline with a down arrow at "
-                + "its right end) and goes through them one after another, top to bottom: "
-                + "open it, select its first option, next one. Tap Stop to stop early.\n\n"
+                + "Open the page with the dropdown and tap the purple Start button. The app "
+                + "takes a screenshot, finds the dropdown (an underline with a down arrow at "
+                + "its right end), taps it once and selects the first option it can read. "
+                + "If it can't read any option, it taps half a centimetre below the line.\n\n"
                 + "Tap the green See button to see what the app sees, with each dropdown's "
                 + "underline (red) and arrow (green) marked. Share saves that picture to your "
                 + "Gallery (Pictures/DropdownPicker) and sends it.", pad));

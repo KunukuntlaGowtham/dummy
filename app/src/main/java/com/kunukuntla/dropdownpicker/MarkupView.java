@@ -31,6 +31,8 @@ final class MarkupView extends View {
     List<DropdownDetector.Hit> hits = new ArrayList<>();
     Rect line, arrow, option;
     int tapX = -1, tapY = -1;
+    /** Where the first option is tapped if its text can't be read. */
+    int backupX = -1, backupY = -1;
     String caption;
 
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -88,6 +90,10 @@ final class MarkupView extends View {
         if (tapX >= 0) {
             stroke.setColor(PINK);
             c.drawCircle(ox + tapX * scale, oy + tapY * scale, 14 * density, stroke);
+        }
+        if (backupX >= 0) {
+            fill.setColor(BLUE);
+            c.drawCircle(ox + backupX * scale, oy + backupY * scale, 6 * density, fill);
         }
         if (caption != null) {
             float pad = 8 * density;

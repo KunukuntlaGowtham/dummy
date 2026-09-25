@@ -43,9 +43,9 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Accessibility service that shows floating Start and See buttons. Tapping it goes
- * through the dropdowns on screen one after another, top to bottom: take a
- * screenshot, find the next dropdown, open it and select its first option.
+ * Accessibility service that shows floating Start and See buttons. Start takes
+ * a screenshot, taps the top-most dropdown once and selects its first option
+ * (or taps half a centimetre below its line if no option text can be read).
  * Long-pressing it shows the screenshot the app analysed with what it found
  * marked on it, and lets the user share that picture.
  */
@@ -53,8 +53,6 @@ public class PickerService extends AccessibilityService {
 
     private static final long OPEN_WAIT_MS = 700;
     private static final int PICK_ATTEMPTS = 3;
-    private static final int MAX_STEPS = 30;
-    private static final long STEP_PAUSE_MS = 900;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
@@ -66,8 +64,6 @@ public class PickerService extends AccessibilityService {
     private String screenshotError;
     private boolean busy;
     private boolean running;
-    private int picked, steps;
-    private final List<Integer> doneYs = new ArrayList<>();
     private View highlight;
     private View preview;
 
@@ -239,43 +235,36 @@ public class PickerService extends AccessibilityService {
     /** Button tap: Start, or Stop if already running. */
     private void run() {
         if (running) {
-            stop("Stopped. Selected " + picked + " dropdown(s).");
+            stop("Stopped");
             return;
         }
         if (busy) return;
         busy = true;
         running = true;
-        picked = 0;
-        steps = 0;
-        doneYs.clear();
         button.setText("■\nStop");
-        nextStep();
+        findAndOpen();
     }
 
     private void stop(String message) {
         running = false;
         busy = false;
         handler.removeCallbacksAndMessages(null);
-        removeHighlight();
+        // Leave the last outline up briefly so you can see what was tapped.
+        handler.postDelayed(this::removeHighlight, 1200);
         button.setText("▶\nStart");
         setButtonVisible(true);
         if (message != null) Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
-    /** Takes a fresh screenshot, then opens the next dropdown that hasn't been done yet. */
-    private void nextStep() {
-        if (!running) return;
-        if (++steps > MAX_STEPS) {
-            stop("Done. Selected " + picked + " dropdown(s).");
-            return;
-        }
-        // Keep the button and the outlines out of the screenshot.
+    /** Takes a screenshot and opens the top-most dropdown in it. */
+    private void findAndOpen() {
+        // Keep the button and old outlines out of the screenshot.
         removeHighlight();
         setButtonVisible(false);
         handler.postDelayed(() -> capture(bmp -> {
             if (bmp == null) {
                 setButtonVisible(true);
-                openNext(nodeTargets());
+                open(nodeTargets());
                 return;
             }
             analyze(bmp, result -> {
@@ -286,40 +275,22 @@ public class PickerService extends AccessibilityService {
                     targets.add(new Target(h.line, h.arrow, h.tapX, h.tapY, null));
                 }
                 // Nothing seen in the picture: try native dropdown widgets instead.
-                openNext(targets.isEmpty() ? nodeTargets() : targets);
+                open(targets.isEmpty() ? nodeTargets() : targets);
             });
         }), 250);
     }
 
-    private void openNext(List<Target> targets) {
+    private void open(List<Target> targets) {
         if (!running) return;
-        Target next = null;
-        for (Target t : targets) {
-            if (!isDone(t)) {
-                next = t;
-                break;
-            }
-        }
-        if (next == null) {
-            String none = screenshotError != null
+        if (targets.isEmpty()) {
+            stop(screenshotError != null
                     ? "Couldn't take a screenshot: " + screenshotError
-                    : "No dropdown found. Tap See to see what the app sees.";
-            stop(picked == 0 ? none : "Done. Selected " + picked + " dropdown(s).");
+                    : "No dropdown found. Tap See to see what the app sees.");
             return;
         }
-        doneYs.add(next.line.centerY());
-        Target t = next;
+        Target t = targets.get(0);
         showHighlight(t.line, t.arrow, null, t.tapX, t.tapY);
         handler.postDelayed(() -> openAndPick(t), 400);
-    }
-
-    /** A dropdown counts as done if one at about the same height was already handled. */
-    private boolean isDone(Target t) {
-        int tolerance = dp(16);
-        for (int y : doneYs) {
-            if (Math.abs(y - t.line.centerY()) <= tolerance) return true;
-        }
-        return false;
     }
 
     /**
@@ -423,6 +394,7 @@ public class PickerService extends AccessibilityService {
         return out;
     }
 
+    /** Taps the dropdown once, then selects its first option. */
     private void openAndPick(Target t) {
         if (!running) return;
         Set<String> before = new HashSet<>();
@@ -430,36 +402,45 @@ public class PickerService extends AccessibilityService {
 
         boolean clicked = t.node != null && t.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         if (!clicked) tap(t.tapX, t.tapY);
-        handler.postDelayed(() -> pickFirst(before, t.tapX, t.tapY, PICK_ATTEMPTS), OPEN_WAIT_MS);
+        handler.postDelayed(() -> pickFirst(t, before, PICK_ATTEMPTS), OPEN_WAIT_MS);
     }
 
-    /** Clicks the top-most element that appeared after the dropdown opened, then moves on. */
-    private void pickFirst(Set<String> before, int openX, int openY, int attemptsLeft) {
+    /**
+     * Clicks the top-most option with text that appeared after the dropdown
+     * opened. If none can be read, taps half a centimetre below the line,
+     * where the first option normally is.
+     */
+    private void pickFirst(Target t, Set<String> before, int attemptsLeft) {
         if (!running) return;
         Rect screen = screenBounds();
         long screenArea = (long) screen.width() * screen.height();
         Clickable first = null;
+        String firstLabel = "";
         for (Clickable c : clickables()) {
             if (before.contains(c.key)) continue;
-            if (c.bounds.contains(openX, openY)) continue;
+            if (c.bounds.contains(t.tapX, t.tapY)) continue;
             // Skip full-screen backdrops that close the menu when tapped.
             if ((long) c.bounds.width() * c.bounds.height() > screenArea / 2) continue;
+            String label = label(c.node);
+            if (label.isEmpty()) continue;
             if (first == null || c.bounds.top < first.bounds.top
                     || (c.bounds.top == first.bounds.top && c.bounds.left < first.bounds.left)) {
                 first = c;
+                firstLabel = label;
             }
         }
 
         if (first == null) {
             if (attemptsLeft > 1) {
-                handler.postDelayed(() -> pickFirst(before, openX, openY, attemptsLeft - 1), 500);
-            } else {
-                // Couldn't see the options: close whatever opened and carry on with the next one.
-                Toast.makeText(this, "Couldn't find the options of a dropdown, skipping it",
-                        Toast.LENGTH_SHORT).show();
-                performGlobalAction(GLOBAL_ACTION_BACK);
-                handler.postDelayed(this::nextStep, STEP_PAUSE_MS);
+                handler.postDelayed(() -> pickFirst(t, before, attemptsLeft - 1), 400);
+                return;
             }
+            // No option text found: tap half a centimetre below the line.
+            int x = t.line.centerX();
+            int y = t.line.bottom + halfCm();
+            showHighlight(null, null, null, x, y);
+            tap(x, y);
+            stop("Tapped half a cm below the line");
             return;
         }
 
@@ -467,11 +448,12 @@ public class PickerService extends AccessibilityService {
         if (!first.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             tap(first.bounds.centerX(), first.bounds.centerY());
         }
-        picked++;
-        String label = label(first.node);
-        Toast.makeText(this, label.isEmpty() ? "Selected first option" : "Selected: " + label,
-                Toast.LENGTH_SHORT).show();
-        handler.postDelayed(this::nextStep, STEP_PAUSE_MS);
+        stop("Selected: " + firstLabel);
+    }
+
+    /** Half a centimetre in screen pixels. */
+    private int halfCm() {
+        return Math.round(getResources().getDisplayMetrics().ydpi / 2.54f * 0.5f);
     }
 
     // ---- Showing what the app sees ------------------------------------------------
@@ -543,9 +525,12 @@ public class PickerService extends AccessibilityService {
             markup.arrow = hit.arrow;
             markup.tapX = hit.tapX;
             markup.tapY = hit.tapY;
+            markup.backupX = hit.line.centerX();
+            markup.backupY = hit.line.bottom + halfCm();
             markup.caption = result.hits.size() + " dropdown(s) found!\n"
                     + "Red = underline, green = arrow,\n"
-                    + "pink = where Start taps first.\n"
+                    + "pink = where Start taps to open it,\n"
+                    + "blue dot = backup tap, half a cm below.\n"
                     + "Yellow = other long lines.";
         } else {
             markup.caption = "No dropdown found.\n"
