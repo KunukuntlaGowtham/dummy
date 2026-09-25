@@ -332,8 +332,14 @@ public class PickerService extends AccessibilityService {
 
     private void capture(Consumer<Bitmap> done, boolean retry) {
         screenshotError = null;
+        // Screen shared from the app: use its latest frame.
+        Bitmap shared = ScreenCaptureService.grab();
+        if (shared != null) {
+            done.accept(shared);
+            return;
+        }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            screenshotError = "this needs Android 11 or newer";
+            screenshotError = "open Dropdown Picker and tap Share screen first";
             done.accept(null);
             return;
         }
@@ -350,7 +356,10 @@ public class PickerService extends AccessibilityService {
                 } finally {
                     buffer.close();
                 }
-                if (bmp == null) screenshotError = "couldn't read the picture";
+                if (bmp == null) {
+                    screenshotError = "couldn't read the picture - open Dropdown Picker and tap "
+                            + "Share screen";
+                }
                 done.accept(bmp);
             }
 
@@ -363,7 +372,8 @@ public class PickerService extends AccessibilityService {
                 }
                 switch (errorCode) {
                     case ERROR_TAKE_SCREENSHOT_SECURE_WINDOW:
-                        screenshotError = "this app blocks screenshots (secure screen)";
+                        screenshotError = "this app blocks screenshots (secure screen) - try "
+                                + "Share screen in Dropdown Picker";
                         break;
                     case ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS:
                         screenshotError = "screenshot permission missing - turn the app off and on "
@@ -373,7 +383,8 @@ public class PickerService extends AccessibilityService {
                         screenshotError = "too many screenshots, try again in a second";
                         break;
                     default:
-                        screenshotError = "Android error " + errorCode;
+                        screenshotError = "Android error " + errorCode + " - open Dropdown "
+                                + "Picker and tap Share screen";
                 }
                 done.accept(null);
             }
@@ -500,8 +511,11 @@ public class PickerService extends AccessibilityService {
     private void showWhatISee() {
         if (busy || running) return;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            Toast.makeText(this, "Seeing the screen needs Android 11 or newer", Toast.LENGTH_LONG).show();
-            return;
+            if (!ScreenCaptureService.isSharing()) {
+                Toast.makeText(this, "Open Dropdown Picker and tap Share screen first",
+                        Toast.LENGTH_LONG).show();
+                return;
+            }
         }
         busy = true;
         setButtonVisible(false);
@@ -590,8 +604,10 @@ public class PickerService extends AccessibilityService {
             values.put(MediaStore.Images.Media.DISPLAY_NAME,
                     "dropdown-picker-" + System.currentTimeMillis() + ".png");
             values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
-            values.put(MediaStore.Images.Media.RELATIVE_PATH,
-                    Environment.DIRECTORY_PICTURES + "/DropdownPicker");
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                        Environment.DIRECTORY_PICTURES + "/DropdownPicker");
+            }
             uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
             if (uri != null) {
                 try (OutputStream os = getContentResolver().openOutputStream(uri)) {
