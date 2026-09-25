@@ -3,6 +3,14 @@ package com.kunukuntla.dropdownpicker;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.annotation.SuppressLint;
+import android.content.ContentValues;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Path;
@@ -26,14 +34,18 @@ import android.view.accessibility.AccessibilityWindowInfo;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * Accessibility service that shows a floating button. Tapping it finds the
  * top-most dropdown on screen, opens it and selects its first option.
+ * Long-pressing it shows the screenshot the app analysed with what it found
+ * marked on it, and lets the user share that picture.
  */
 public class PickerService extends AccessibilityService {
 
@@ -45,6 +57,8 @@ public class PickerService extends AccessibilityService {
     private TextView button;
     private WindowManager.LayoutParams buttonParams;
     private boolean busy;
+    private View highlight;
+    private View preview;
 
     /** A clickable element on screen, used to spot what the dropdown adds when it opens. */
     private static final class Clickable {
@@ -74,6 +88,8 @@ public class PickerService extends AccessibilityService {
     @Override
     public void onDestroy() {
         if (button != null) windowManager.removeView(button);
+        removeHighlight();
+        closePreview();
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
@@ -92,7 +108,7 @@ public class PickerService extends AccessibilityService {
         bg.setShape(GradientDrawable.OVAL);
         bg.setColor(0xDD6A3FA0);
         button.setBackground(bg);
-        button.setContentDescription("Select first dropdown option");
+        button.setContentDescription("Select first dropdown option. Long-press to see what the app sees.");
 
         buttonParams = new WindowManager.LayoutParams(size, size,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -104,10 +120,15 @@ public class PickerService extends AccessibilityService {
         buttonParams.y = dp(160);
 
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+        long longPressMs = ViewConfiguration.getLongPressTimeout();
         button.setOnTouchListener(new View.OnTouchListener() {
             float downX, downY;
             int startX, startY;
-            boolean dragging;
+            boolean dragging, longPressed;
+            final Runnable onLongPress = () -> {
+                longPressed = true;
+                showWhatISee();
+            };
 
             @Override
             public boolean onTouch(View v, MotionEvent e) {
@@ -118,10 +139,15 @@ public class PickerService extends AccessibilityService {
                         startX = buttonParams.x;
                         startY = buttonParams.y;
                         dragging = false;
+                        longPressed = false;
+                        handler.postDelayed(onLongPress, longPressMs);
                         return true;
                     case MotionEvent.ACTION_MOVE:
                         float dx = e.getRawX() - downX, dy = e.getRawY() - downY;
-                        if (!dragging && Math.hypot(dx, dy) > slop) dragging = true;
+                        if (!dragging && Math.hypot(dx, dy) > slop) {
+                            dragging = true;
+                            handler.removeCallbacks(onLongPress);
+                        }
                         if (dragging) {
                             // Gravity is END, so x grows to the left.
                             buttonParams.x = startX - (int) dx;
@@ -130,7 +156,11 @@ public class PickerService extends AccessibilityService {
                         }
                         return true;
                     case MotionEvent.ACTION_UP:
-                        if (!dragging) run();
+                        handler.removeCallbacks(onLongPress);
+                        if (!dragging && !longPressed) run();
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        handler.removeCallbacks(onLongPress);
                         return true;
                     default:
                         return false;
@@ -161,8 +191,29 @@ public class PickerService extends AccessibilityService {
     }
 
     private void detect() {
+        capture(bmp -> {
+            if (bmp == null) {
+                detectByNodes();
+                return;
+            }
+            analyze(bmp, result -> {
+                bmp.recycle();
+                DropdownDetector.Hit hit = result.hit;
+                if (hit == null) {
+                    detectByNodes();
+                    return;
+                }
+                // Show what was found, then open it.
+                showHighlight(hit.line, hit.arrow, null, hit.tapX, hit.tapY);
+                handler.postDelayed(() -> openAndPick(null, hit.tapX, hit.tapY), 400);
+            });
+        });
+    }
+
+    /** Takes a screenshot; passes null if that isn't possible (Android 10 and older). */
+    private void capture(Consumer<Bitmap> done) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            detectByNodes();
+            done.accept(null);
             return;
         }
         takeScreenshot(Display.DEFAULT_DISPLAY, getMainExecutor(), new TakeScreenshotCallback() {
@@ -172,28 +223,22 @@ public class PickerService extends AccessibilityService {
                 Bitmap hw = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
                 Bitmap bmp = hw == null ? null : hw.copy(Bitmap.Config.ARGB_8888, false);
                 buffer.close();
-                if (bmp == null) {
-                    detectByNodes();
-                    return;
-                }
-                new Thread(() -> {
-                    DropdownDetector.Hit hit = DropdownDetector.find(bmp);
-                    bmp.recycle();
-                    handler.post(() -> {
-                        if (hit != null) {
-                            openAndPick(null, hit.tapX, hit.tapY);
-                        } else {
-                            detectByNodes();
-                        }
-                    });
-                }).start();
+                done.accept(bmp);
             }
 
             @Override
             public void onFailure(int errorCode) {
-                detectByNodes();
+                done.accept(null);
             }
         });
+    }
+
+    /** Runs the detector off the main thread and delivers the result on it. */
+    private void analyze(Bitmap bmp, Consumer<DropdownDetector.Result> done) {
+        new Thread(() -> {
+            DropdownDetector.Result result = DropdownDetector.analyze(bmp);
+            handler.post(() -> done.accept(result));
+        }).start();
     }
 
     /** Fallback: look for native dropdown widgets (Spinner, HTML select, combobox). */
@@ -221,9 +266,10 @@ public class PickerService extends AccessibilityService {
             }
         }
         if (best == null) {
-            finish("No dropdown found on screen");
+            finish("No dropdown found on screen. Long-press ▼1 to see what the app sees.");
             return;
         }
+        showHighlight(bestBounds, null, null, bestBounds.centerX(), bestBounds.centerY());
         openAndPick(best, bestBounds.centerX(), bestBounds.centerY());
     }
 
@@ -261,11 +307,166 @@ public class PickerService extends AccessibilityService {
             return;
         }
 
+        showHighlight(null, null, first.bounds, -1, -1);
         if (!first.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             tap(first.bounds.centerX(), first.bounds.centerY());
         }
         String label = label(first.node);
         finish(label.isEmpty() ? "Selected first option" : "Selected: " + label);
+    }
+
+    // ---- Showing what the app sees ------------------------------------------------
+
+    /** Briefly outlines things on the real screen. Touches pass through. */
+    private void showHighlight(Rect line, Rect arrow, Rect option, int tapX, int tapY) {
+        removeHighlight();
+        MarkupView v = new MarkupView(this);
+        v.line = line;
+        v.arrow = arrow;
+        v.option = option;
+        v.tapX = tapX;
+        v.tapY = tapY;
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        windowManager.addView(v, lp);
+        highlight = v;
+        handler.postDelayed(() -> {
+            if (highlight == v) removeHighlight();
+        }, 1200);
+    }
+
+    private void removeHighlight() {
+        if (highlight != null) {
+            windowManager.removeView(highlight);
+            highlight = null;
+        }
+    }
+
+    /** Long-press: show the screenshot with what the detector found, without tapping anything. */
+    private void showWhatISee() {
+        if (busy) return;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Toast.makeText(this, "Seeing the screen needs Android 11 or newer", Toast.LENGTH_LONG).show();
+            return;
+        }
+        busy = true;
+        setButtonVisible(false);
+        handler.postDelayed(() -> capture(bmp -> {
+            if (bmp == null) {
+                finish("Couldn't take a screenshot");
+                return;
+            }
+            analyze(bmp, result -> {
+                busy = false;
+                showPreview(bmp, result);
+            });
+        }), 200);
+    }
+
+    private void showPreview(Bitmap bmp, DropdownDetector.Result result) {
+        closePreview();
+        MarkupView markup = new MarkupView(this);
+        markup.shot = bmp;
+        markup.lines = result.lines;
+        DropdownDetector.Hit hit = result.hit;
+        if (hit != null) {
+            markup.line = hit.line;
+            markup.arrow = hit.arrow;
+            markup.tapX = hit.tapX;
+            markup.tapY = hit.tapY;
+            markup.caption = "Dropdown found!\n"
+                    + "Red = underline, green = arrow,\n"
+                    + "pink = where it will tap.\n"
+                    + "Yellow = other long lines.";
+        } else {
+            markup.caption = "No dropdown found.\n"
+                    + "Yellow = long lines seen (" + result.lines.size() + ").\n"
+                    + "None had a down arrow just above\n"
+                    + "its right end.";
+        }
+
+        FrameLayout root = new FrameLayout(this);
+        root.addView(markup, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setGravity(Gravity.CENTER);
+        Button share = new Button(this);
+        share.setText("Share");
+        share.setOnClickListener(v -> share(markup));
+        Button close = new Button(this);
+        close.setText("Close");
+        close.setOnClickListener(v -> closePreview());
+        buttons.addView(share);
+        buttons.addView(close);
+        FrameLayout.LayoutParams blp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM);
+        blp.bottomMargin = dp(48);
+        root.addView(buttons, blp);
+
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.OPAQUE);
+        windowManager.addView(root, lp);
+        preview = root;
+        preview.setTag(bmp);
+    }
+
+    private void closePreview() {
+        if (preview != null) {
+            windowManager.removeView(preview);
+            Object bmp = preview.getTag();
+            if (bmp instanceof Bitmap) ((Bitmap) bmp).recycle();
+            preview = null;
+        }
+        setButtonVisible(true);
+    }
+
+    /** Saves the marked-up screenshot to Pictures/DropdownPicker and opens the share sheet. */
+    private void share(MarkupView markup) {
+        Uri uri = null;
+        Bitmap out = markup.render();
+        try {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME,
+                    "dropdown-picker-" + System.currentTimeMillis() + ".png");
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/png");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/DropdownPicker");
+            uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            if (uri != null) {
+                try (OutputStream os = getContentResolver().openOutputStream(uri)) {
+                    out.compress(Bitmap.CompressFormat.PNG, 100, os);
+                }
+            }
+        } catch (Exception e) {
+            uri = null;
+        } finally {
+            out.recycle();
+        }
+        closePreview();
+        if (uri == null) {
+            Toast.makeText(this, "Couldn't save the picture", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "Saved to Pictures/DropdownPicker", Toast.LENGTH_SHORT).show();
+        Intent send = new Intent(Intent.ACTION_SEND)
+                .setType("image/png")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        Intent chooser = Intent.createChooser(send, "Share what the app sees");
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(chooser);
     }
 
     // ---- Helpers ---------------------------------------------------------------

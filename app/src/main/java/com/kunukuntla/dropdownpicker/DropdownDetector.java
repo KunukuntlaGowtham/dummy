@@ -19,11 +19,27 @@ final class DropdownDetector {
         final int tapX, tapY;
         /** The underline. */
         final Rect line;
+        /** The down arrow. */
+        final Rect arrow;
 
-        Hit(int tapX, int tapY, Rect line) {
-            this.tapX = tapX;
-            this.tapY = tapY;
+        Hit(Rect line, Rect arrow) {
+            this.tapX = arrow.centerX();
+            this.tapY = arrow.centerY();
             this.line = line;
+            this.arrow = arrow;
+        }
+    }
+
+    /** Everything the detector saw, for showing it to the user. */
+    static final class Result {
+        /** All long thin lines found, whether or not they had an arrow. */
+        final List<Rect> lines;
+        /** The chosen dropdown, or null. */
+        final Hit hit;
+
+        Result(List<Rect> lines, Hit hit) {
+            this.lines = lines;
+            this.hit = hit;
         }
     }
 
@@ -31,8 +47,8 @@ final class DropdownDetector {
 
     private DropdownDetector() {}
 
-    /** Returns the top-most dropdown on screen, or null if none is found. */
-    static Hit find(Bitmap bmp) {
+    /** Finds the top-most dropdown on screen; {@code hit} is null if there is none. */
+    static Result analyze(Bitmap bmp) {
         int w = bmp.getWidth();
         int h = bmp.getHeight();
         int[] px = new int[w * h];
@@ -44,13 +60,12 @@ final class DropdownDetector {
             dark[i] = luma < DARK_LUMA;
         }
 
-        for (Rect line : findLines(dark, w, h)) {
+        List<Rect> lines = findLines(dark, w, h);
+        for (Rect line : lines) {
             Rect arrow = findArrow(dark, w, line);
-            if (arrow != null) {
-                return new Hit(arrow.centerX(), arrow.centerY(), line);
-            }
+            if (arrow != null) return new Result(lines, new Hit(line, arrow));
         }
-        return null;
+        return new Result(lines, null);
     }
 
     /** Long, thin horizontal dark lines, top to bottom. */

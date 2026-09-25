@@ -34,7 +34,10 @@ public class MainActivity extends Activity {
                 + "2. A round purple ▼1 button will float on screen. Drag it anywhere.\n\n"
                 + "3. Open the page with the dropdown (an underline with a down arrow at its "
                 + "right end) and tap ▼1. The app opens the top-most dropdown and selects "
-                + "its first option.");
+                + "its first option. It briefly outlines what it found and what it tapped.\n\n"
+                + "4. Long-press ▼1 to see what the app sees: the screenshot it analysed, "
+                + "with the underline (red), the arrow (green) and the tap point (pink) "
+                + "marked. Tap Share to save that picture and send it.");
         help.setTextSize(16);
         help.setPadding(0, pad, 0, pad);
         root.addView(help);
