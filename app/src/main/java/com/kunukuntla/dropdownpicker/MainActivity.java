@@ -11,7 +11,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.view.Gravity;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -64,10 +67,34 @@ public class MainActivity extends Activity {
         shareStatus = text("", 0);
         root.addView(shareStatus);
 
+        root.addView(text("Keywords (optional)\n"
+                + "Words to look for in the options, separated by commas, most wanted first. "
+                + "Start picks the option containing the first keyword it finds. If no option "
+                + "matches, or this is empty, it picks the first option.", pad));
+        EditText keywords = new EditText(this);
+        keywords.setHint("e.g. Tirumala, Male Only");
+        keywords.setSingleLine(true);
+        keywords.setText(Keywords.load(this));
+        keywords.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                Keywords.save(MainActivity.this, s.toString());
+            }
+        });
+        root.addView(keywords, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+
         root.addView(text("Step 3 - Start\n"
                 + "Open the page with the dropdown and tap the purple Start button. The app "
                 + "takes a screenshot, finds the dropdown (an underline with a down arrow at "
-                + "its right end), taps it once and selects the first option it can read. "
+                + "its right end), taps it once and selects the option matching your "
+                + "keywords, or else the first option it can read. "
                 + "If it can't read any option, it taps half a centimetre below the line.\n\n"
                 + "Tap the green See button to see what the app sees, with each dropdown's "
                 + "underline (red) and arrow (green) marked. Share saves that picture to your "

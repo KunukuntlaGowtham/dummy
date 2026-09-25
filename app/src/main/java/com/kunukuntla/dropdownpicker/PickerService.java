@@ -406,16 +406,21 @@ public class PickerService extends AccessibilityService {
     }
 
     /**
-     * Clicks the top-most option with text that appeared after the dropdown
-     * opened. If none can be read, taps half a centimetre below the line,
-     * where the first option normally is.
+     * Clicks the option that appeared after the dropdown opened: the one
+     * matching the user's first keyword that matches anything, else the
+     * top-most option with text. If none can be read, taps half a centimetre
+     * below the line, where the first option normally is.
      */
     private void pickFirst(Target t, Set<String> before, int attemptsLeft) {
         if (!running) return;
         Rect screen = screenBounds();
         long screenArea = (long) screen.width() * screen.height();
+        List<String> keywords = Keywords.list(this);
         Clickable first = null;
         String firstLabel = "";
+        Clickable match = null;
+        String matchLabel = "";
+        int matchRank = Integer.MAX_VALUE;
         for (Clickable c : clickables()) {
             if (before.contains(c.key)) continue;
             if (c.bounds.contains(t.tapX, t.tapY)) continue;
@@ -423,6 +428,18 @@ public class PickerService extends AccessibilityService {
             if ((long) c.bounds.width() * c.bounds.height() > screenArea / 2) continue;
             String label = label(c.node);
             if (label.isEmpty()) continue;
+
+            // Earlier keywords win; for the same keyword, the higher option wins.
+            String lower = label.toLowerCase(java.util.Locale.ROOT);
+            for (int k = 0; k < keywords.size() && k <= matchRank; k++) {
+                if (!lower.contains(keywords.get(k))) continue;
+                if (k < matchRank || c.bounds.top < match.bounds.top) {
+                    match = c;
+                    matchLabel = label;
+                    matchRank = k;
+                }
+                break;
+            }
             if (first == null || c.bounds.top < first.bounds.top
                     || (c.bounds.top == first.bounds.top && c.bounds.left < first.bounds.left)) {
                 first = c;
@@ -444,11 +461,19 @@ public class PickerService extends AccessibilityService {
             return;
         }
 
+        String note = "";
+        if (match != null) {
+            first = match;
+            firstLabel = matchLabel;
+            note = " (keyword \"" + keywords.get(matchRank) + "\")";
+        } else if (!keywords.isEmpty()) {
+            note = " (no keyword matched, took the first option)";
+        }
         showHighlight(null, null, first.bounds, -1, -1);
         if (!first.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             tap(first.bounds.centerX(), first.bounds.centerY());
         }
-        stop("Selected: " + firstLabel);
+        stop("Selected: " + firstLabel + note);
     }
 
     /** Half a centimetre in screen pixels. */
