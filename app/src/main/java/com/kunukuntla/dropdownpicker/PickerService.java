@@ -42,8 +42,9 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Accessibility service that shows a floating button. Tapping it finds the
- * top-most dropdown on screen, opens it and selects its first option.
+ * Accessibility service that shows a floating Start button. Tapping it goes
+ * through the dropdowns on screen one after another, top to bottom: take a
+ * screenshot, find the next dropdown, open it and select its first option.
  * Long-pressing it shows the screenshot the app analysed with what it found
  * marked on it, and lets the user share that picture.
  */
@@ -51,12 +52,17 @@ public class PickerService extends AccessibilityService {
 
     private static final long OPEN_WAIT_MS = 700;
     private static final int PICK_ATTEMPTS = 3;
+    private static final int MAX_STEPS = 30;
+    private static final long STEP_PAUSE_MS = 900;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
     private TextView button;
     private WindowManager.LayoutParams buttonParams;
     private boolean busy;
+    private boolean running;
+    private int picked, steps;
+    private final List<Integer> doneYs = new ArrayList<>();
     private View highlight;
     private View preview;
 
@@ -99,16 +105,16 @@ public class PickerService extends AccessibilityService {
     @SuppressLint("ClickableViewAccessibility")
     private void showButton() {
         button = new TextView(this);
-        button.setText("▼1");
+        button.setText("▶\nStart");
         button.setTextColor(Color.WHITE);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         button.setGravity(Gravity.CENTER);
-        int size = dp(52);
+        int size = dp(56);
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.OVAL);
         bg.setColor(0xDD6A3FA0);
         button.setBackground(bg);
-        button.setContentDescription("Select first dropdown option. Long-press to see what the app sees.");
+        button.setContentDescription("Start selecting dropdowns. Long-press to see what the app sees.");
 
         buttonParams = new WindowManager.LayoutParams(size, size,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -176,38 +182,104 @@ public class PickerService extends AccessibilityService {
 
     // ---- Main flow -----------------------------------------------------------
 
-    private void run() {
-        if (busy) return;
-        busy = true;
-        // Hide the button so it doesn't show up in the screenshot or get tapped.
-        setButtonVisible(false);
-        handler.postDelayed(this::detect, 200);
+    /** A dropdown to open: where it is on screen, and its node if it came from the accessibility tree. */
+    private static final class Target {
+        final Rect line, arrow;
+        final int tapX, tapY;
+        final AccessibilityNodeInfo node;
+
+        Target(Rect line, Rect arrow, int tapX, int tapY, AccessibilityNodeInfo node) {
+            this.line = line;
+            this.arrow = arrow;
+            this.tapX = tapX;
+            this.tapY = tapY;
+            this.node = node;
+        }
     }
 
-    private void finish(String message) {
+    /** Button tap: Start, or Stop if already running. */
+    private void run() {
+        if (running) {
+            stop("Stopped. Selected " + picked + " dropdown(s).");
+            return;
+        }
+        if (busy) return;
+        busy = true;
+        running = true;
+        picked = 0;
+        steps = 0;
+        doneYs.clear();
+        button.setText("■\nStop");
+        nextStep();
+    }
+
+    private void stop(String message) {
+        running = false;
         busy = false;
+        handler.removeCallbacksAndMessages(null);
+        removeHighlight();
+        button.setText("▶\nStart");
         setButtonVisible(true);
         if (message != null) Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
-    private void detect() {
-        capture(bmp -> {
+    /** Takes a fresh screenshot, then opens the next dropdown that hasn't been done yet. */
+    private void nextStep() {
+        if (!running) return;
+        if (++steps > MAX_STEPS) {
+            stop("Done. Selected " + picked + " dropdown(s).");
+            return;
+        }
+        // Keep the button and the outlines out of the screenshot.
+        removeHighlight();
+        setButtonVisible(false);
+        handler.postDelayed(() -> capture(bmp -> {
             if (bmp == null) {
-                detectByNodes();
+                setButtonVisible(true);
+                openNext(nodeTargets());
                 return;
             }
             analyze(bmp, result -> {
                 bmp.recycle();
-                DropdownDetector.Hit hit = result.hit;
-                if (hit == null) {
-                    detectByNodes();
-                    return;
+                setButtonVisible(true);
+                List<Target> targets = new ArrayList<>();
+                for (DropdownDetector.Hit h : result.hits) {
+                    targets.add(new Target(h.line, h.arrow, h.tapX, h.tapY, null));
                 }
-                // Show what was found, then open it.
-                showHighlight(hit.line, hit.arrow, null, hit.tapX, hit.tapY);
-                handler.postDelayed(() -> openAndPick(null, hit.tapX, hit.tapY), 400);
+                // Nothing seen in the picture: try native dropdown widgets instead.
+                openNext(targets.isEmpty() ? nodeTargets() : targets);
             });
-        });
+        }), 250);
+    }
+
+    private void openNext(List<Target> targets) {
+        if (!running) return;
+        Target next = null;
+        for (Target t : targets) {
+            if (!isDone(t)) {
+                next = t;
+                break;
+            }
+        }
+        if (next == null) {
+            stop(picked == 0
+                    ? "No dropdown found. Long-press the button to see what the app sees."
+                    : "Done. Selected " + picked + " dropdown(s).");
+            return;
+        }
+        doneYs.add(next.line.centerY());
+        Target t = next;
+        showHighlight(t.line, t.arrow, null, t.tapX, t.tapY);
+        handler.postDelayed(() -> openAndPick(t), 400);
+    }
+
+    /** A dropdown counts as done if one at about the same height was already handled. */
+    private boolean isDone(Target t) {
+        int tolerance = dp(16);
+        for (int y : doneYs) {
+            if (Math.abs(y - t.line.centerY()) <= tolerance) return true;
+        }
+        return false;
     }
 
     /** Takes a screenshot; passes null if that isn't possible (Android 10 and older). */
@@ -241,10 +313,9 @@ public class PickerService extends AccessibilityService {
         }).start();
     }
 
-    /** Fallback: look for native dropdown widgets (Spinner, HTML select, combobox). */
-    private void detectByNodes() {
-        AccessibilityNodeInfo best = null;
-        Rect bestBounds = null;
+    /** Native dropdown widgets (Spinner, HTML select, combobox), top to bottom. */
+    private List<Target> nodeTargets() {
+        List<Target> out = new ArrayList<>();
         for (AccessibilityNodeInfo root : roots()) {
             List<AccessibilityNodeInfo> stack = new ArrayList<>();
             stack.add(root);
@@ -257,33 +328,28 @@ public class PickerService extends AccessibilityService {
                         || c.contains("AutoCompleteTextView"))) {
                     Rect r = new Rect();
                     n.getBoundsInScreen(r);
-                    if (!r.isEmpty() && (bestBounds == null || r.top < bestBounds.top)) {
-                        best = n;
-                        bestBounds = r;
-                    }
+                    if (!r.isEmpty()) out.add(new Target(r, null, r.centerX(), r.centerY(), n));
                 }
                 for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
             }
         }
-        if (best == null) {
-            finish("No dropdown found on screen. Long-press ▼1 to see what the app sees.");
-            return;
-        }
-        showHighlight(bestBounds, null, null, bestBounds.centerX(), bestBounds.centerY());
-        openAndPick(best, bestBounds.centerX(), bestBounds.centerY());
+        out.sort((a, b) -> Integer.compare(a.line.top, b.line.top));
+        return out;
     }
 
-    private void openAndPick(AccessibilityNodeInfo node, int x, int y) {
+    private void openAndPick(Target t) {
+        if (!running) return;
         Set<String> before = new HashSet<>();
         for (Clickable c : clickables()) before.add(c.key);
 
-        boolean clicked = node != null && node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-        if (!clicked) tap(x, y);
-        handler.postDelayed(() -> pickFirst(before, x, y, PICK_ATTEMPTS), OPEN_WAIT_MS);
+        boolean clicked = t.node != null && t.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        if (!clicked) tap(t.tapX, t.tapY);
+        handler.postDelayed(() -> pickFirst(before, t.tapX, t.tapY, PICK_ATTEMPTS), OPEN_WAIT_MS);
     }
 
-    /** Clicks the top-most element that appeared after the dropdown opened. */
+    /** Clicks the top-most element that appeared after the dropdown opened, then moves on. */
     private void pickFirst(Set<String> before, int openX, int openY, int attemptsLeft) {
+        if (!running) return;
         Rect screen = screenBounds();
         long screenArea = (long) screen.width() * screen.height();
         Clickable first = null;
@@ -302,7 +368,11 @@ public class PickerService extends AccessibilityService {
             if (attemptsLeft > 1) {
                 handler.postDelayed(() -> pickFirst(before, openX, openY, attemptsLeft - 1), 500);
             } else {
-                finish("Opened the dropdown but couldn't find its options");
+                // Couldn't see the options: close whatever opened and carry on with the next one.
+                Toast.makeText(this, "Couldn't find the options of a dropdown, skipping it",
+                        Toast.LENGTH_SHORT).show();
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                handler.postDelayed(this::nextStep, STEP_PAUSE_MS);
             }
             return;
         }
@@ -311,8 +381,11 @@ public class PickerService extends AccessibilityService {
         if (!first.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
             tap(first.bounds.centerX(), first.bounds.centerY());
         }
+        picked++;
         String label = label(first.node);
-        finish(label.isEmpty() ? "Selected first option" : "Selected: " + label);
+        Toast.makeText(this, label.isEmpty() ? "Selected first option" : "Selected: " + label,
+                Toast.LENGTH_SHORT).show();
+        handler.postDelayed(this::nextStep, STEP_PAUSE_MS);
     }
 
     // ---- Showing what the app sees ------------------------------------------------
@@ -350,7 +423,7 @@ public class PickerService extends AccessibilityService {
 
     /** Long-press: show the screenshot with what the detector found, without tapping anything. */
     private void showWhatISee() {
-        if (busy) return;
+        if (busy || running) return;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Toast.makeText(this, "Seeing the screen needs Android 11 or newer", Toast.LENGTH_LONG).show();
             return;
@@ -359,7 +432,7 @@ public class PickerService extends AccessibilityService {
         setButtonVisible(false);
         handler.postDelayed(() -> capture(bmp -> {
             if (bmp == null) {
-                finish("Couldn't take a screenshot");
+                stop("Couldn't take a screenshot");
                 return;
             }
             analyze(bmp, result -> {
@@ -374,15 +447,16 @@ public class PickerService extends AccessibilityService {
         MarkupView markup = new MarkupView(this);
         markup.shot = bmp;
         markup.lines = result.lines;
+        markup.hits = result.hits;
         DropdownDetector.Hit hit = result.hit;
         if (hit != null) {
             markup.line = hit.line;
             markup.arrow = hit.arrow;
             markup.tapX = hit.tapX;
             markup.tapY = hit.tapY;
-            markup.caption = "Dropdown found!\n"
+            markup.caption = result.hits.size() + " dropdown(s) found!\n"
                     + "Red = underline, green = arrow,\n"
-                    + "pink = where it will tap.\n"
+                    + "pink = where Start taps first.\n"
                     + "Yellow = other long lines.";
         } else {
             markup.caption = "No dropdown found.\n"

@@ -34,12 +34,15 @@ final class DropdownDetector {
     static final class Result {
         /** All long thin lines found, whether or not they had an arrow. */
         final List<Rect> lines;
-        /** The chosen dropdown, or null. */
+        /** Every dropdown found, top to bottom. */
+        final List<Hit> hits;
+        /** The top-most dropdown, or null. */
         final Hit hit;
 
-        Result(List<Rect> lines, Hit hit) {
+        Result(List<Rect> lines, List<Hit> hits) {
             this.lines = lines;
-            this.hit = hit;
+            this.hits = hits;
+            this.hit = hits.isEmpty() ? null : hits.get(0);
         }
     }
 
@@ -47,7 +50,7 @@ final class DropdownDetector {
 
     private DropdownDetector() {}
 
-    /** Finds the top-most dropdown on screen; {@code hit} is null if there is none. */
+    /** Finds every dropdown on screen, top to bottom. */
     static Result analyze(Bitmap bmp) {
         int w = bmp.getWidth();
         int h = bmp.getHeight();
@@ -61,11 +64,12 @@ final class DropdownDetector {
         }
 
         List<Rect> lines = findLines(dark, w, h);
+        List<Hit> hits = new ArrayList<>();
         for (Rect line : lines) {
             Rect arrow = findArrow(dark, w, line);
-            if (arrow != null) return new Result(lines, new Hit(line, arrow));
+            if (arrow != null) hits.add(new Hit(line, arrow));
         }
-        return new Result(lines, null);
+        return new Result(lines, hits);
     }
 
     /** Long, thin horizontal dark lines, top to bottom. */

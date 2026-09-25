@@ -28,6 +28,7 @@ final class MarkupView extends View {
 
     Bitmap shot;
     List<Rect> lines = new ArrayList<>();
+    List<DropdownDetector.Hit> hits = new ArrayList<>();
     Rect line, arrow, option;
     int tapX = -1, tapY = -1;
     String caption;
@@ -77,6 +78,10 @@ final class MarkupView extends View {
                     new RectF(ox, oy, ox + shot.getWidth() * scale, oy + shot.getHeight() * scale), null);
         }
         for (Rect r : lines) box(c, r, YELLOW, scale, ox, oy);
+        for (DropdownDetector.Hit h : hits) {
+            box(c, h.line, RED, scale, ox, oy);
+            box(c, h.arrow, GREEN, scale, ox, oy);
+        }
         box(c, line, RED, scale, ox, oy);
         box(c, arrow, GREEN, scale, ox, oy);
         box(c, option, BLUE, scale, ox, oy);
