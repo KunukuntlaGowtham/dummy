@@ -42,6 +42,8 @@ open class CheckboxService : AccessibilityService() {
         const val REPORT_FILE = "scan_report.txt"
         const val FAILED_FILE = "failed.txt"
         const val DEFAULT_COLOUR = 0x663398        // the purple button in the pop-up
+        private const val POPUP_LOOKS = 4               // first look + 3 more if not there yet
+        private const val POPUP_RETRY_MS = 300L
         @Volatile
         var instance: CheckboxService? = null
     }
@@ -731,7 +733,14 @@ open class CheckboxService : AccessibilityService() {
      * the run carry on. The top slice of the screen is left alone throughout, so a coloured
      * status bar or header is never mistaken for the button.
      */
-    private fun afterTick(next: () -> Unit) {
+    private fun afterTick(next: () -> Unit) = clearPopup(POPUP_LOOKS, false, next)
+
+    /**
+     * Looks for the pop-up's button; if it is not there yet, looks again (the page is sometimes
+     * slower), up to [looksLeft] times. After tapping it, looks once more: a pop-up still
+     * showing gets one more tap.
+     */
+    private fun clearPopup(looksLeft: Int, tappedOnce: Boolean, next: () -> Unit) {
         val p = prefs()
         val screen = eyes()
         if (!p.getBoolean("tapColour", true) || screen == null) {
@@ -745,14 +754,28 @@ open class CheckboxService : AccessibilityService() {
 
         // The pop-up has already had the after-a-tick wait to appear.
         screen.findColour(colour, tolerance, skipTop) { box ->
+            if (!looping && !running) return@findColour
             if (box == null) {
-                status("pop-up: no ${String.format("#%06X", colour)} below the top $skipTop%")
+                if (tappedOnce) {
+                    status("pop-up: cleared")
+                    next()
+                } else if (looksLeft > 1) {
+                    main.postDelayed({ clearPopup(looksLeft - 1, false, next) }, POPUP_RETRY_MS)
+                } else {
+                    status("pop-up: no ${String.format("#%06X", colour)} below the top $skipTop%")
+                    next()
+                }
+            } else if (tappedOnce && looksLeft <= 0) {
+                // Tapped twice and still there: carry on rather than stall the run.
+                status("pop-up: still showing after two taps")
                 next()
             } else {
                 showMarkers(listOf(box))
                 gestureTap(box.exactCenterX(), box.exactCenterY())
                 status("pop-up: tapped ${box.centerX()},${box.centerY()}")
-                main.postDelayed({ next() }, waitMs(p, "clearWaitMs", 300))
+                // Check it closed; if not, one more tap (looksLeft 0 marks the second tap).
+                main.postDelayed({ clearPopup(if (tappedOnce) 0 else 1, true, next) },
+                    waitMs(p, "clearWaitMs", 300))
             }
         }
     }
