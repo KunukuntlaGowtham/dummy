@@ -31,15 +31,16 @@ public class MainActivity extends Activity {
 
         TextView help = new TextView(this);
         help.setText("1. Tap the button below and turn on \"Dropdown Picker\".\n\n"
-                + "2. A round purple Start button will float on screen. Drag it anywhere.\n\n"
+                + "2. A round purple Start button and a green See button will float on screen. Drag them anywhere.\n\n"
                 + "3. Open the page with the dropdowns and tap Start. The app takes a "
                 + "screenshot, finds the dropdowns (an underline with a down arrow at its "
                 + "right end) and goes through them one after another, top to bottom: "
                 + "open it, select its first option, take a new screenshot, next one. "
                 + "Tap Stop to stop early.\n\n"
-                + "4. Long-press the button to see what the app sees: the screenshot with "
-                + "each dropdown's underline (red) and arrow (green) marked. Tap Share to "
-                + "save that picture and send it.");
+                + "4. Tap the green See button (under Start) to see what the app sees: the "
+                + "screenshot with each dropdown's underline (red) and arrow (green) marked. "
+                + "Tap Share to save that picture to your Gallery (Pictures/DropdownPicker) "
+                + "and send it. If it can't take a screenshot it tells you why.");
         help.setTextSize(16);
         help.setPadding(0, pad, 0, pad);
         root.addView(help);

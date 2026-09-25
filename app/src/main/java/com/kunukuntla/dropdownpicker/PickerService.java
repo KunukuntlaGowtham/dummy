@@ -3,6 +3,7 @@ package com.kunukuntla.dropdownpicker;
 import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.GestureDescription;
 import android.annotation.SuppressLint;
+import android.content.ClipData;
 import android.content.ContentValues;
 import android.content.Intent;
 import android.net.Uri;
@@ -42,7 +43,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * Accessibility service that shows a floating Start button. Tapping it goes
+ * Accessibility service that shows floating Start and See buttons. Tapping it goes
  * through the dropdowns on screen one after another, top to bottom: take a
  * screenshot, find the next dropdown, open it and select its first option.
  * Long-pressing it shows the screenshot the app analysed with what it found
@@ -57,8 +58,12 @@ public class PickerService extends AccessibilityService {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
+    /** Holds the Start and See buttons; this is the floating window. */
+    private LinearLayout controls;
     private TextView button;
     private WindowManager.LayoutParams buttonParams;
+    /** Why the last screenshot failed, or null. */
+    private String screenshotError;
     private boolean busy;
     private boolean running;
     private int picked, steps;
@@ -93,7 +98,7 @@ public class PickerService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
-        if (button != null) windowManager.removeView(button);
+        if (controls != null) windowManager.removeView(controls);
         removeHighlight();
         closePreview();
         handler.removeCallbacksAndMessages(null);
@@ -102,21 +107,24 @@ public class PickerService extends AccessibilityService {
 
     // ---- Floating button ------------------------------------------------------
 
-    @SuppressLint("ClickableViewAccessibility")
     private void showButton() {
-        button = new TextView(this);
-        button.setText("▶\nStart");
-        button.setTextColor(Color.WHITE);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        button.setGravity(Gravity.CENTER);
-        int size = dp(56);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xDD6A3FA0);
-        button.setBackground(bg);
-        button.setContentDescription("Start selecting dropdowns. Long-press to see what the app sees.");
+        controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
 
-        buttonParams = new WindowManager.LayoutParams(size, size,
+        button = roundButton("▶\nStart", 0xDD6A3FA0, dp(56));
+        button.setContentDescription("Start selecting dropdowns");
+        TextView see = roundButton("👁\nSee", 0xDD00897B, dp(48));
+        see.setContentDescription("See what the app sees");
+
+        LinearLayout.LayoutParams startLp = new LinearLayout.LayoutParams(dp(56), dp(56));
+        LinearLayout.LayoutParams seeLp = new LinearLayout.LayoutParams(dp(48), dp(48));
+        seeLp.gravity = Gravity.CENTER_HORIZONTAL;
+        seeLp.topMargin = dp(8);
+        controls.addView(button, startLp);
+        controls.addView(see, seeLp);
+
+        buttonParams = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
@@ -125,59 +133,90 @@ public class PickerService extends AccessibilityService {
         buttonParams.x = dp(12);
         buttonParams.y = dp(160);
 
-        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
-        long longPressMs = ViewConfiguration.getLongPressTimeout();
-        button.setOnTouchListener(new View.OnTouchListener() {
-            float downX, downY;
-            int startX, startY;
-            boolean dragging, longPressed;
-            final Runnable onLongPress = () -> {
-                longPressed = true;
-                showWhatISee();
-            };
+        // Both buttons drag the pair around; a plain tap runs the button's action,
+        // and a long-press on Start also shows what the app sees.
+        button.setOnTouchListener(new DragOrTap(this::run, this::showWhatISee));
+        see.setOnTouchListener(new DragOrTap(this::showWhatISee, null));
+        windowManager.addView(controls, buttonParams);
+    }
 
-            @Override
-            public boolean onTouch(View v, MotionEvent e) {
-                switch (e.getActionMasked()) {
-                    case MotionEvent.ACTION_DOWN:
-                        downX = e.getRawX();
-                        downY = e.getRawY();
-                        startX = buttonParams.x;
-                        startY = buttonParams.y;
-                        dragging = false;
-                        longPressed = false;
-                        handler.postDelayed(onLongPress, longPressMs);
-                        return true;
-                    case MotionEvent.ACTION_MOVE:
-                        float dx = e.getRawX() - downX, dy = e.getRawY() - downY;
-                        if (!dragging && Math.hypot(dx, dy) > slop) {
-                            dragging = true;
-                            handler.removeCallbacks(onLongPress);
-                        }
-                        if (dragging) {
-                            // Gravity is END, so x grows to the left.
-                            buttonParams.x = startX - (int) dx;
-                            buttonParams.y = startY + (int) dy;
-                            windowManager.updateViewLayout(button, buttonParams);
-                        }
-                        return true;
-                    case MotionEvent.ACTION_UP:
+    private TextView roundButton(String text, int color, int size) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        b.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(color);
+        b.setBackground(bg);
+        b.setMinimumWidth(size);
+        b.setMinimumHeight(size);
+        return b;
+    }
+
+    /** Drags the floating buttons, or runs {@code onTap} / {@code onLongPress}. */
+    private final class DragOrTap implements View.OnTouchListener {
+        private final Runnable onTap;
+        private final Runnable longPress;
+        private final int slop = ViewConfiguration.get(PickerService.this).getScaledTouchSlop();
+        private float downX, downY;
+        private int startX, startY;
+        private boolean dragging, longPressed;
+        private final Runnable onLongPress;
+
+        DragOrTap(Runnable onTap, Runnable longPress) {
+            this.onTap = onTap;
+            this.longPress = longPress;
+            this.onLongPress = () -> {
+                longPressed = true;
+                longPress.run();
+            };
+        }
+
+        @SuppressLint("ClickableViewAccessibility")
+        @Override
+        public boolean onTouch(View v, MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    downX = e.getRawX();
+                    downY = e.getRawY();
+                    startX = buttonParams.x;
+                    startY = buttonParams.y;
+                    dragging = false;
+                    longPressed = false;
+                    if (longPress != null) {
+                        handler.postDelayed(onLongPress, ViewConfiguration.getLongPressTimeout());
+                    }
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = e.getRawX() - downX, dy = e.getRawY() - downY;
+                    if (!dragging && Math.hypot(dx, dy) > slop) {
+                        dragging = true;
                         handler.removeCallbacks(onLongPress);
-                        if (!dragging && !longPressed) run();
-                        return true;
-                    case MotionEvent.ACTION_CANCEL:
-                        handler.removeCallbacks(onLongPress);
-                        return true;
-                    default:
-                        return false;
-                }
+                    }
+                    if (dragging) {
+                        // Gravity is END, so x grows to the left.
+                        buttonParams.x = startX - (int) dx;
+                        buttonParams.y = startY + (int) dy;
+                        windowManager.updateViewLayout(controls, buttonParams);
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    handler.removeCallbacks(onLongPress);
+                    if (!dragging && !longPressed) onTap.run();
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    handler.removeCallbacks(onLongPress);
+                    return true;
+                default:
+                    return false;
             }
-        });
-        windowManager.addView(button, buttonParams);
+        }
     }
 
     private void setButtonVisible(boolean visible) {
-        if (button != null) button.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
+        if (controls != null) controls.setVisibility(visible ? View.VISIBLE : View.INVISIBLE);
     }
 
     // ---- Main flow -----------------------------------------------------------
@@ -262,9 +301,10 @@ public class PickerService extends AccessibilityService {
             }
         }
         if (next == null) {
-            stop(picked == 0
-                    ? "No dropdown found. Long-press the button to see what the app sees."
-                    : "Done. Selected " + picked + " dropdown(s).");
+            String none = screenshotError != null
+                    ? "Couldn't take a screenshot: " + screenshotError
+                    : "No dropdown found. Tap See to see what the app sees.";
+            stop(picked == 0 ? none : "Done. Selected " + picked + " dropdown(s).");
             return;
         }
         doneYs.add(next.line.centerY());
@@ -282,9 +322,18 @@ public class PickerService extends AccessibilityService {
         return false;
     }
 
-    /** Takes a screenshot; passes null if that isn't possible (Android 10 and older). */
+    /**
+     * Takes a screenshot; passes null if that isn't possible and sets
+     * {@link #screenshotError} to the reason.
+     */
     private void capture(Consumer<Bitmap> done) {
+        capture(done, true);
+    }
+
+    private void capture(Consumer<Bitmap> done, boolean retry) {
+        screenshotError = null;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            screenshotError = "this needs Android 11 or newer";
             done.accept(null);
             return;
         }
@@ -292,14 +341,40 @@ public class PickerService extends AccessibilityService {
             @Override
             public void onSuccess(ScreenshotResult result) {
                 HardwareBuffer buffer = result.getHardwareBuffer();
-                Bitmap hw = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
-                Bitmap bmp = hw == null ? null : hw.copy(Bitmap.Config.ARGB_8888, false);
-                buffer.close();
+                Bitmap bmp = null;
+                try {
+                    Bitmap hw = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
+                    if (hw != null) bmp = hw.copy(Bitmap.Config.ARGB_8888, false);
+                } catch (RuntimeException e) {
+                    bmp = null;
+                } finally {
+                    buffer.close();
+                }
+                if (bmp == null) screenshotError = "couldn't read the picture";
                 done.accept(bmp);
             }
 
             @Override
             public void onFailure(int errorCode) {
+                if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && retry) {
+                    // Android allows only a few screenshots per second; wait and try again.
+                    handler.postDelayed(() -> capture(done, false), 500);
+                    return;
+                }
+                switch (errorCode) {
+                    case ERROR_TAKE_SCREENSHOT_SECURE_WINDOW:
+                        screenshotError = "this app blocks screenshots (secure screen)";
+                        break;
+                    case ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS:
+                        screenshotError = "screenshot permission missing - turn the app off and on "
+                                + "again in accessibility settings";
+                        break;
+                    case ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT:
+                        screenshotError = "too many screenshots, try again in a second";
+                        break;
+                    default:
+                        screenshotError = "Android error " + errorCode;
+                }
                 done.accept(null);
             }
         });
@@ -432,7 +507,7 @@ public class PickerService extends AccessibilityService {
         setButtonVisible(false);
         handler.postDelayed(() -> capture(bmp -> {
             if (bmp == null) {
-                stop("Couldn't take a screenshot");
+                stop("Couldn't take a screenshot: " + screenshotError);
                 return;
             }
             analyze(bmp, result -> {
@@ -524,7 +599,10 @@ public class PickerService extends AccessibilityService {
                 }
             }
         } catch (Exception e) {
-            uri = null;
+            Toast.makeText(this, "Couldn't save the picture: " + e.getMessage(),
+                    Toast.LENGTH_LONG).show();
+            closePreview();
+            return;
         } finally {
             out.recycle();
         }
@@ -534,13 +612,22 @@ public class PickerService extends AccessibilityService {
             return;
         }
         Toast.makeText(this, "Saved to Pictures/DropdownPicker", Toast.LENGTH_SHORT).show();
+        // ClipData + the grant flag let the app you share to read the picture.
+        ClipData clip = ClipData.newRawUri("screenshot", uri);
         Intent send = new Intent(Intent.ACTION_SEND)
                 .setType("image/png")
                 .putExtra(Intent.EXTRA_STREAM, uri)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        send.setClipData(clip);
         Intent chooser = Intent.createChooser(send, "Share what the app sees");
-        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(chooser);
+        chooser.setClipData(clip);
+        chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(chooser);
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "Couldn't open the share menu. The picture is in your Gallery "
+                    + "under Pictures/DropdownPicker.", Toast.LENGTH_LONG).show();
+        }
     }
 
     // ---- Helpers ---------------------------------------------------------------
