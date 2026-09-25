@@ -44,15 +44,17 @@ import java.util.function.Consumer;
 
 /**
  * Accessibility service that shows floating Start and See buttons. Start takes
- * a screenshot, taps the top-most dropdown once and selects its first option
- * (or taps half a centimetre below its line if no option text can be read).
+ * a screenshot, finds the top-most dropdown's line and taps once 4 mm above it
+ * to open it. Then it taps 4 mm below the line (the first option), or, when
+ * keywords are set, searches the options for them, scrolling the list.
  * Long-pressing it shows the screenshot the app analysed with what it found
  * marked on it, and lets the user share that picture.
  */
 public class PickerService extends AccessibilityService {
 
     private static final long OPEN_WAIT_MS = 700;
-    private static final int PICK_ATTEMPTS = 3;
+    private static final int OPEN_CHECKS = 3;
+    private static final int MAX_SCROLLS = 25;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
@@ -68,19 +70,6 @@ public class PickerService extends AccessibilityService {
     private final StringBuilder runLog = new StringBuilder();
     private View highlight;
     private View preview;
-
-    /** A clickable element on screen, used to spot what the dropdown adds when it opens. */
-    private static final class Clickable {
-        final AccessibilityNodeInfo node;
-        final Rect bounds;
-        final String label;
-
-        Clickable(AccessibilityNodeInfo node, Rect bounds, String label) {
-            this.node = node;
-            this.bounds = bounds;
-            this.label = label;
-        }
-    }
 
     @Override
     protected void onServiceConnected() {
@@ -279,7 +268,9 @@ public class PickerService extends AccessibilityService {
                 setButtonVisible(true);
                 List<Target> targets = new ArrayList<>();
                 for (DropdownDetector.Hit h : result.hits) {
-                    targets.add(new Target(h.line, h.arrow, h.tapX, h.tapY, null));
+                    // Open it with one tap 4 mm above the line (not on the arrow).
+                    targets.add(new Target(h.line, h.arrow, h.line.centerX(),
+                            h.line.top - mm(4), null));
                 }
                 log("Screenshot " + result.width + "x" + result.height + ": "
                         + result.lines.size() + " long line(s), " + targets.size() + " dropdown(s)");
@@ -409,79 +400,158 @@ public class PickerService extends AccessibilityService {
         return out;
     }
 
-    /** Taps the dropdown once, then selects its first option. */
+    /** A piece of text on screen (a possible option). */
+    private static final class TextNode {
+        final AccessibilityNodeInfo node;
+        final Rect bounds;
+        final String text;
+
+        TextNode(AccessibilityNodeInfo node, Rect bounds, String text) {
+            this.node = node;
+            this.bounds = bounds;
+            this.text = text;
+        }
+    }
+
+    /** Taps the dropdown once, then picks an option. */
     private void openAndPick(Target t) {
         if (!running) return;
         // Remember the text already on screen; the options are text that shows up after opening.
         Set<String> before = new HashSet<>();
-        for (Clickable c : clickables()) before.add(c.label);
+        for (TextNode n : texts()) before.add(n.text);
 
         boolean clicked = t.node != null && t.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         if (!clicked) tap(t.tapX, t.tapY);
-        handler.postDelayed(safe(() -> pickFirst(t, before, PICK_ATTEMPTS)), OPEN_WAIT_MS);
+
+        List<String> keywords = Keywords.list(this);
+        if (keywords.isEmpty()) {
+            // No keywords: the first option sits just below the line.
+            handler.postDelayed(safe(() -> tapBelow(t)), OPEN_WAIT_MS);
+        } else {
+            handler.postDelayed(safe(() -> search(t, before, keywords, OPEN_CHECKS, MAX_SCROLLS, null)),
+                    OPEN_WAIT_MS);
+        }
+    }
+
+    /** Taps 4 mm below the line (the blue dot), where the first option is. */
+    private void tapBelow(Target t) {
+        if (!running) return;
+        int x = t.line.centerX();
+        int y = t.line.bottom + mm(4);
+        log("Tapping 4 mm below the line at " + x + "," + y);
+        showHighlight(null, null, null, x, y);
+        tap(x, y);
+        stop("Tapped 4 mm below the line");
     }
 
     /**
-     * Clicks an option that appeared next to the dropdown after it opened: the
-     * one matching the user's earliest keyword, else the first one. If none
-     * can be read, taps half a centimetre below the line (the blue dot).
+     * Looks for an option containing one of the keywords (earliest keyword
+     * wins) and taps it. If none is visible, scrolls the dropdown and looks
+     * again, until the list stops moving.
      */
-    private void pickFirst(Target t, Set<String> before, int attemptsLeft) {
+    private void search(Target t, Set<String> before, List<String> keywords,
+                        int checksLeft, int scrollsLeft, String lastSeen) {
         if (!running) return;
-        Rect screen = screenBounds();
-        long screenArea = (long) screen.width() * screen.height();
-        List<String> keywords = Keywords.list(this);
-        List<Clickable> options = new ArrayList<>();
-        for (Clickable c : clickables()) {
-            if (c.label.isEmpty() || before.contains(c.label)) continue;
-            if (c.bounds.contains(t.tapX, t.tapY)) continue;
-            // Skip full-screen backdrops that close the menu when tapped.
-            if ((long) c.bounds.width() * c.bounds.height() > screenArea / 2) continue;
-            // Must sit in the same columns as the dropdown's line.
-            if (c.bounds.right < t.line.left || c.bounds.left > t.line.right) continue;
-            options.add(c);
-        }
-        // Options below the line first (top to bottom), then any above it.
-        options.sort((a, b) -> {
-            boolean aBelow = a.bounds.top >= t.line.top, bBelow = b.bounds.top >= t.line.top;
-            if (aBelow != bBelow) return aBelow ? -1 : 1;
-            return aBelow ? Integer.compare(a.bounds.top, b.bounds.top)
-                    : Integer.compare(b.bounds.top, a.bounds.top);
-        });
+        List<TextNode> options = options(t, before);
 
-        if (options.isEmpty()) {
-            if (attemptsLeft > 1) {
-                handler.postDelayed(safe(() -> pickFirst(t, before, attemptsLeft - 1)), 400);
-                return;
-            }
-            // No option text found: tap half a centimetre below the line.
-            int x = t.line.centerX();
-            int y = t.line.bottom + halfCm();
-            log("No option text found, tapping the blue dot at " + x + "," + y);
-            showHighlight(null, null, null, x, y);
-            tap(x, y);
-            stop("Tapped half a cm below the line");
-            return;
-        }
-
-        Clickable pick = options.get(0);
-        String note = keywords.isEmpty() ? "" : " (no keyword matched, took the first option)";
-        search:
         for (String k : keywords) {
-            for (Clickable c : options) {
-                if (c.label.toLowerCase(java.util.Locale.ROOT).contains(k)) {
-                    pick = c;
-                    note = " (keyword \"" + k + "\")";
-                    break search;
+            for (TextNode o : options) {
+                if (o.text.toLowerCase(java.util.Locale.ROOT).contains(k)) {
+                    log("Found \"" + o.text + "\" for keyword \"" + k + "\"");
+                    showHighlight(null, null, o.bounds, -1, -1);
+                    tap(o.bounds.centerX(), o.bounds.centerY());
+                    stop("Selected: " + o.text + " (keyword \"" + k + "\")");
+                    return;
                 }
             }
         }
-        log(options.size() + " option(s) found, first: " + options.get(0).label);
-        showHighlight(null, null, pick.bounds, -1, -1);
-        if (!pick.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            tap(pick.bounds.centerX(), pick.bounds.centerY());
+
+        if (options.isEmpty() && lastSeen == null && checksLeft > 1) {
+            // The list may still be opening.
+            handler.postDelayed(safe(() -> search(t, before, keywords, checksLeft - 1,
+                    scrollsLeft, null)), 400);
+            return;
         }
-        stop("Selected: " + pick.label + note);
+
+        StringBuilder seenBuilder = new StringBuilder();
+        for (TextNode o : options) seenBuilder.append(o.text).append('|');
+        String seen = seenBuilder.toString();
+        log("Visible options: " + options.size()
+                + (options.isEmpty() ? "" : " (" + options.get(0).text + " ... "
+                + options.get(options.size() - 1).text + ")"));
+        if (options.isEmpty() || seen.equals(lastSeen) || scrollsLeft <= 0) {
+            stop("No option matching your keywords found" + (options.isEmpty()
+                    ? " (couldn't read the options)" : " (reached the end of the list)"));
+            return;
+        }
+
+        scrollDown(t, options);
+        handler.postDelayed(safe(() -> search(t, before, keywords, checksLeft,
+                scrollsLeft - 1, seen)), 600);
+    }
+
+    /** Text that appeared after the dropdown opened, in the dropdown's columns, top to bottom. */
+    private List<TextNode> options(Target t, Set<String> before) {
+        List<TextNode> out = new ArrayList<>();
+        for (TextNode n : texts()) {
+            if (before.contains(n.text)) continue;
+            if (n.bounds.contains(t.tapX, t.tapY)) continue;
+            if (n.bounds.right < t.line.left || n.bounds.left > t.line.right) continue;
+            out.add(n);
+        }
+        out.sort((a, b) -> Integer.compare(a.bounds.top, b.bounds.top));
+        return out;
+    }
+
+    /** Scrolls the list the options are in; swipes up inside it if it can't be scrolled directly. */
+    private void scrollDown(Target t, List<TextNode> options) {
+        TextNode last = options.get(options.size() - 1);
+        for (AccessibilityNodeInfo p = last.node.getParent(); p != null; p = p.getParent()) {
+            if (p.isScrollable()) {
+                Rect r = new Rect();
+                p.getBoundsInScreen(r);
+                Rect screen = screenBounds();
+                // Don't scroll the whole page.
+                if ((long) r.width() * r.height() > (long) screen.width() * screen.height() / 2) break;
+                if (p.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    log("Scrolled the list");
+                    return;
+                }
+                break;
+            }
+        }
+        int x = t.line.centerX();
+        int fromY = last.bounds.centerY();
+        int toY = options.get(0).bounds.centerY();
+        if (fromY - toY < mm(5)) {
+            fromY = t.line.bottom + mm(30);
+            toY = t.line.bottom + mm(8);
+        }
+        log("Swiping the list up from " + fromY + " to " + toY);
+        swipe(x, fromY, x, toY);
+    }
+
+    /** Every piece of visible text on screen (a node's own text or description). */
+    private List<TextNode> texts() {
+        List<TextNode> out = new ArrayList<>();
+        for (AccessibilityNodeInfo root : roots()) {
+            List<AccessibilityNodeInfo> stack = new ArrayList<>();
+            stack.add(root);
+            while (!stack.isEmpty()) {
+                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+                if (n == null) continue;
+                CharSequence txt = n.getText();
+                if (txt == null || txt.length() == 0) txt = n.getContentDescription();
+                if (txt != null && n.isVisibleToUser()) {
+                    String s = txt.toString().trim();
+                    Rect r = new Rect();
+                    n.getBoundsInScreen(r);
+                    if (!s.isEmpty() && !r.isEmpty()) out.add(new TextNode(n, r, s));
+                }
+                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
+            }
+        }
+        return out;
     }
 
     /** Runs {@code r}, turning any crash into a message instead of stopping the app. */
@@ -504,9 +574,9 @@ public class PickerService extends AccessibilityService {
         runLog.append(line).append('\n');
     }
 
-    /** Half a centimetre in screen pixels. */
-    private int halfCm() {
-        return Math.round(getResources().getDisplayMetrics().ydpi / 2.54f * 0.5f);
+    /** Millimetres in screen pixels. */
+    private int mm(float mm) {
+        return Math.round(getResources().getDisplayMetrics().ydpi / 25.4f * mm);
     }
 
     // ---- Showing what the app sees ------------------------------------------------
@@ -576,14 +646,15 @@ public class PickerService extends AccessibilityService {
         if (hit != null) {
             markup.line = hit.line;
             markup.arrow = hit.arrow;
-            markup.tapX = hit.tapX;
-            markup.tapY = hit.tapY;
+            markup.tapX = hit.line.centerX();
+            markup.tapY = hit.line.top - mm(4);
             markup.backupX = hit.line.centerX();
-            markup.backupY = hit.line.bottom + halfCm();
+            markup.backupY = hit.line.bottom + mm(4);
             markup.caption = result.hits.size() + " dropdown(s) found!\n"
-                    + "Red = underline, green = arrow,\n"
-                    + "pink = where Start taps to open it,\n"
-                    + "blue dot = backup tap, half a cm below.\n"
+                    + "Red = underline, green = arrow.\n"
+                    + "Pink = opening tap, 4 mm above the line.\n"
+                    + "Blue dot = option tap, 4 mm below\n"
+                    + "(used when no keywords are set).\n"
                     + "Yellow = other long lines.";
         } else {
             markup.caption = "No dropdown found.\n"
@@ -700,43 +771,21 @@ public class PickerService extends AccessibilityService {
         return roots;
     }
 
-    private List<Clickable> clickables() {
-        List<Clickable> out = new ArrayList<>();
-        for (AccessibilityNodeInfo root : roots()) {
-            List<AccessibilityNodeInfo> stack = new ArrayList<>();
-            stack.add(root);
-            while (!stack.isEmpty()) {
-                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
-                if (n == null) continue;
-                if (n.isClickable() && n.isVisibleToUser()) {
-                    Rect r = new Rect();
-                    n.getBoundsInScreen(r);
-                    if (!r.isEmpty()) out.add(new Clickable(n, r, label(n)));
-                }
-                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
-            }
-        }
-        return out;
-    }
-
-    /** The node's own text, or the text of its first descendant that has some. */
-    private static String label(AccessibilityNodeInfo n) {
-        if (n == null) return "";
-        CharSequence t = n.getText();
-        if (t == null || t.length() == 0) t = n.getContentDescription();
-        if (t != null && t.length() > 0) return t.toString().trim();
-        for (int i = 0; i < n.getChildCount(); i++) {
-            String s = label(n.getChild(i));
-            if (!s.isEmpty()) return s;
-        }
-        return "";
-    }
-
     private void tap(int x, int y) {
         Path path = new Path();
         path.moveTo(x, y);
         GestureDescription gesture = new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(path, 0, 60))
+                .build();
+        dispatchGesture(gesture, null, null);
+    }
+
+    private void swipe(int x1, int y1, int x2, int y2) {
+        Path path = new Path();
+        path.moveTo(x1, y1);
+        path.lineTo(x2, y2);
+        GestureDescription gesture = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(path, 0, 400))
                 .build();
         dispatchGesture(gesture, null, null);
     }

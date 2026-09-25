@@ -70,8 +70,8 @@ public class MainActivity extends Activity {
 
         root.addView(text("Keywords (optional)\n"
                 + "Words to look for in the options, separated by commas, most wanted first. "
-                + "Start picks the option containing the first keyword it finds. If no option "
-                + "matches, or this is empty, it picks the first option.", pad));
+                + "With keywords, Start searches the open dropdown for them, scrolling the "
+                + "list until it finds one. Leave empty to just tap the first option.", pad));
         EditText keywords = new EditText(this);
         keywords.setHint("e.g. Tirumala, Male Only");
         keywords.setSingleLine(true);
@@ -94,9 +94,9 @@ public class MainActivity extends Activity {
         root.addView(text("Step 3 - Start\n"
                 + "Open the page with the dropdown and tap the purple Start button. The app "
                 + "takes a screenshot, finds the dropdown (an underline with a down arrow at "
-                + "its right end), taps it once and selects the option matching your "
-                + "keywords, or else the first option it can read. "
-                + "If it can't read any option, it taps half a centimetre below the line.\n\n"
+                + "its right end) and taps once 4 mm above the line to open it. Then it taps "
+                + "4 mm below the line (the first option), or, if you set keywords, it "
+                + "searches the options for them and scrolls the list until it finds one.\n\n"
                 + "Tap the green See button to see what the app sees, with each dropdown's "
                 + "underline (red) and arrow (green) marked. Share saves that picture to your "
                 + "Gallery (Pictures/DropdownPicker) and sends it.", pad));
