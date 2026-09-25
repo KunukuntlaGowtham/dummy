@@ -155,12 +155,12 @@ public class MainActivity extends Activity {
 
         root.addView(text("Day colours that count as available:", pad / 2));
         LinearLayout colourRow = new LinearLayout(this);
-        java.util.Set<String> open = DayChoice.loadOpenColours(this);
+        java.util.Set<String> openColours = DayChoice.loadOpenColours(this);
         for (String[] c : new String[][] {{"GREEN", "Green"}, {"YELLOW", "Yellow"},
                 {"GREY", "Grey"}, {"WHITE", "White"}}) {
             CheckBox box = new CheckBox(this);
             box.setText(c[1]);
-            box.setChecked(open.contains(c[0]));
+            box.setChecked(openColours.contains(c[0]));
             box.setOnCheckedChangeListener((b, on) -> DayChoice.setOpenColour(this, c[0], on));
             colourRow.addView(box);
         }
