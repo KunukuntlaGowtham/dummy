@@ -134,6 +134,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private void showButton() {
         controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
+        controls.setPadding(dp(6), dp(6), dp(6), dp(6));
+        GradientDrawable dock = new GradientDrawable();
+        dock.setColor(0x661D1B26);
+        dock.setCornerRadius(dp(34));
+        controls.setBackground(dock);
 
         // One button per step, to test each on its own: Drop, Cal, Check (+ Continue), See.
         // Drop, and Cal + Check combined (date, fast 100 mm scroll, Available, checkbox, Continue).
@@ -169,16 +174,29 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         windowManager.addView(controls, buttonParams);
     }
 
+    private static int blend(int a, int b, float t) {
+        int r = Math.round(Color.red(a) + (Color.red(b) - Color.red(a)) * t);
+        int g = Math.round(Color.green(a) + (Color.green(b) - Color.green(a)) * t);
+        int bl = Math.round(Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t);
+        return Color.rgb(r, g, bl);
+    }
+
     private TextView roundButton(String text, int color, int size) {
         TextView b = new TextView(this);
         b.setText(text);
         b.setTextColor(Color.WHITE);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        b.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         b.setGravity(Gravity.CENTER);
-        GradientDrawable bg = new GradientDrawable();
+        b.setShadowLayer(dp(2), 0, dp(1), 0x55000000);
+        // A soft gradient disc with a thin light ring.
+        int light = blend(color, 0xFFFFFFFF, 0.28f);
+        GradientDrawable bg = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[] {light | 0xFF000000, color | 0xFF000000});
         bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(color);
+        bg.setStroke(Math.max(1, dp(2)), 0x66FFFFFF);
         b.setBackground(bg);
+        b.setElevation(dp(4));
         b.setMinimumWidth(size);
         b.setMinimumHeight(size);
         return b;
