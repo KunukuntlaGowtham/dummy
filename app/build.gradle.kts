@@ -36,3 +36,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
+
+dependencies {
+    // On-device text reading (OCR). The Play Services version keeps the APK small:
+    // the recognition model is downloaded by Google Play services, not bundled.
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+}

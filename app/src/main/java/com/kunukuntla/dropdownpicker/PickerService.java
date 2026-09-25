@@ -71,6 +71,7 @@ public class PickerService extends AccessibilityService {
     private String screenshotError;
     private boolean busy;
     private boolean running;
+    private final ScreenReader reader = new ScreenReader();
     /** What happened during the last Start, shown on the app's main screen. */
     private final StringBuilder runLog = new StringBuilder();
     private View highlight;
@@ -93,6 +94,7 @@ public class PickerService extends AccessibilityService {
         if (controls != null) windowManager.removeView(controls);
         removeHighlight();
         closePreview();
+        reader.close();
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }
@@ -485,31 +487,60 @@ public class PickerService extends AccessibilityService {
             return;
         }
 
-        if (all.isEmpty() && lastSeen == null && checksLeft > 1) {
-            // The list may still be opening.
-            handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft - 1,
-                    scrollsLeft, stuck, null)), 250);
-            return;
-        }
+        // Not visible in the page's text: take a screenshot and read the list from it.
+        TextNode offscreen = match;
+        ocrLook(t, keywords, exact, (found, ocrText, error) -> {
+            if (!running) return;
+            if (found != null) {
+                log("Read \"" + found.text + "\" on screen for keyword \"" + found.keyword + "\"");
+                showHighlight(null, null, found.box, -1, -1);
+                tap(found.box.centerX(), found.box.centerY());
+                afterDropdown("Selected: " + found.text + " (keyword \"" + found.keyword
+                        + "\", read from the screen)");
+                return;
+            }
+            if (error != null) log("Couldn't read the screen: " + error);
 
-        StringBuilder seenBuilder = new StringBuilder();
-        for (TextNode o : visible) seenBuilder.append(o.text).append('|');
-        String seen = seenBuilder.toString();
-        int nowStuck = seen.equals(lastSeen) ? stuck + 1 : 0;
-        if (scrollsLeft <= 0 || nowStuck >= 2) {
-            afterDropdown("No option matching your keywords found (" + all.size()
-                    + " options read, list stopped scrolling)");
-            return;
-        }
+            StringBuilder seenBuilder = new StringBuilder();
+            for (TextNode o : visible) seenBuilder.append(o.text).append('|');
+            seenBuilder.append(ocrText);
+            String seen = seenBuilder.toString();
+            int nowStuck = seen.equals(lastSeen) ? stuck + 1 : 0;
+            if (scrollsLeft <= 0 || nowStuck >= 2) {
+                afterDropdown("No option matching your keywords found (list stopped scrolling)");
+                return;
+            }
+            if (offscreen != null) {
+                // The page knows the match is further down: ask the list to show it too.
+                log("\"" + offscreen.text + "\" is off screen, scrolling to it");
+                offscreen.node.performAction(
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+            }
+            swipeList(t, visible);
+            handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
+                    scrollsLeft - 1, nowStuck, seen)), 350);
+        });
+    }
 
-        if (match != null) {
-            // The match is off screen: ask the list to bring it into view, and swipe too.
-            log("\"" + match.text + "\" is off screen, scrolling to it");
-            match.node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-        }
-        swipeList(t, visible);
-        handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
-                scrollsLeft - 1, nowStuck, seen)), 300);
+    /** Screenshots the area below the dropdown's line and looks for a keyword in it. */
+    private void ocrLook(Target t, List<String> keywords, boolean exact, ScreenReader.Callback cb) {
+        removeHighlight();
+        setButtonVisible(false);
+        handler.postDelayed(safe(() -> capture(bmp -> {
+            setButtonVisible(true);
+            if (bmp == null) {
+                cb.done(null, "", "no screenshot (" + screenshotError + ")");
+                return;
+            }
+            int left = Math.max(0, t.line.left);
+            int top = Math.min(bmp.getHeight() - 1, Math.max(0, t.line.bottom + 1));
+            int right = Math.min(bmp.getWidth(), t.line.right + 1);
+            Bitmap crop = Bitmap.createBitmap(bmp, left, top, Math.max(1, right - left),
+                    bmp.getHeight() - top);
+            if (crop != bmp) bmp.recycle();
+            reader.find(crop, left, top, keywords, exact, (found, text, error) ->
+                    safe(() -> cb.done(found, text, error)).run());
+        })), 80);
     }
 
     /** A fast 15 mm swipe up inside the open list, just below the line. */
