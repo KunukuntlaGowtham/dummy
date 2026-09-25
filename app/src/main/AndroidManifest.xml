@@ -27,30 +27,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Checkbox Ticker (merged from the Dummydum repo, commit f81cae4). -->
-        <activity
-            android:name="com.example.checkboxticker.MainActivity"
-            android:exported="false"
-            android:label="Checkbox Ticker settings" />
+        <!-- Checkbox Ticker (merged from Dummydum f81cae4) runs inside PickerService. -->
 
         <service
             android:name="com.example.checkboxticker.ScreenService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
-
-        <service
-            android:name="com.example.checkboxticker.CheckboxService"
-            android:exported="false"
-            android:label="Checkbox Ticker"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/checkbox_service" />
-        </service>
 
         <service
             android:name=".PickerService"

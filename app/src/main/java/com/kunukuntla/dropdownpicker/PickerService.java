@@ -52,7 +52,7 @@ import java.util.function.Consumer;
  * Long-pressing it shows the screenshot the app analysed with what it found
  * marked on it, and lets the user share that picture.
  */
-public class PickerService extends AccessibilityService {
+public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private static final long OPEN_WAIT_MS = 450;
     private static final int MAX_MONTH_CHANGES = 12;
@@ -88,12 +88,33 @@ public class PickerService extends AccessibilityService {
 
     @Override
     protected void onServiceConnected() {
+        super.onServiceConnected(); // the Checkbox Ticker part
         windowManager = (WindowManager) getSystemService(WINDOW_SERVICE);
         showButton();
     }
 
     @Override
-    public void onAccessibilityEvent(AccessibilityEvent event) {}
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        super.onAccessibilityEvent(event);
+        // Keep the Tick button in step when a ticker run ends by itself.
+        if (tickButton != null) {
+            String want = isLooping() ? "■\nStop" : TICK_LABEL;
+            if (!want.contentEquals(tickButton.getText())) tickButton.setText(want);
+        }
+    }
+
+    /** Our floating buttons and outlines, so the ticker never scans or taps them. */
+    @Override
+    protected List<Rect> extraOwnWindows() {
+        List<Rect> out = new ArrayList<>();
+        for (View v : new View[] {controls, highlight, preview}) {
+            if (v == null || !v.isShown()) continue;
+            int[] at = new int[2];
+            v.getLocationOnScreen(at);
+            out.add(new Rect(at[0], at[1], at[0] + v.getWidth(), at[1] + v.getHeight()));
+        }
+        return out;
+    }
 
     @Override
     public void onInterrupt() {}
@@ -117,7 +138,7 @@ public class PickerService extends AccessibilityService {
         // One button per step, to test each on its own: Drop, Cal, Check (+ Continue), See.
         // Drop, and Cal + Check combined (date, fast 100 mm scroll, Available, checkbox, Continue).
         stepButtons = new TextView[] {
-                roundButton(STEP_LABELS[STEP_DROP], 0xDD6A3FA0, dp(52)),
+                roundButton(STEP_LABELS[STEP_DROP], 0xDD37474F, dp(52)),
                 roundButton(STEP_LABELS[STEP_CAL], 0xDD1565C0, dp(52))};
         // Tick: runs the Checkbox Ticker (ticks every checkbox, scrolling down the page).
         tickButton = roundButton(TICK_LABEL, 0xDD00897B, dp(52));
@@ -246,15 +267,8 @@ public class PickerService extends AccessibilityService {
 
     /** Tick button: start or stop the Checkbox Ticker's run. Long-press still shows See. */
     private void toggleTicker() {
-        com.example.checkboxticker.CheckboxService ticker =
-                com.example.checkboxticker.CheckboxService.Companion.getInstance();
-        if (ticker == null) {
-            Toast.makeText(this, "Turn on \"Checkbox Ticker\" in Accessibility settings first",
-                    Toast.LENGTH_LONG).show();
-            return;
-        }
-        ticker.toggleLoop();
-        handler.postDelayed(() -> tickButton.setText(ticker.isLooping() ? "■\nStop" : TICK_LABEL), 300);
+        toggleLoop();
+        handler.postDelayed(() -> tickButton.setText(isLooping() ? "■\nStop" : TICK_LABEL), 300);
     }
 
     /** A step button was tapped: run that step alone, or stop if something is running. */

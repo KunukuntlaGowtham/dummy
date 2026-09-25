@@ -35,7 +35,7 @@ import kotlin.math.abs
  * button it draws is an accessibility overlay, so no "draw over other apps"
  * permission is needed.
  */
-class CheckboxService : AccessibilityService() {
+open class CheckboxService : AccessibilityService() {
 
     companion object {
         const val PREFS = "cfg"
@@ -387,7 +387,10 @@ class CheckboxService : AccessibilityService() {
         BoxLook.cut(sketch, box.left - dp(4), box.top - dp(4), dp(300), dp(140))
 
     /** Where our own windows are, left out of the snap's copy of the screen. */
-    private fun ownWindows(): List<Rect> =
+    /** Overlays a subclass draws (its own buttons), to leave out of every screen scan. */
+    protected open fun extraOwnWindows(): List<Rect> = emptyList()
+
+    private fun ownWindows(): List<Rect> = extraOwnWindows() +
         listOfNotNull(boundsOfView(bubble), boundsOfView(panel), boundsOfView(numbersView))
 
     private fun boundsOfView(candidate: View?): Rect? {
@@ -571,7 +574,8 @@ class CheckboxService : AccessibilityService() {
     }
 
     /** Our own windows are on screen during a scan, so nothing under them is a checkbox. */
-    private fun hitsBubble(box: Rect): Boolean = covers(bubble, box) || covers(panel, box)
+    private fun hitsBubble(box: Rect): Boolean = covers(bubble, box) || covers(panel, box) ||
+        extraOwnWindows().any { Rect.intersects(it, box) }
 
     /**
      * The strip along the bottom of the screen reserved for the system's own gestures - the
