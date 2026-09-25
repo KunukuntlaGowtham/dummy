@@ -515,14 +515,9 @@ public class PickerService extends AccessibilityService {
         // Text and positions: the page may call every option "visible", but they move when
         // the list scrolls.
         for (TextNode o : all) seenBuilder.append(o.key()).append('|');
-        if (!visible.isEmpty()) {
-            // The page's text shows the options, so a screenshot wouldn't add anything: scroll on.
-            scrollOn(t, before, keywords, exact, checksLeft, scrollsLeft, stuck, lastSeen,
-                    visible, seenBuilder.toString());
-            return;
-        }
+        String pageSeen = seenBuilder.toString();
 
-        // The page doesn't expose the options: take a screenshot and read the list from it.
+        // Take a screenshot and read the list from it.
         ocrLook(t, keywords, exact, (found, ocrText, error) -> {
             if (!running) return;
             if (found != null) {
@@ -535,7 +530,7 @@ public class PickerService extends AccessibilityService {
             }
             if (error != null) log("Couldn't read the screen: " + error);
             scrollOn(t, before, keywords, exact, checksLeft, scrollsLeft, stuck, lastSeen,
-                    visible, ocrText);
+                    visible, pageSeen + "#" + ocrText);
         });
     }
 
@@ -549,11 +544,15 @@ public class PickerService extends AccessibilityService {
             return;
         }
         swipeList(t, visible);
+        // Let the list settle before looking again.
         handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
-                scrollsLeft - 1, nowStuck, seen)), 250);
+                scrollsLeft - 1, nowStuck, seen)), 700);
     }
 
-    /** Screenshots the area below the dropdown's line and looks for a keyword in it. */
+    /**
+     * Screenshots the dropdown's column (the whole height: the list can open over the field,
+     * above the line as well as below it) and looks for a keyword in it.
+     */
     private void ocrLook(Target t, List<String> keywords, boolean exact, ScreenReader.Callback cb) {
         removeHighlight();
         setButtonVisible(false);
@@ -564,7 +563,7 @@ public class PickerService extends AccessibilityService {
                 return;
             }
             int left = Math.max(0, t.line.left);
-            int top = Math.min(bmp.getHeight() - 1, Math.max(0, t.line.bottom + 1));
+            int top = 0;
             int right = Math.min(bmp.getWidth(), t.line.right + 1);
             Bitmap crop = Bitmap.createBitmap(bmp, left, top, Math.max(1, right - left),
                     bmp.getHeight() - top);
@@ -574,7 +573,7 @@ public class PickerService extends AccessibilityService {
         })), 80);
     }
 
-    /** A fast 15 mm swipe up inside the open list, just below the line. */
+    /** A slow 15 mm drag up inside the open list. */
     private void swipeList(Target t, List<TextNode> visible) {
         // Swipe inside the list itself when we can find it.
         Rect list = null;
@@ -597,12 +596,14 @@ public class PickerService extends AccessibilityService {
             from = Math.min(list.bottom - mm(1), list.centerY() + mm(7.5f));
             to = Math.max(list.top + mm(1), from - mm(15));
         } else {
+            // The list sits over the field, around the line.
             x = t.line.centerX();
-            to = t.line.bottom + mm(2);
-            from = to + mm(15);
+            from = t.line.bottom + mm(7);
+            to = from - mm(15);
         }
-        log("Swiping the list up (" + from + " -> " + to + ")");
-        swipe(x, from, x, to, 120);
+        log("Dragging the list up 15 mm (" + from + " -> " + to + ")");
+        // A slow drag, so the list moves exactly 15 mm and doesn't keep sliding.
+        drag(x, from, x, to, 600);
     }
 
     /** On screen and inside the box of the list it scrolls in (not hidden by scrolling). */
@@ -1386,6 +1387,26 @@ public class PickerService extends AccessibilityService {
                 .addStroke(new GestureDescription.StrokeDescription(path, 0, durationMs))
                 .build();
         dispatchGesture(gesture, null, null);
+    }
+
+    /** Drags, then keeps the finger still for a moment before lifting so the list doesn't fling. */
+    private void drag(int x1, int y1, int x2, int y2, long durationMs) {
+        Path path = new Path();
+        path.moveTo(x1, y1);
+        path.lineTo(x2, y2);
+        GestureDescription.StrokeDescription move =
+                new GestureDescription.StrokeDescription(path, 0, durationMs, true);
+        dispatchGesture(new GestureDescription.Builder().addStroke(move).build(),
+                new GestureResultCallback() {
+                    @Override
+                    public void onCompleted(GestureDescription gestureDescription) {
+                        Path hold = new Path();
+                        hold.moveTo(x2, y2);
+                        dispatchGesture(new GestureDescription.Builder()
+                                .addStroke(move.continueStroke(hold, 0, 150, false)).build(),
+                                null, null);
+                    }
+                }, null);
     }
 
     private Rect screenBounds() {
