@@ -484,7 +484,7 @@ public class PickerService extends AccessibilityService {
             }
         }
 
-        if (match != null && match.node.isVisibleToUser() && onScreen(match.bounds)) {
+        if (match != null && inView(match)) {
             log("Found \"" + match.text + "\" for keyword \"" + matched + "\"");
             showHighlight(null, null, match.bounds, -1, -1);
             tap(match.bounds.centerX(), match.bounds.centerY());
@@ -492,19 +492,29 @@ public class PickerService extends AccessibilityService {
             return;
         }
 
-        if (match != null && checksLeft > 0) {
-            // The page knows the match is further down the list: jump to it (fast, no swiping).
-            log("\"" + match.text + "\" is off screen, bringing it into view");
-            if (match.node.performAction(
-                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId())) {
+        if (match != null) {
+            if (checksLeft > 0) {
+                // The page knows the match is further down the list: bring it into view, fast.
+                log("\"" + match.text + "\" is out of view, bringing it into view");
+                match.node.performAction(
+                        AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
                 handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft - 1,
-                        scrollsLeft, stuck, lastSeen)), 150);
+                        scrollsLeft, stuck, lastSeen)), 200);
+                return;
+            }
+            // Still not in view: click the option directly through the page.
+            AccessibilityNodeInfo target = clickableSelfOrParent(match.node);
+            if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                log("Clicked \"" + match.text + "\" directly");
+                afterDropdown("Selected: " + match.text + " (keyword \"" + matched + "\")");
                 return;
             }
         }
 
         StringBuilder seenBuilder = new StringBuilder();
-        for (TextNode o : visible) seenBuilder.append(o.text).append('|');
+        // Text and positions: the page may call every option "visible", but they move when
+        // the list scrolls.
+        for (TextNode o : all) seenBuilder.append(o.key()).append('|');
         if (!visible.isEmpty()) {
             // The page's text shows the options, so a screenshot wouldn't add anything: scroll on.
             scrollOn(t, before, keywords, exact, checksLeft, scrollsLeft, stuck, lastSeen,
@@ -534,7 +544,7 @@ public class PickerService extends AccessibilityService {
                           int checksLeft, int scrollsLeft, int stuck, String lastSeen,
                           List<TextNode> visible, String seen) {
         int nowStuck = seen.equals(lastSeen) ? stuck + 1 : 0;
-        if (scrollsLeft <= 0 || nowStuck >= 2) {
+        if (scrollsLeft <= 0 || nowStuck >= 3) {
             afterDropdown("No option matching your keywords found (list stopped scrolling)");
             return;
         }
@@ -593,6 +603,18 @@ public class PickerService extends AccessibilityService {
         }
         log("Swiping the list up (" + from + " -> " + to + ")");
         swipe(x, from, x, to, 120);
+    }
+
+    /** On screen and inside the box of the list it scrolls in (not hidden by scrolling). */
+    private boolean inView(TextNode o) {
+        if (!o.node.isVisibleToUser() || !onScreen(o.bounds)) return false;
+        for (AccessibilityNodeInfo p = o.node.getParent(); p != null; p = p.getParent()) {
+            if (!p.isScrollable()) continue;
+            Rect r = new Rect();
+            p.getBoundsInScreen(r);
+            return r.contains(o.bounds.centerX(), o.bounds.centerY());
+        }
+        return true;
     }
 
     private boolean onScreen(Rect r) {
@@ -905,7 +927,7 @@ public class PickerService extends AccessibilityService {
 
     // ---- Radio button, checkbox, Continue -----------------------------------------
 
-    private static final String[] FORM_STEPS = {"radio button", "checkbox", "Continue button"};
+    private static final String[] FORM_STEPS = {"\"Available\" slot", "checkbox", "Continue button"};
 
 
     /** Calendar step finished: tick the radio button and checkbox, then press Continue. */
@@ -927,7 +949,7 @@ public class PickerService extends AccessibilityService {
     private void formStep(boolean[] done, int scrollsLeft, String summary) {
         if (!running) return;
         AccessibilityNodeInfo cont = formNode(2);
-        // 1) Controls the page reports (real radio buttons and checkboxes).
+        // 1) Controls the page reports ("Available" slot, real checkboxes).
         AccessibilityNodeInfo agreeText = null;
         for (int stage = 0; stage < 2; stage++) {
             if (done[stage]) continue;
@@ -962,7 +984,7 @@ public class PickerService extends AccessibilityService {
             return;
         }
 
-        // 2) Drawn controls: look for empty circles (radio) and squares (checkbox) on screen.
+        // 2) Drawn checkbox: look for an empty square with a label next to it on screen.
         AccessibilityNodeInfo agree = agreeText;
         removeHighlight();
         setButtonVisible(false);
@@ -987,10 +1009,7 @@ public class PickerService extends AccessibilityService {
                     if (!running) return;
                     Rect target = null;
                     int stage = -1;
-                    if (found != null && !done[0] && !found.circles.isEmpty()) {
-                        target = found.circles.get(0);
-                        stage = 0;
-                    } else if (found != null && !done[1] && !found.squares.isEmpty()) {
+                    if (found != null && !done[1] && !found.squares.isEmpty()) {
                         target = found.squares.get(0);
                         stage = 1;
                     }
@@ -1087,7 +1106,20 @@ public class PickerService extends AccessibilityService {
                 String text = t == null ? "" : t.toString().trim().toLowerCase(Locale.ROOT);
                 boolean hit = false, weak = false;
                 if (stage == 0) {
-                    hit = c.contains("RadioButton");
+                    // The slot marked "Available" (not "Not available" / "Unavailable").
+                    hit = text.matches(".*\\bavailable\\b.*")
+                            && !text.matches(".*\\b(not|un)\\s*available\\b.*")
+                            && !text.contains("unavailable");
+                    if (hit) {
+                        AccessibilityNodeInfo clickable = clickableSelfOrParent(n);
+                        // Prefer a tappable slot over plain text such as the colour legend.
+                        if (clickable.isClickable()) {
+                            n = clickable;
+                        } else {
+                            hit = false;
+                            weak = true;
+                        }
+                    }
                 } else if (stage == 1) {
                     hit = c.contains("CheckBox")
                             || (n.isCheckable() && !c.contains("Radio") && !c.contains("Switch"));

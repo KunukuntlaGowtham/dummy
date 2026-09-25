@@ -167,7 +167,7 @@ public class MainActivity extends Activity {
         root.addView(colourRow);
 
         CheckBox finish = new CheckBox(this);
-        finish.setText("After the date: tick the radio button, then the checkbox, then press "
+        finish.setText("After the date: tap the \"Available\" slot, tick the checkbox, then press "
                 + "Continue (scrolls down 10 mm at a time to find them)");
         finish.setChecked(Keywords.loadFinish(this));
         finish.setOnCheckedChangeListener((b, on) -> Keywords.saveFinish(this, on));
