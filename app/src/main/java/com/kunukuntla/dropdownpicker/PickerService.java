@@ -580,66 +580,111 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private boolean backRunning;
 
     /**
-     * Back button: tap the page's own "Back" button (scrolling down to it), wait for the other
-     * page, scroll it down, and tap that page's "Back" button too - the phone's Back when a page
-     * has none, so it always goes back twice. {@code thenDelete}: then Delete (the B+Del button).
+     * B+Del's Back part: tap the page's own "Back" button (scrolling down to it if needed), wait
+     * until the other page is up, scroll it down, and tap that page's "Back" button too - the
+     * phone's Back when a page has none, so it always goes back twice. {@code thenDelete}: then
+     * delete the not-ticked rows on the page it lands on.
      */
     private void backScrollBack(boolean thenDelete) {
         if (running || busy || backRunning || deleteRunning) return;
         backRunning = true;
         backDeleteButton.setAlpha(0.5f);
-        String page1 = pageKey();
-        tapPageBack(BACK_SEARCH_SCROLLS, first -> {
-            // No Back button on the page: the phone's own Back instead, so it is always twice.
-            if (!first) performGlobalAction(GLOBAL_ACTION_BACK);
-            // Go on as soon as the other page is up (at most "Wait after Back").
-            whenPageChanges(page1, Keywords.loadBackWait(this), () -> {
-                int scrollMm = Keywords.loadBackScroll(this);
-                if (scrollMm > 0) {
-                    Rect screen = screenBounds();
-                    int x = screen.centerX();
-                    int from = screen.height() * 3 / 4;
-                    int to = Math.max(mm(5), from - mm(scrollMm));
-                    swipe(x, from, x, to, 250);
-                }
-                String page2 = pageKey();
-                handler.postDelayed(() -> tapPageBack(BACK_SEARCH_SCROLLS, second -> {
-                    if (!second) performGlobalAction(GLOBAL_ACTION_BACK);
+        showStatus("back: 1st Back");
+        pressPageBack(() -> {
+            int scrollMm = Keywords.loadBackScroll(this);
+            if (scrollMm > 0) {
+                Rect screen = screenBounds();
+                int x = screen.centerX();
+                int from = screen.height() * 3 / 4;
+                drag(x, from, x, Math.max(mm(5), from - mm(scrollMm)), 350);
+            }
+            // Let the scroll come to rest: a tap on a moving page only stops it.
+            handler.postDelayed(() -> {
+                showStatus("back: 2nd Back");
+                pressPageBack(() -> {
                     endBack(null);
-                    // Back twice lands on the list: delete the not-ticked rows there first.
-                    if (thenDelete) {
-                        whenPageChanges(page2, Keywords.loadBackWait(this),
-                                () -> startDelete(this::afterBack));
-                    } else {
-                        afterBack();
-                    }
-                }), 300);
-            });
+                    if (thenDelete) startDelete(this::afterBack);
+                    else afterBack();
+                });
+            }, 650);
         });
     }
 
-    /** The page's text and where it is, to see when a new page has come up. */
-    private String pageKey() {
-        StringBuilder sb = new StringBuilder();
-        for (TextNode t : texts(false)) sb.append(t.key()).append('|');
-        return sb.toString();
+    /**
+     * Taps the page's Back button (the phone's Back if the page has none) and runs
+     * {@code then} once the next page is up.
+     */
+    private void pressPageBack(Runnable then) {
+        findPageBack(BACK_SEARCH_SCROLLS, back -> {
+            long max = Math.max(Keywords.loadBackWait(this) * 3L, 2500L);
+            if (back == null) {
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                // Nothing to watch: wait the set time, as before.
+                handler.postDelayed(then, Keywords.loadBackWait(this));
+                return;
+            }
+            Rect r = new Rect();
+            back.getBoundsInScreen(r);
+            Set<String> before = pageTexts();
+            tapThrough(r.centerX(), r.centerY());
+            whenNewPage(back, before, max, then);
+        });
     }
 
     /**
-     * Runs {@code then} once the page differs from {@code before} and has held still for a
-     * moment (a new page is up), or after {@code maxMs} at the latest.
+     * Finds the page's "Back" button (the lowest one on screen), dragging down to it without a
+     * fling, and hands it over once the page is still (or null when there is none).
      */
-    private void whenPageChanges(String before, long maxMs, Runnable then) {
-        long end = android.os.SystemClock.uptimeMillis() + Math.max(maxMs, 300);
-        pollPage(before, null, end, then);
+    private void findPageBack(int scrollsLeft, Consumer<AccessibilityNodeInfo> done) {
+        AccessibilityNodeInfo back = pageBackButton();
+        if (back != null || scrollsLeft <= 0) {
+            done.accept(back);
+            return;
+        }
+        Rect screen = screenBounds();
+        int x = screen.centerX();
+        int from = screen.height() * 4 / 5;
+        drag(x, from, x, screen.height() / 5, 300);
+        handler.postDelayed(() -> findPageBack(scrollsLeft - 1, done), 550);
     }
 
-    private void pollPage(String before, String last, long end, Runnable then) {
+    /** The texts on the page (no positions, so a scroll or a pressed button looks the same). */
+    private Set<String> pageTexts() {
+        Set<String> out = new HashSet<>();
+        for (TextNode t : texts(false)) out.add(t.text);
+        return out;
+    }
+
+    /**
+     * Runs {@code then} once the next page is up: the Back button just tapped is gone, or most
+     * of the text is new - and the page has held still for a moment. After {@code maxMs} at
+     * the latest (never taps anything again, so it can't go back one page too many).
+     */
+    private void whenNewPage(AccessibilityNodeInfo back, Set<String> before, long maxMs, Runnable then) {
+        long start = android.os.SystemClock.uptimeMillis();
+        pollNewPage(back, before, null, start, start + maxMs, then);
+    }
+
+    private void pollNewPage(AccessibilityNodeInfo back, Set<String> before, Set<String> last,
+                             long start, long end, Runnable then) {
         handler.postDelayed(() -> {
-            String now = pageKey();
-            boolean settled = !now.equals(before) && now.equals(last) && !now.isEmpty();
-            if (settled || android.os.SystemClock.uptimeMillis() >= end) then.run();
-            else pollPage(before, now, end, then);
+            long now = android.os.SystemClock.uptimeMillis();
+            Set<String> texts = pageTexts();
+            boolean backGone;
+            try {
+                backGone = !back.refresh() || !back.isVisibleToUser();
+            } catch (RuntimeException e) {
+                backGone = true;
+            }
+            int common = 0;
+            for (String t : texts) if (before.contains(t)) common++;
+            boolean mostlyNew = !texts.isEmpty() && common * 2 < texts.size();
+            boolean still = texts.equals(last) && !texts.isEmpty();
+            if (((backGone || mostlyNew) && still && now - start >= 400) || now >= end) {
+                handler.postDelayed(then, 200);
+            } else {
+                pollNewPage(back, before, texts, start, end, then);
+            }
         }, 150);
     }
 
@@ -656,27 +701,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         backRunning = false;
         backDeleteButton.setAlpha(1f);
         if (problem != null) Toast.makeText(this, problem, Toast.LENGTH_SHORT).show();
-    }
-
-    /** Finds the page's "Back" button (the lowest one on screen), scrolling down to it, and taps it. */
-    private void tapPageBack(int scrollsLeft, Consumer<Boolean> done) {
-        AccessibilityNodeInfo back = pageBackButton();
-        if (back != null) {
-            Rect r = new Rect();
-            back.getBoundsInScreen(r);
-            tap(r.centerX(), r.centerY());
-            done.accept(true);
-            return;
-        }
-        if (scrollsLeft <= 0) {
-            done.accept(false);
-            return;
-        }
-        Rect screen = screenBounds();
-        int x = screen.centerX();
-        int from = screen.height() * 4 / 5;
-        swipe(x, from, x, screen.height() / 6, 150);
-        handler.postDelayed(() -> tapPageBack(scrollsLeft - 1, done), 250);
     }
 
     /** A visible button whose text is "Back" (or "Go back" / "Previous"), lowest on screen. */
