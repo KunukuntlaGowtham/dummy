@@ -125,6 +125,8 @@ public class MainActivity extends Activity {
         tick.addView(segmented(new String[] {"Order count", "Number beside box"}, new int[] {0, 1},
                 tp.getBoolean("rowNumbers", true) ? 1 : 0,
                 v -> tickPrefs(e -> e.putBoolean("rowNumbers", v == 1))));
+        tick.addView(toggle("Number-guided (page 2): only boxes with a row number, stop at the last row",
+                tp.getBoolean("guided", false), on -> tickPrefs(e -> e.putBoolean("guided", on))));
         View clearRows = pillButton("Clear not-ticked list", false, v -> {
             tickPrefs(e -> e.remove(CheckboxService.FAILED_ROWS));
             Toast.makeText(this, "Not-ticked list cleared", Toast.LENGTH_SHORT).show();
@@ -178,6 +180,9 @@ public class MainActivity extends Activity {
         LinearLayout del = card(body, "🗑", "Delete", 0xFFC62828);
         del.addView(numberRow("After bin tap (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
         del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 900), "delCheckMs", 0, 10000));
+        del.addView(toggle("Read numbers from the page (skip OCR when found)",
+                tp.getBoolean("delPageNumbers", false),
+                on -> tickPrefs(e -> e.putBoolean("delPageNumbers", on))));
         del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
 
         // Last run

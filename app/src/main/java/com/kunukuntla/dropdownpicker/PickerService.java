@@ -168,6 +168,20 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         });
     }
 
+    /** Number-guided Tick: the numbers standing on their own in the page's text on screen. */
+    @Override
+    protected List<Integer> numbersOnScreen() {
+        Rect screen = screenBounds();
+        List<Integer> out = new ArrayList<>();
+        for (TextNode t : texts(false)) {
+            if (t.bounds.top < screen.height() / 20) continue; // not the status bar
+            java.util.regex.Matcher m = CARD_NUMBER.matcher(t.text.trim());
+            if (!m.matches() || !m.group(1).matches("[0-9]+")) continue;
+            out.add(Integer.parseInt(m.group(1)));
+        }
+        return out;
+    }
+
     /** The nearest number on exactly the same line as the box (left or right of it), or null. */
     private Integer numberBeside(Rect box, List<Rect> where, List<String> what) {
         int tolerance = Math.max(box.height() / 2, mm(1.5f));
@@ -880,6 +894,12 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             seen.h = bmp.getHeight();
             seen.px = new int[seen.w * seen.h];
             bmp.getPixels(seen.px, 0, seen.w, 0, 0, seen.w, seen.h);
+            // Add-on: the page's own text already gives the numbers beside the bins - no OCR.
+            if (tickPrefs().getBoolean("delPageNumbers", false) && !binsOnScreen(seen).isEmpty()) {
+                bmp.recycle();
+                done.accept(seen);
+                return;
+            }
             reader.readAll(bmp, 0, 0, lines -> deleteStep(() -> {
                 for (ScreenReader.Found f : lines) seen.lines.add(new Line(f.box, f.text));
                 done.accept(seen);
