@@ -2447,6 +2447,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private static final String TEST_LABEL = "🔍\nTest";
     private TextView testButton;
     private TextView testCard;
+    /** Deep test: everything the page reports, one line per item (saved with the result). */
+    private String testDump = "";
 
     /** A checkbox the page reports to accessibility: its node, place and row number. */
     private static final class Box {
@@ -2469,6 +2471,54 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
      */
     private void testPage(boolean clickOne) {
         closeTestCard();
+        if (!clickOne) {
+            runTest(false);
+            return;
+        }
+        // Deep test: some web views only hand over their contents once they get accessibility
+        // focus - give each one focus, wait, then look.
+        int poked = 0;
+        for (AccessibilityNodeInfo root : roots()) {
+            List<AccessibilityNodeInfo> stack = new ArrayList<>();
+            stack.add(root);
+            while (!stack.isEmpty()) {
+                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+                if (n == null) continue;
+                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
+                CharSequence c = n.getClassName();
+                if (c != null && c.toString().contains("WebView")) {
+                    n.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
+                    poked++;
+                }
+            }
+        }
+        Toast.makeText(this, "Deep test: waking " + poked + " web view(s)...", Toast.LENGTH_SHORT).show();
+        handler.postDelayed(() -> runTest(true), 1500);
+    }
+
+    /** Chrome's own name for what a web item is ("checkBox", "button", ...), or "". */
+    private static String webRole(AccessibilityNodeInfo n) {
+        try {
+            CharSequence r = n.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole");
+            return r == null ? "" : r.toString();
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
+    private static String stateText(AccessibilityNodeInfo n) {
+        CharSequence st = Build.VERSION.SDK_INT >= 30 ? n.getStateDescription() : null;
+        return st == null ? "" : st.toString().toLowerCase(Locale.ROOT);
+    }
+
+    /** Ticked, by the flag or by what its state says ("checked" but not "not checked"). */
+    private static boolean isTicked(AccessibilityNodeInfo n) {
+        if (n.isChecked()) return true;
+        String st = stateText(n);
+        return st.contains("checked") && !st.contains("not checked") && !st.contains("unchecked");
+    }
+
+    private void runTest(boolean clickOne) {
         List<Rect> where = new ArrayList<>();
         List<String> what = new ArrayList<>();
         for (TextNode t : texts(false)) {
@@ -2480,6 +2530,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         String pkg = active == null || active.getPackageName() == null ? "?"
                 : active.getPackageName().toString();
         List<Box> boxes = new ArrayList<>();
+        StringBuilder dump = new StringBuilder();
         for (AccessibilityNodeInfo root : roots()) {
             // Not our own app's screens.
             if (root.getPackageName() != null
@@ -2494,8 +2545,28 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 String cls = n.getClassName() == null ? "" : n.getClassName().toString();
                 if (cls.contains("WebView")) webViews++;
                 if (n.isClickable() && cls.contains("android.view.View")) clickableWeb++;
+                String role = webRole(n).toLowerCase(Locale.ROOT);
+                String st = stateText(n);
                 boolean box = n.isCheckable() || cls.endsWith("CheckBox")
-                        || cls.endsWith("CheckedTextView");
+                        || cls.endsWith("CheckedTextView") || role.contains("checkbox")
+                        || (canClick(n) && (st.contains("checked") || st.contains("ticked")));
+                if (clickOne && dump.length() < 60000) {
+                    Rect d = new Rect();
+                    n.getBoundsInScreen(d);
+                    CharSequence tx = n.getText();
+                    if (tx == null || tx.length() == 0) tx = n.getContentDescription();
+                    String txt = tx == null ? "" : tx.toString().replace('\n', ' ');
+                    if (txt.length() > 30) txt = txt.substring(0, 30) + "…";
+                    dump.append(cls.substring(cls.lastIndexOf('.') + 1))
+                            .append(role.isEmpty() ? "" : " role=" + role)
+                            .append(txt.isEmpty() ? "" : " \"" + txt + "\"")
+                            .append(st.isEmpty() ? "" : " state=" + st)
+                            .append(n.isClickable() ? " clk" : "")
+                            .append(n.isCheckable() ? (n.isChecked() ? " ☑" : " ☐") : "")
+                            .append(n.isVisibleToUser() ? "" : " hidden")
+                            .append(' ').append(d.toShortString())
+                            .append(" kids=").append(n.getChildCount()).append('\n');
+                }
                 if (!box || !n.isVisibleToUser()) continue;
                 Rect r = new Rect();
                 n.getBoundsInScreen(r);
@@ -2504,10 +2575,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
         }
         boxes.sort((a, b) -> Integer.compare(a.bounds.top, b.bounds.top));
+        testDump = clickOne ? dump.toString() : "";
 
         int ticked = 0, clickable = 0, numbered = 0;
         for (Box b : boxes) {
-            if (b.node.isChecked()) ticked++;
+            if (isTicked(b.node)) ticked++;
             if (canClick(b.node)) clickable++;
             if (b.row != null) numbered++;
         }
@@ -2549,19 +2621,20 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 break;
             }
             sb.append("\n • row ").append(b.row == null ? "?" : String.valueOf(b.row))
-                    .append(b.node.isChecked() ? "  ☑ ticked" : "  ☐ empty")
+                    .append(isTicked(b.node) ? "  ☑ ticked" : "  ☐ empty")
                     .append(canClick(b.node) ? "  click ✓" : "  click ✗");
         }
 
         Box first = null;
         for (Box b : boxes) {
-            if (!b.node.isChecked() && canClick(b.node)) {
+            if (!isTicked(b.node) && canClick(b.node)) {
                 first = b;
                 break;
             }
         }
         if (!clickOne) {
-            if (first != null) sb.append("\n\nLong-press Test to click one empty box as a live test.");
+            if (first != null) sb.append("\n\nLong-press Test for the deep test (also clicks one empty box).");
+            else sb.append("\n\nLong-press Test for the deep test.");
             showTestResult(sb.toString());
             return;
         }
@@ -2576,7 +2649,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             boolean now;
             try {
                 target.node.refresh();
-                now = target.node.isChecked();
+                now = isTicked(target.node);
             } catch (RuntimeException e) {
                 now = false;
             }
@@ -2597,7 +2670,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     private static boolean canClick(AccessibilityNodeInfo n) {
-        for (AccessibilityNodeInfo p = n; p != null; p = p.getParent()) {
+        int depth = 0;
+        for (AccessibilityNodeInfo p = n; p != null && depth < 3; p = p.getParent(), depth++) {
             if (p.isClickable()) return true;
             if (p.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)) {
                 return true;
@@ -2625,7 +2699,16 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     /** Shows the result over the page (tap it to close) and keeps it in the app's Last run. */
     private void showTestResult(String text) {
-        Keywords.saveLastRun(this, "Compatibility test\n" + text);
+        String saved = "Compatibility test\n" + text;
+        if (!testDump.isEmpty()) {
+            saved += "\n\nEverything the page reports (" + testDump.split("\n").length
+                    + " items):\n" + testDump;
+            try (java.io.FileOutputStream out = openFileOutput("page_tree.txt", MODE_PRIVATE)) {
+                out.write(saved.getBytes());
+            } catch (java.io.IOException ignored) {
+            }
+        }
+        Keywords.saveLastRun(this, saved);
         closeTestCard();
         TextView v = new TextView(this);
         v.setText(text + "\n\n(tap to close - also in the app under Last run)");
