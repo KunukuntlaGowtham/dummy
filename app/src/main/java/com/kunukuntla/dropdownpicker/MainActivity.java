@@ -84,7 +84,7 @@ public class MainActivity extends Activity {
         LinearLayout direct = card(body, "⚡", "Direct (accessibility)", 0xFF2E7D32);
         direct.addView(toggle("Drop, Cal and Check click the page's controls directly",
                 Keywords.loadDirect(this), on -> Keywords.saveDirect(this, on)));
-        TextView directNote = label("For pages where Test says COMPATIBLE. Anything the page "
+        TextView directNote = label("For pages that report their controls (like page 1). Anything the page "
                 + "doesn't report still uses screenshots and taps. Tick is not affected.");
         directNote.setTextSize(12);
         direct.addView(directNote);
