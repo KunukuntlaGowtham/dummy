@@ -80,6 +80,15 @@ public class MainActivity extends Activity {
         body.setPadding(dp(16), dp(4), dp(16), dp(32));
         page.addView(body);
 
+        // Direct mode (add-on): click through accessibility instead of tapping
+        LinearLayout direct = card(body, "⚡", "Direct (accessibility)", 0xFF2E7D32);
+        direct.addView(toggle("Drop, Cal and Check click the page's controls directly",
+                Keywords.loadDirect(this), on -> Keywords.saveDirect(this, on)));
+        TextView directNote = label("For pages where Test says COMPATIBLE. Anything the page "
+                + "doesn't report still uses screenshots and taps. Tick is not affected.");
+        directNote.setTextSize(12);
+        direct.addView(directNote);
+
         // Dropdown
         LinearLayout drop = card(body, "▼", "Dropdown", 0xFF37474F);
         drop.addView(label("Keywords"));
