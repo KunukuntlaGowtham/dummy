@@ -112,6 +112,10 @@ public class MainActivity extends Activity {
                 on -> tickPrefs(e -> e.putBoolean("tapColour", on))));
         tick.addView(toggle("Show status line", tp.getBoolean("showStatus", true),
                 on -> tickPrefs(e -> e.putBoolean("showStatus", on))));
+        tick.addView(label("Box numbers"));
+        tick.addView(segmented(new String[] {"Order count", "Number beside box"}, new int[] {0, 1},
+                tp.getBoolean("rowNumbers", true) ? 1 : 0,
+                v -> tickPrefs(e -> e.putBoolean("rowNumbers", v == 1))));
         View clearRows = pillButton("Clear not-ticked list", false, v -> {
             tickPrefs(e -> e.remove(CheckboxService.FAILED_ROWS));
             Toast.makeText(this, "Not-ticked list cleared", Toast.LENGTH_SHORT).show();
@@ -137,9 +141,8 @@ public class MainActivity extends Activity {
         LinearLayout chain = card(body, "⛓", "Chain", 0xFF6C3FD1);
         String[][] links = {{Keywords.CHAIN_DROP_CAL, "Drop → Cal"},
                 {Keywords.CHAIN_CAL_TICK, "Cal → Tick (after Continue)"},
-                {Keywords.CHAIN_TICK_BACK, "Tick → Back"},
-                {Keywords.CHAIN_BACK_DELETE, "Back (twice) → Delete not-ticked"},
-                {Keywords.CHAIN_BACK_DROP, "Back → Drop"}};
+                {Keywords.CHAIN_TICK_BDEL, "Tick → B+Del (Back twice, delete not-ticked)"},
+                {Keywords.CHAIN_BACK_DROP, "B+Del → Drop"}};
         for (String[] link : links) {
             chain.addView(toggle(link[1], Keywords.loadChain(this, link[0]),
                     on -> Keywords.saveChain(this, link[0], on)));
@@ -164,7 +167,7 @@ public class MainActivity extends Activity {
 
         // Delete: the not-ticked rows, each by the dustbin on its number's line
         LinearLayout del = card(body, "🗑", "Delete", 0xFFC62828);
-        del.addView(numberRow("Wait for confirm box (ms)", tp.getInt("delWaitMs", 500), "delWaitMs", 0, 10000));
+        del.addView(numberRow("Wait for confirm box (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
         del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 400), "delCheckMs", 0, 10000));
         del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
 

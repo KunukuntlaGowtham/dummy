@@ -205,8 +205,8 @@ open class CheckboxService : AccessibilityService() {
         lastBox = null
         attempts = 0
         failed.clear()
-        // A box is always known by the number printed on its line, wherever the run starts.
-        pageNumbering = true
+        // By the number printed on the box's line (default), or counted in order from the start.
+        pageNumbering = prefs().getBoolean("rowNumbers", true)
         // Every Tick run starts its own not-ticked list: nothing left over from an earlier one.
         saveFailedRows(emptySet())
         pageNumbersSeen.clear()
@@ -242,7 +242,7 @@ open class CheckboxService : AccessibilityService() {
     /** [page] is true when [number] is the one printed beside the box on the page. */
     private class Numbered(val number: Int, val box: Rect, val look: BoxLook.Look?, val page: Boolean = false)
 
-    /** Boxes are numbered by the number printed beside them (always, since the Delete button). */
+    /** This run numbers boxes by the number printed beside them (setting "rowNumbers", default on). */
     private var pageNumbering = true
 
     /**
@@ -337,8 +337,10 @@ open class CheckboxService : AccessibilityService() {
             // Already handled under this number (seen again after a scroll): skip it.
             if (label != null && !pageNumbersSeen.add(label)) continue
             attempts++
-            // No number read on its line: 0 ("?"), never a count that looks like a row number.
-            onScreen.add(Numbered(label ?: 0, c.first, c.second, label != null))
+            // Order count: the count. By the page's number: 0 ("?") when none was read on its
+            // line, never a count that looks like a row number.
+            onScreen.add(Numbered(label ?: if (pageNumbering) 0 else attempts, c.first, c.second,
+                label != null))
         }
         run {
             if (onScreen.isEmpty()) {
@@ -381,7 +383,8 @@ open class CheckboxService : AccessibilityService() {
         }
     }
 
-    private fun name(item: Numbered) = if (item.page) item.number.toString() else "?"
+    private fun name(item: Numbered) =
+        if (item.page || !pageNumbering) item.number.toString() else "?"
 
     /** Step 3: snap again - a box still empty where it was did not tick. */
     private fun checkSnap() {
@@ -431,7 +434,8 @@ open class CheckboxService : AccessibilityService() {
     /** Writes down a box that did not tick and shows its number. */
     private fun noteNotTicked(number: Int, page: Boolean) {
         failed.add(number)
-        if (pageNumbering && page) {
+        // Kept for B+Del: the page's number, or the count when counting in order.
+        if (page || !pageNumbering) {
             val rows = failedRows()
             rows.add(number)
             saveFailedRows(rows)
