@@ -214,6 +214,9 @@ open class CheckboxService : AccessibilityService() {
         lastMaxNumber = null
         atListEnd = false
         skippedNoNumber = 0
+        model = if (prefs().getBoolean("useModel", false)) BoxModel.get(this) else null
+        modelSkipped = 0
+        sampleCount = -1
         showNumbers()
         onScreen.clear()
         oldLooks.clear()
@@ -233,7 +236,8 @@ open class CheckboxService : AccessibilityService() {
         lastBox = null
         updateBubble()
         status("$why - numbered $attempts, ticked ${attempts - failed.size}" +
-            if (guided && skippedNoNumber > 0) ", $skippedNoNumber square(s) with no number skipped" else "")
+            (if (guided && skippedNoNumber > 0) ", $skippedNoNumber square(s) with no number skipped" else "") +
+            (if (model != null && modelSkipped > 0) ", model skipped $modelSkipped non-box(es)" else ""))
         toast("$why after $attempts boxes")
         onLoopStopped(why)
     }
@@ -310,16 +314,68 @@ open class CheckboxService : AccessibilityService() {
     private var atListEnd = false                       // a scroll brought no higher number
     private var skippedNoNumber = 0                     // squares with no number on their line
 
+    private fun collecting() = prefs().getBoolean("collectSamples", false)
+
+    private val sampleWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    @Volatile
+    private var sampleCount = -1
+
     /**
-     * Add-on "Collect samples" (setting "collectSamples"): saves a small picture of each
-     * [samples] square under its label (for training a model later), then runs [then].
-     * Default: nothing to save; a subclass that can take screenshots saves them.
+     * Add-on "Collect samples": saves a 96 x 96 picture of each square (with a third of its
+     * size around it) under its label, cut from the picture this snap already took ([pixels])
+     * - no extra screenshot - and written on a background thread, so the run never waits.
      */
-    protected open fun collectSamples(samples: List<Pair<String, Rect>>, then: Runnable) {
-        then.run()
+    private fun saveSamples(samples: List<Pair<String, Rect>>, pixels: Triple<IntArray, Int, Int>?) {
+        if (samples.isEmpty() || pixels == null) return
+        val (rgb, w, h) = pixels
+        val scale = ScreenService.SCALE
+        val root = java.io.File(filesDir, "samples")
+        sampleWorker.execute {
+            try {
+                if (sampleCount < 0) sampleCount = root.walkTopDown().count { it.isFile }
+                val stamp = System.currentTimeMillis()
+                for ((i, s) in samples.withIndex()) {
+                    if (sampleCount >= 3000) return@execute
+                    val box = s.second
+                    val grow = maxOf(box.width(), box.height()) / 3
+                    val l = ((box.left - grow) / scale).coerceIn(0, w)
+                    val t = ((box.top - grow) / scale).coerceIn(0, h)
+                    val r = ((box.right + grow) / scale).coerceIn(0, w)
+                    val b = ((box.bottom + grow) / scale).coerceIn(0, h)
+                    if (r - l < 2 || b - t < 2) continue
+                    val px = IntArray((r - l) * (b - t))
+                    for (y in t until b) for (x in l until r) {
+                        px[(y - t) * (r - l) + (x - l)] = rgb[y * w + x] or (0xff shl 24)
+                    }
+                    val crop = android.graphics.Bitmap.createBitmap(px, r - l, b - t,
+                        android.graphics.Bitmap.Config.ARGB_8888)
+                    val small = android.graphics.Bitmap.createScaledBitmap(crop, 96, 96, true)
+                    val dir = java.io.File(root, s.first).apply { mkdirs() }
+                    java.io.FileOutputStream(java.io.File(dir, "${stamp}_$i.png")).use {
+                        small.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    if (small != crop) small.recycle()
+                    crop.recycle()
+                    sampleCount++
+                }
+            } catch (t: Throwable) {
+                android.util.Log.e("CheckboxTicker", "sample not saved", t)
+            }
+        }
     }
 
-    private fun collecting() = prefs().getBoolean("collectSamples", false)
+    /** Add-on "Use trained model" (setting "useModel"): the box model, loaded at START. */
+    private var model: BoxModel? = null
+    private var modelSkipped = 0                        // squares the model said are not boxes
+    private var snapPixels: Triple<IntArray, Int, Int>? = null
+
+    /** The model's chances for a square (in screen pixels) on [pixels], or null without one. */
+    private fun ask(pixels: Triple<IntArray, Int, Int>?, box: Rect): FloatArray? {
+        val m = model ?: return null
+        val (rgb, w, h) = pixels ?: return null
+        val s = ScreenService.SCALE
+        return m.classify(rgb, w, h, box.left / s, box.top / s, box.right / s, box.bottom / s)
+    }
 
     /** Squares the number-guided run skipped on this snap (no row number): "not a box". */
     private val skippedThisSnap = ArrayList<Rect>()
@@ -344,9 +400,20 @@ open class CheckboxService : AccessibilityService() {
         }
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
+            val pixels = if (model != null || collecting()) screen.lastPixels() else null
+            snapPixels = pixels
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
             val candidates = ArrayList<Pair<Rect, BoxLook.Look?>>()
             for (box in found) {
+                // Trained model: tap only a square it is sure is an empty box.
+                val p = ask(pixels, box)
+                if (p != null && p[BoxModel.EMPTY] < 0.8f) {
+                    modelSkipped++
+                    if (collecting()) saveSamples(listOf(Pair(
+                        if (p[BoxModel.TICKED] > p[BoxModel.OTHER]) "model_ticked" else "model_other",
+                        Rect(box))), pixels)
+                    continue
+                }
                 val look = sketch?.let { lookOf(it, box) }
                 // A box that did not tick stays empty, and may still be on screen after the
                 // scroll: it is known by what is written beside it, and not numbered again.
@@ -399,12 +466,10 @@ open class CheckboxService : AccessibilityService() {
             status("boxes ${name(onScreen.first())} to ${name(onScreen.last())} on this screen")
             if (collecting()) {
                 // Before ticking: every box found is an empty box; skipped squares are not boxes.
-                val samples = onScreen.map { Pair("empty_box", Rect(it.box)) } +
-                    skippedThisSnap.map { Pair("not_a_box", Rect(it)) }
-                collectSamples(samples, Runnable { if (looping) tickNext(0) })
-            } else {
-                tickNext(0)
+                saveSamples(onScreen.map { Pair("empty_box", Rect(it.box)) } +
+                    skippedThisSnap.map { Pair("not_a_box", Rect(it)) }, snapPixels)
             }
+            tickNext(0)
         }
     }
 
@@ -447,12 +512,21 @@ open class CheckboxService : AccessibilityService() {
         status("checking")
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
+            val pixels = if (model != null || collecting()) screen.lastPixels() else null
             val samples = ArrayList<Pair<String, Rect>>()
             for (item in onScreen) {
+                val seenEmpty = boxes.any { Rect.intersects(it, item.box) }
+                // Trained model: it knows the page's tick mark; when unsure, the shape check.
+                val p = ask(pixels, item.box)
+                val stillEmpty = when {
+                    p == null -> seenEmpty
+                    p[BoxModel.TICKED] >= 0.8f -> false
+                    p[BoxModel.EMPTY] >= 0.8f -> true
+                    else -> seenEmpty
+                }
                 // After ticking: the same place, now ticked - or still empty.
-                samples.add(Pair(if (boxes.any { Rect.intersects(it, item.box) }) "did_not_tick"
-                    else "ticked_box", Rect(item.box)))
-                if (boxes.any { Rect.intersects(it, item.box) }) {
+                samples.add(Pair(if (stillEmpty) "did_not_tick" else "ticked_box", Rect(item.box)))
+                if (stillEmpty) {
                     noteNotTicked(item.number, item.page)
                     item.look?.let {
                         oldLooks.add(it)
@@ -469,11 +543,8 @@ open class CheckboxService : AccessibilityService() {
                 }
             }
             val limit = maxBoxes()
-            val next = Runnable {
-                if (!looping) return@Runnable
-                if (attempts >= limit) stopLoop("Stopped after $limit boxes") else scrollOn()
-            }
-            if (collecting()) collectSamples(samples, next) else next.run()
+            if (collecting()) saveSamples(samples, pixels)
+            if (attempts >= limit) stopLoop("Stopped after $limit boxes") else scrollOn()
         }
     }
 

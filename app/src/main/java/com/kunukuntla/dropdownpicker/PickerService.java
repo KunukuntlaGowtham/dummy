@@ -2466,53 +2466,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     /** Samples are kept here, one folder per label; at most this many in all. */
     static final String SAMPLES_DIR = "samples";
-    private static final int MAX_SAMPLES = 3000;
-    private static final int SAMPLE_PX = 96;
-
-    /**
-     * Takes one screenshot (our buttons hidden) and saves each square, with some of its
-     * surroundings, as a small 96 x 96 picture in samples/<label>/. Never holds the run up for
-     * long: a failed screenshot just skips saving.
-     */
-    @Override
-    protected void collectSamples(List<kotlin.Pair<String, Rect>> samples, Runnable then) {
-        java.io.File root = new java.io.File(getFilesDir(), SAMPLES_DIR);
-        if (samples.isEmpty() || countFiles(root) >= MAX_SAMPLES) {
-            then.run();
-            return;
-        }
-        setButtonVisible(false);
-        handler.postDelayed(() -> capture(bmp -> {
-            setButtonVisible(true);
-            if (bmp == null) {
-                then.run();
-                return;
-            }
-            long stamp = System.currentTimeMillis();
-            int i = 0;
-            for (kotlin.Pair<String, Rect> sample : samples) {
-                Rect r = new Rect(sample.getSecond());
-                // The square and what is around it (a third of its size each side).
-                int grow = Math.max(r.width(), r.height()) / 3;
-                r.inset(-grow, -grow);
-                if (!r.intersect(0, 0, bmp.getWidth(), bmp.getHeight()) || r.isEmpty()) continue;
-                Bitmap crop = Bitmap.createBitmap(bmp, r.left, r.top, r.width(), r.height());
-                Bitmap small = Bitmap.createScaledBitmap(crop, SAMPLE_PX, SAMPLE_PX, true);
-                java.io.File dir = new java.io.File(root, sample.getFirst());
-                //noinspection ResultOfMethodCallIgnored
-                dir.mkdirs();
-                try (java.io.FileOutputStream out = new java.io.FileOutputStream(
-                        new java.io.File(dir, stamp + "_" + (i++) + ".png"))) {
-                    small.compress(Bitmap.CompressFormat.PNG, 100, out);
-                } catch (java.io.IOException ignored) {
-                }
-                if (crop != bmp) crop.recycle();
-                small.recycle();
-            }
-            bmp.recycle();
-            then.run();
-        }), 120);
-    }
 
     static int countFiles(java.io.File dir) {
         java.io.File[] list = dir.listFiles();
