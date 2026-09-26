@@ -186,16 +186,10 @@ public class MainActivity extends Activity {
         del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
 
         // Box model (add-on): collect samples now, a trained model later
-        LinearLayout model = card(body, "🧠", "Box model (add-on)", 0xFF5E35B1);
+        LinearLayout model = card(body, "🧠", "Samples (add-on)", 0xFF5E35B1);
         model.addView(toggle("Collect samples during Tick (pictures of each box)",
                 tp.getBoolean("collectSamples", false),
                 on -> tickPrefs(e -> e.putBoolean("collectSamples", on))));
-        model.addView(toggle("Use trained model: tap only real empty boxes, check ticks by it",
-                tp.getBoolean("useModel", false), on -> tickPrefs(e -> e.putBoolean("useModel", on))));
-        TextView modelNote = label("Trained on your 320 samples + 425 non-box crops; 99.3% right "
-                + "on 147 pictures it never saw. Taps only when 80%+ sure it is an empty box.");
-        modelNote.setTextSize(12);
-        model.addView(modelNote);
         sampleCount = label("");
         model.addView(sampleCount);
         LinearLayout sampleButtons = new LinearLayout(this);

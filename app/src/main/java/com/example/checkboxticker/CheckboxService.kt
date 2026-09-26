@@ -214,8 +214,6 @@ open class CheckboxService : AccessibilityService() {
         lastMaxNumber = null
         atListEnd = false
         skippedNoNumber = 0
-        model = if (prefs().getBoolean("useModel", false)) BoxModel.get(this) else null
-        modelSkipped = 0
         sampleCount = -1
         showNumbers()
         onScreen.clear()
@@ -236,8 +234,7 @@ open class CheckboxService : AccessibilityService() {
         lastBox = null
         updateBubble()
         status("$why - numbered $attempts, ticked ${attempts - failed.size}" +
-            (if (guided && skippedNoNumber > 0) ", $skippedNoNumber square(s) with no number skipped" else "") +
-            (if (model != null && modelSkipped > 0) ", model skipped $modelSkipped non-box(es)" else ""))
+            (if (guided && skippedNoNumber > 0) ", $skippedNoNumber square(s) with no number skipped" else ""))
         toast("$why after $attempts boxes")
         onLoopStopped(why)
     }
@@ -364,18 +361,7 @@ open class CheckboxService : AccessibilityService() {
         }
     }
 
-    /** Add-on "Use trained model" (setting "useModel"): the box model, loaded at START. */
-    private var model: BoxModel? = null
-    private var modelSkipped = 0                        // squares the model said are not boxes
     private var snapPixels: Triple<IntArray, Int, Int>? = null
-
-    /** The model's chances for a square (in screen pixels) on [pixels], or null without one. */
-    private fun ask(pixels: Triple<IntArray, Int, Int>?, box: Rect): FloatArray? {
-        val m = model ?: return null
-        val (rgb, w, h) = pixels ?: return null
-        val s = ScreenService.SCALE
-        return m.classify(rgb, w, h, box.left / s, box.top / s, box.right / s, box.bottom / s)
-    }
 
     /** Squares the number-guided run skipped on this snap (no row number): "not a box". */
     private val skippedThisSnap = ArrayList<Rect>()
@@ -400,20 +386,11 @@ open class CheckboxService : AccessibilityService() {
         }
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
-            val pixels = if (model != null || collecting()) screen.lastPixels() else null
+            val pixels = if (collecting()) screen.lastPixels() else null
             snapPixels = pixels
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
             val candidates = ArrayList<Pair<Rect, BoxLook.Look?>>()
             for (box in found) {
-                // Trained model: tap only a square it is sure is an empty box.
-                val p = ask(pixels, box)
-                if (p != null && p[BoxModel.EMPTY] < 0.8f) {
-                    modelSkipped++
-                    if (collecting()) saveSamples(listOf(Pair(
-                        if (p[BoxModel.TICKED] > p[BoxModel.OTHER]) "model_ticked" else "model_other",
-                        Rect(box))), pixels)
-                    continue
-                }
                 val look = sketch?.let { lookOf(it, box) }
                 // A box that did not tick stays empty, and may still be on screen after the
                 // scroll: it is known by what is written beside it, and not numbered again.
@@ -512,18 +489,10 @@ open class CheckboxService : AccessibilityService() {
         status("checking")
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
-            val pixels = if (model != null || collecting()) screen.lastPixels() else null
+            val pixels = if (collecting()) screen.lastPixels() else null
             val samples = ArrayList<Pair<String, Rect>>()
             for (item in onScreen) {
-                val seenEmpty = boxes.any { Rect.intersects(it, item.box) }
-                // Trained model: it knows the page's tick mark; when unsure, the shape check.
-                val p = ask(pixels, item.box)
-                val stillEmpty = when {
-                    p == null -> seenEmpty
-                    p[BoxModel.TICKED] >= 0.8f -> false
-                    p[BoxModel.EMPTY] >= 0.8f -> true
-                    else -> seenEmpty
-                }
+                val stillEmpty = boxes.any { Rect.intersects(it, item.box) }
                 // After ticking: the same place, now ticked - or still empty.
                 samples.add(Pair(if (stillEmpty) "did_not_tick" else "ticked_box", Rect(item.box)))
                 if (stillEmpty) {
