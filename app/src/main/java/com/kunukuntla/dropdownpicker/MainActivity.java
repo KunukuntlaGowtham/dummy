@@ -167,8 +167,8 @@ public class MainActivity extends Activity {
 
         // Delete: the not-ticked rows, each by the dustbin on its number's line
         LinearLayout del = card(body, "🗑", "Delete", 0xFFC62828);
-        del.addView(numberRow("Wait for confirm box (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
-        del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 400), "delCheckMs", 0, 10000));
+        del.addView(numberRow("After bin tap (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
+        del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 900), "delCheckMs", 0, 10000));
         del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
 
         // Last run
