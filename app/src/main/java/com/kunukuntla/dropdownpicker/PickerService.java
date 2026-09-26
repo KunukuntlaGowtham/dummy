@@ -209,6 +209,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         if (controls != null) windowManager.removeView(controls);
         removeHighlight();
         closePreview();
+        closeTestCard();
         reader.close();
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
@@ -252,6 +253,13 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         LinearLayout.LayoutParams backDeleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
         backDeleteLp.topMargin = dp(6);
         controls.addView(backDeleteButton, backDeleteLp);
+        // Compatibility test: can this page's checkboxes be ticked through accessibility?
+        testButton = roundButton(TEST_LABEL, 0xDD2E7D32, dp(52));
+        testButton.setContentDescription("Test this page: tap to read, long-press to click one box");
+        testButton.setOnTouchListener(new DragOrTap(() -> testPage(false), () -> testPage(true)));
+        LinearLayout.LayoutParams testLp = new LinearLayout.LayoutParams(dp(52), dp(52));
+        testLp.topMargin = dp(6);
+        controls.addView(testButton, testLp);
         // Small screen-share switch, usable right on the page.
         shareButton = roundButton(SHARE_OFF_LABEL, 0xFF5F5B6E, dp(40));
         shareButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
@@ -2310,6 +2318,216 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             Toast.makeText(this, "Couldn't open the share menu. The picture is in your Gallery "
                     + "under Pictures/DropdownPicker.", Toast.LENGTH_LONG).show();
         }
+    }
+
+    // ---- Test: can this page be ticked straight through accessibility? --------
+
+    private static final String TEST_LABEL = "🔍\nTest";
+    private TextView testButton;
+    private TextView testCard;
+
+    /** A checkbox the page reports to accessibility: its node, place and row number. */
+    private static final class Box {
+        final AccessibilityNodeInfo node;
+        final Rect bounds;
+        final Integer row;
+
+        Box(AccessibilityNodeInfo node, Rect bounds, Integer row) {
+            this.node = node;
+            this.bounds = bounds;
+            this.row = row;
+        }
+    }
+
+    /**
+     * Test button: reads the screen in front through accessibility (no screenshot, no tap) and
+     * says whether its checkboxes can be ticked directly: how many are reported, ticked or
+     * empty, clickable, and the number on each one's line. {@code clickOne} (long press) also
+     * clicks the first empty box through accessibility and says whether it really got ticked.
+     */
+    private void testPage(boolean clickOne) {
+        closeTestCard();
+        List<Rect> where = new ArrayList<>();
+        List<String> what = new ArrayList<>();
+        for (TextNode t : texts(false)) {
+            where.add(t.bounds);
+            what.add(t.text);
+        }
+        int nodes = 0, webViews = 0, clickableWeb = 0;
+        AccessibilityNodeInfo active = getRootInActiveWindow();
+        String pkg = active == null || active.getPackageName() == null ? "?"
+                : active.getPackageName().toString();
+        List<Box> boxes = new ArrayList<>();
+        for (AccessibilityNodeInfo root : roots()) {
+            // Not our own app's screens.
+            if (root.getPackageName() != null
+                    && root.getPackageName().toString().equals(getPackageName())) continue;
+            List<AccessibilityNodeInfo> stack = new ArrayList<>();
+            stack.add(root);
+            while (!stack.isEmpty() && nodes < 5000) {
+                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+                if (n == null) continue;
+                nodes++;
+                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
+                String cls = n.getClassName() == null ? "" : n.getClassName().toString();
+                if (cls.contains("WebView")) webViews++;
+                if (n.isClickable() && cls.contains("android.view.View")) clickableWeb++;
+                boolean box = n.isCheckable() || cls.endsWith("CheckBox")
+                        || cls.endsWith("CheckedTextView");
+                if (!box || !n.isVisibleToUser()) continue;
+                Rect r = new Rect();
+                n.getBoundsInScreen(r);
+                if (r.isEmpty()) continue;
+                boxes.add(new Box(n, r, numberBeside(r, where, what)));
+            }
+        }
+        boxes.sort((a, b) -> Integer.compare(a.bounds.top, b.bounds.top));
+
+        int ticked = 0, clickable = 0, numbered = 0;
+        for (Box b : boxes) {
+            if (b.node.isChecked()) ticked++;
+            if (canClick(b.node)) clickable++;
+            if (b.row != null) numbered++;
+        }
+        StringBuilder sb = new StringBuilder();
+        if (boxes.isEmpty()) {
+            if (nodes < 5) {
+                sb.append("❌ NOT COMPATIBLE\nThis app shows nothing to accessibility - only the "
+                        + "screenshot method can work here.");
+            } else if (webViews > 0) {
+                sb.append("⚠️ NOT DIRECTLY\nA web page, but it reports no checkboxes on this "
+                        + "screen. Scroll to the checkboxes and test again; if still none, "
+                        + "only screenshots (or opening the site inside the app) can tick it.");
+            } else {
+                sb.append("❌ NO CHECKBOXES REPORTED\nNothing on this screen says it is a "
+                        + "checkbox. Scroll to them and test again.");
+            }
+        } else if (clickable == 0) {
+            sb.append("⚠️ READ ONLY\nCheckboxes are reported but none accepts a click - "
+                    + "their state can be read, ticking needs taps.");
+        } else {
+            sb.append("✅ COMPATIBLE\nCheckboxes can be read and clicked directly - no "
+                    + "screenshots needed.");
+        }
+        sb.append("\n\nApp: ").append(pkg)
+                .append("\nCheckboxes on screen: ").append(boxes.size())
+                .append(" (").append(boxes.size() - ticked).append(" empty, ")
+                .append(ticked).append(" ticked)")
+                .append("\nAccept a click: ").append(clickable).append(" of ").append(boxes.size())
+                .append("\nRow number read beside: ").append(numbered).append(" of ")
+                .append(boxes.size())
+                .append("\nNodes: ").append(nodes).append(", web views: ").append(webViews);
+        if (boxes.isEmpty() && clickableWeb > 0) {
+            sb.append(", tappable web items: ").append(clickableWeb);
+        }
+        int shown = 0;
+        for (Box b : boxes) {
+            if (shown++ >= 12) {
+                sb.append("\n…");
+                break;
+            }
+            sb.append("\n • row ").append(b.row == null ? "?" : String.valueOf(b.row))
+                    .append(b.node.isChecked() ? "  ☑ ticked" : "  ☐ empty")
+                    .append(canClick(b.node) ? "  click ✓" : "  click ✗");
+        }
+
+        Box first = null;
+        for (Box b : boxes) {
+            if (!b.node.isChecked() && canClick(b.node)) {
+                first = b;
+                break;
+            }
+        }
+        if (!clickOne) {
+            if (first != null) sb.append("\n\nLong-press Test to click one empty box as a live test.");
+            showTestResult(sb.toString());
+            return;
+        }
+        if (first == null) {
+            sb.append("\n\nLive test: no empty clickable box on screen.");
+            showTestResult(sb.toString());
+            return;
+        }
+        Box target = first;
+        boolean sent = clickSelfOrParent(target.node);
+        handler.postDelayed(() -> {
+            boolean now;
+            try {
+                target.node.refresh();
+                now = target.node.isChecked();
+            } catch (RuntimeException e) {
+                now = false;
+            }
+            String row = target.row == null ? "?" : String.valueOf(target.row);
+            if (!sent) {
+                sb.append("\n\nLive test (row ").append(row).append("): the page refused the "
+                        + "click ✗ - ticking needs taps.");
+            } else if (now) {
+                sb.append("\n\nLive test (row ").append(row).append("): TICKED ✓ with no tap - "
+                        + "direct ticking works on this page.");
+            } else {
+                sb.append("\n\nLive test (row ").append(row).append("): click sent but the box "
+                        + "stayed empty ✗ - the page only reacts to real taps (or a pop-up "
+                        + "is waiting).");
+            }
+            showTestResult(sb.toString());
+        }, 700);
+    }
+
+    private static boolean canClick(AccessibilityNodeInfo n) {
+        for (AccessibilityNodeInfo p = n; p != null; p = p.getParent()) {
+            if (p.isClickable()) return true;
+            if (p.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_CLICK)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean clickSelfOrParent(AccessibilityNodeInfo n) {
+        int depth = 0;
+        for (AccessibilityNodeInfo p = n; p != null && depth < 5; p = p.getParent(), depth++) {
+            if (p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+        }
+        return false;
+    }
+
+    /** Shows the result over the page (tap it to close) and keeps it in the app's Last run. */
+    private void showTestResult(String text) {
+        Keywords.saveLastRun(this, "Compatibility test\n" + text);
+        closeTestCard();
+        TextView v = new TextView(this);
+        v.setText(text + "\n\n(tap to close - also in the app under Last run)");
+        v.setTextColor(Color.WHITE);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        v.setPadding(dp(16), dp(14), dp(16), dp(14));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF01D1B26);
+        bg.setCornerRadius(dp(16));
+        v.setBackground(bg);
+        v.setOnClickListener(x -> closeTestCard());
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                screenBounds().width() * 9 / 10, WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.CENTER;
+        try {
+            windowManager.addView(v, lp);
+            testCard = v;
+        } catch (RuntimeException e) {
+            Toast.makeText(this, text, Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void closeTestCard() {
+        if (testCard == null) return;
+        try {
+            windowManager.removeView(testCard);
+        } catch (RuntimeException ignored) {
+        }
+        testCard = null;
     }
 
     // ---- Helpers ---------------------------------------------------------------
