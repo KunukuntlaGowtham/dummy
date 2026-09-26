@@ -257,8 +257,6 @@ class ScreenService : Service(), Eyes {
     @Volatile
     private var lastFrame: Frame? = null
 
-    override fun lastPixels(): Triple<IntArray, Int, Int>? = lastFrame?.let { Triple(it.rgb, it.w, it.h) }
-
     /** One frame of the screen as plain colours. */
     private fun grab(): Frame? {
         val imageReader = reader ?: return null

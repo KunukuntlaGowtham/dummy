@@ -19,12 +19,6 @@ import java.util.concurrent.Executors
 
 /** How the ticker looks at the screen: screen sharing, or the accessibility screenshot. */
 interface Eyes {
-    /**
-     * The last picture looked at (0xRRGGBB pixels, width, height), at 1/[ScreenService.SCALE]
-     * of the screen - to cut samples and ask the box model without taking another screenshot.
-     */
-    fun lastPixels(): Triple<IntArray, Int, Int>? = null
-
     fun findBoxes(minScreenPx: Int, maxScreenPx: Int, done: (List<Rect>) -> Unit)
 
     fun findBoxesWithSketch(
@@ -153,11 +147,6 @@ class ShotEyes(
     }
 
     /** Turns the (already shrunk, standard-colour) screenshot into a frame for the finder. */
-    @Volatile
-    private var last: Frame? = null
-
-    override fun lastPixels(): Triple<IntArray, Int, Int>? = last?.let { Triple(it.rgb, it.w, it.h) }
-
     private fun toShot(small: Bitmap): Shot {
         val w = small.width
         val h = small.height
@@ -165,9 +154,7 @@ class ShotEyes(
         small.getPixels(rgb, 0, w, 0, 0, w, h)
         for (i in rgb.indices) rgb[i] = rgb[i] and 0xffffff
         small.recycle()
-        val frame = Frame(rgb, w, h)
-        last = frame
-        return Shot(frame, w * ScreenService.SCALE, h * ScreenService.SCALE)
+        return Shot(Frame(rgb, w, h), w * ScreenService.SCALE, h * ScreenService.SCALE)
     }
 
     companion object {

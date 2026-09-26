@@ -2462,19 +2462,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         }
     }
 
-    // ---- Add-on: collect samples (to train a box model later) -----------------
-
-    /** Samples are kept here, one folder per label; at most this many in all. */
-    static final String SAMPLES_DIR = "samples";
-
-    static int countFiles(java.io.File dir) {
-        java.io.File[] list = dir.listFiles();
-        if (list == null) return 0;
-        int n = 0;
-        for (java.io.File f : list) n += f.isDirectory() ? countFiles(f) : 1;
-        return n;
-    }
-
     // ---- Test: can this page be ticked straight through accessibility? --------
 
     private static final String TEST_LABEL = "🔍\nTest";

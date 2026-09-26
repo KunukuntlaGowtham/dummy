@@ -71,6 +71,8 @@ open class CheckboxService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
+        // Samples from the removed sample collection: free the space.
+        Thread { java.io.File(filesDir, "samples").deleteRecursively() }.start()
         windowManager = getSystemService(WindowManager::class.java)
         applySettings()
     }
@@ -214,7 +216,6 @@ open class CheckboxService : AccessibilityService() {
         lastMaxNumber = null
         atListEnd = false
         skippedNoNumber = 0
-        sampleCount = -1
         showNumbers()
         onScreen.clear()
         oldLooks.clear()
@@ -311,61 +312,6 @@ open class CheckboxService : AccessibilityService() {
     private var atListEnd = false                       // a scroll brought no higher number
     private var skippedNoNumber = 0                     // squares with no number on their line
 
-    private fun collecting() = prefs().getBoolean("collectSamples", false)
-
-    private val sampleWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
-    @Volatile
-    private var sampleCount = -1
-
-    /**
-     * Add-on "Collect samples": saves a 96 x 96 picture of each square (with a third of its
-     * size around it) under its label, cut from the picture this snap already took ([pixels])
-     * - no extra screenshot - and written on a background thread, so the run never waits.
-     */
-    private fun saveSamples(samples: List<Pair<String, Rect>>, pixels: Triple<IntArray, Int, Int>?) {
-        if (samples.isEmpty() || pixels == null) return
-        val (rgb, w, h) = pixels
-        val scale = ScreenService.SCALE
-        val root = java.io.File(filesDir, "samples")
-        sampleWorker.execute {
-            try {
-                if (sampleCount < 0) sampleCount = root.walkTopDown().count { it.isFile }
-                val stamp = System.currentTimeMillis()
-                for ((i, s) in samples.withIndex()) {
-                    if (sampleCount >= 3000) return@execute
-                    val box = s.second
-                    val grow = maxOf(box.width(), box.height()) / 3
-                    val l = ((box.left - grow) / scale).coerceIn(0, w)
-                    val t = ((box.top - grow) / scale).coerceIn(0, h)
-                    val r = ((box.right + grow) / scale).coerceIn(0, w)
-                    val b = ((box.bottom + grow) / scale).coerceIn(0, h)
-                    if (r - l < 2 || b - t < 2) continue
-                    val px = IntArray((r - l) * (b - t))
-                    for (y in t until b) for (x in l until r) {
-                        px[(y - t) * (r - l) + (x - l)] = rgb[y * w + x] or (0xff shl 24)
-                    }
-                    val crop = android.graphics.Bitmap.createBitmap(px, r - l, b - t,
-                        android.graphics.Bitmap.Config.ARGB_8888)
-                    val small = android.graphics.Bitmap.createScaledBitmap(crop, 96, 96, true)
-                    val dir = java.io.File(root, s.first).apply { mkdirs() }
-                    java.io.FileOutputStream(java.io.File(dir, "${stamp}_$i.png")).use {
-                        small.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
-                    }
-                    if (small != crop) small.recycle()
-                    crop.recycle()
-                    sampleCount++
-                }
-            } catch (t: Throwable) {
-                android.util.Log.e("CheckboxTicker", "sample not saved", t)
-            }
-        }
-    }
-
-    private var snapPixels: Triple<IntArray, Int, Int>? = null
-
-    /** Squares the number-guided run skipped on this snap (no row number): "not a box". */
-    private val skippedThisSnap = ArrayList<Rect>()
-
     /** The row numbers the page's own text shows on screen. Default: none. */
     protected open fun numbersOnScreen(): List<Int> = emptyList()
 
@@ -386,8 +332,6 @@ open class CheckboxService : AccessibilityService() {
         }
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
-            val pixels = if (collecting()) screen.lastPixels() else null
-            snapPixels = pixels
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
             val candidates = ArrayList<Pair<Rect, BoxLook.Look?>>()
             for (box in found) {
@@ -412,14 +356,12 @@ open class CheckboxService : AccessibilityService() {
     private fun numberSnap(candidates: List<Pair<Rect, BoxLook.Look?>>, labels: List<Int?>) {
         val limit = maxBoxes()
         onScreen.clear()
-        skippedThisSnap.clear()
         for ((k, c) in candidates.withIndex()) {
             if (attempts >= limit) break
             val label = labels.getOrNull(k)
             // Number-guided: a square with no row number on its line is not a row's box.
             if (guided && label == null) {
                 skippedNoNumber++
-                skippedThisSnap.add(Rect(c.first))
                 continue
             }
             // Already handled under this number (seen again after a scroll): skip it.
@@ -441,11 +383,6 @@ open class CheckboxService : AccessibilityService() {
             }
             emptySnaps = 0
             status("boxes ${name(onScreen.first())} to ${name(onScreen.last())} on this screen")
-            if (collecting()) {
-                // Before ticking: every box found is an empty box; skipped squares are not boxes.
-                saveSamples(onScreen.map { Pair("empty_box", Rect(it.box)) } +
-                    skippedThisSnap.map { Pair("not_a_box", Rect(it)) }, snapPixels)
-            }
             tickNext(0)
         }
     }
@@ -489,12 +426,8 @@ open class CheckboxService : AccessibilityService() {
         status("checking")
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
-            val pixels = if (collecting()) screen.lastPixels() else null
-            val samples = ArrayList<Pair<String, Rect>>()
             for (item in onScreen) {
                 val stillEmpty = boxes.any { Rect.intersects(it, item.box) }
-                // After ticking: the same place, now ticked - or still empty.
-                samples.add(Pair(if (stillEmpty) "did_not_tick" else "ticked_box", Rect(item.box)))
                 if (stillEmpty) {
                     noteNotTicked(item.number, item.page)
                     item.look?.let {
@@ -512,7 +445,6 @@ open class CheckboxService : AccessibilityService() {
                 }
             }
             val limit = maxBoxes()
-            if (collecting()) saveSamples(samples, pixels)
             if (attempts >= limit) stopLoop("Stopped after $limit boxes") else scrollOn()
         }
     }
