@@ -2496,6 +2496,50 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         handler.postDelayed(() -> runTest(true), 1500);
     }
 
+    /** The kinds of control the Test reports, in this order. */
+    private static final String[] KINDS = {"Checkboxes", "Radio buttons", "Dropdowns",
+            "Date fields", "Text fields", "Buttons", "Links"};
+
+    /** How many of one kind of control are on screen, how many can be used, a few names. */
+    private static final class Kind {
+        int found, usable;
+        final List<String> samples = new ArrayList<>();
+    }
+
+    /** Which kind of control a (non-checkbox) node is, or null for plain text / layout. */
+    private static String kindOf(AccessibilityNodeInfo n, String cls, String role) {
+        if (cls.endsWith("RadioButton") || role.contains("radio")) return "Radio buttons";
+        if (cls.contains("Spinner") || cls.contains("ComboBox") || cls.contains("AutoComplete")
+                || role.contains("combobox") || role.contains("popupbutton")
+                || role.contains("listbox")
+                || n.getActionList().contains(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND)) {
+            return "Dropdowns";
+        }
+        if (role.contains("date") || role.contains("time")) return "Date fields";
+        if (n.isEditable() || cls.endsWith("EditText") || role.contains("textfield")
+                || role.contains("searchbox")) return "Text fields";
+        if (cls.endsWith("Button") || role.equals("button")) return "Buttons";
+        if (role.contains("link")) return "Links";
+        return null;
+    }
+
+    /** The calendar as the page reports it: month name, day numbers, how many clickable. */
+    private String calendarLine() {
+        List<TextNode> all = texts(true);
+        List<TextNode> headers = monthHeaders(all);
+        if (headers.isEmpty()) return "❌ Calendar: no month name (like \"October 2026\") on this page";
+        TextNode h = headers.get(0);
+        TextNode[] days = days(h, headers, all);
+        int found = 0, clickable = 0;
+        for (int d = 1; d <= 31; d++) {
+            if (days[d] == null) continue;
+            found++;
+            if (canClick(days[d].node)) clickable++;
+        }
+        return (found == 0 ? "⚠️ " : clickable > 0 ? "✅ " : "⚠️ ") + "Calendar: " + h.text
+                + ", " + found + " day numbers readable, " + clickable + " clickable";
+    }
+
     /** Chrome's own name for what a web item is ("checkBox", "button", ...), or "". */
     private static String webRole(AccessibilityNodeInfo n) {
         try {
@@ -2531,6 +2575,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 : active.getPackageName().toString();
         List<Box> boxes = new ArrayList<>();
         StringBuilder dump = new StringBuilder();
+        java.util.Map<String, Kind> kinds = new java.util.LinkedHashMap<>();
+        for (String k : KINDS) kinds.put(k, new Kind());
         for (AccessibilityNodeInfo root : roots()) {
             // Not our own app's screens.
             if (root.getPackageName() != null
@@ -2567,6 +2613,20 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                             .append(' ').append(d.toShortString())
                             .append(" kids=").append(n.getChildCount()).append('\n');
                 }
+                if (n.isVisibleToUser()) {
+                    String kind = box ? "Checkboxes" : kindOf(n, cls, role);
+                    if (kind != null) {
+                        Kind k = kinds.get(kind);
+                        k.found++;
+                        if (canClick(n) || n.isEditable()) k.usable++;
+                        CharSequence tx = n.getText();
+                        if (tx == null || tx.length() == 0) tx = n.getContentDescription();
+                        if (tx != null && tx.length() > 0 && k.samples.size() < 4) {
+                            String t = tx.toString().replace('\n', ' ').trim();
+                            k.samples.add(t.length() > 18 ? t.substring(0, 18) + "…" : t);
+                        }
+                    }
+                }
                 if (!box || !n.isVisibleToUser()) continue;
                 Rect r = new Rect();
                 n.getBoundsInScreen(r);
@@ -2589,7 +2649,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 sb.append("❌ NOT COMPATIBLE\nThis app shows nothing to accessibility - only the "
                         + "screenshot method can work here.");
             } else if (webViews > 0) {
-                sb.append("⚠️ NOT DIRECTLY\nA web page, but it reports no checkboxes on this "
+                sb.append("⚠️ CHECKBOXES: NOT DIRECTLY\nA web page, but it reports no checkboxes on this "
                         + "screen. Scroll to the checkboxes and test again; if still none, "
                         + "only screenshots (or opening the site inside the app) can tick it.");
             } else {
@@ -2597,10 +2657,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                         + "checkbox. Scroll to them and test again.");
             }
         } else if (clickable == 0) {
-            sb.append("⚠️ READ ONLY\nCheckboxes are reported but none accepts a click - "
+            sb.append("⚠️ CHECKBOXES: READ ONLY\nCheckboxes are reported but none accepts a click - "
                     + "their state can be read, ticking needs taps.");
         } else {
-            sb.append("✅ COMPATIBLE\nCheckboxes can be read and clicked directly - no "
+            sb.append("✅ CHECKBOXES: COMPATIBLE\nCheckboxes can be read and clicked directly - no "
                     + "screenshots needed.");
         }
         sb.append("\n\nApp: ").append(pkg)
@@ -2614,6 +2674,23 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         if (boxes.isEmpty() && clickableWeb > 0) {
             sb.append(", tappable web items: ").append(clickableWeb);
         }
+        sb.append("\n\nEverything on this screen (✅ direct  ⚠️ read only  ❌ not reported):");
+        for (java.util.Map.Entry<String, Kind> e : kinds.entrySet()) {
+            Kind k = e.getValue();
+            sb.append("\n").append(k.found == 0 ? "❌ " : k.usable > 0 ? "✅ " : "⚠️ ")
+                    .append(e.getKey()).append(": ").append(k.found);
+            if (k.found > 0) sb.append(" (").append(k.usable).append(" usable)");
+            if (!k.samples.isEmpty()) sb.append(" - ").append(String.join(", ", k.samples));
+        }
+        sb.append("\n").append(calendarLine());
+        int readable = 0;
+        for (String w : what) if (!w.trim().isEmpty()) readable++;
+        sb.append("\n").append(readable > 0 ? "✅ " : "❌ ").append("Text readable: ")
+                .append(readable).append(" pieces");
+        int numbers = 0;
+        for (String w : what) if (ROW_NUMBER.matcher(w.trim()).matches()) numbers++;
+        sb.append("\n").append(numbers > 0 ? "✅ " : "❌ ").append("Numbers readable: ")
+                .append(numbers);
         int shown = 0;
         for (Box b : boxes) {
             if (shown++ >= 12) {
