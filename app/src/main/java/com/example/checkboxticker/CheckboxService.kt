@@ -254,6 +254,20 @@ open class CheckboxService : AccessibilityService() {
         prefs().edit().putString(FAILED_ROWS, rows.sorted().joinToString(",")).apply()
     }
 
+    /** The not-ticked page rows kept across runs, smallest first (for the Delete button). */
+    fun notTickedRows(): List<Int> = failedRows().sorted()
+
+    /** Replaces the not-ticked page rows (after some were deleted) and shows the new list. */
+    fun replaceNotTickedRows(rows: Collection<Int>) {
+        saveFailedRows(rows.toSet())
+        pageNumbering = true
+        updatePanel()
+        showNumbers()
+    }
+
+    /** Shows a line of progress in the status line (for the Delete button). */
+    fun showStatus(text: String) = status(text)
+
     /** How many boxes are listed as not ticked (page rows when numbering by the page). */
     private fun failedCount(): Int = if (pageNumbering) failedRows().size else failed.size
 

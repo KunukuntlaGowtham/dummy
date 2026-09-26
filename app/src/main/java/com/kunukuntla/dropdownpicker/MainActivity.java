@@ -140,6 +140,7 @@ public class MainActivity extends Activity {
         String[][] links = {{Keywords.CHAIN_DROP_CAL, "Drop → Cal"},
                 {Keywords.CHAIN_CAL_TICK, "Cal → Tick (after Continue)"},
                 {Keywords.CHAIN_TICK_BACK, "Tick → Back"},
+                {Keywords.CHAIN_BACK_DELETE, "Back → Delete not-ticked"},
                 {Keywords.CHAIN_BACK_DROP, "Back → Drop"}};
         for (String[] link : links) {
             chain.addView(toggle(link[1], Keywords.loadChain(this, link[0]),
@@ -162,6 +163,12 @@ public class MainActivity extends Activity {
                     } catch (NumberFormatException ignored) {
                     }
                 }));
+
+        // Delete: the not-ticked rows, each by the dustbin on its number's line
+        LinearLayout del = card(body, "🗑", "Delete", 0xFFC62828);
+        del.addView(numberRow("After bin tap (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
+        del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 900), "delCheckMs", 0, 10000));
+        del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
 
         // Last run
         LinearLayout log = card(body, "≡", "Last run", 0xFF6D6A7C);

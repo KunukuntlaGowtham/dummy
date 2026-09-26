@@ -250,6 +250,13 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dp(52), dp(52));
         backLp.topMargin = dp(6);
         controls.addView(backButton, backLp);
+        // Delete the not-ticked rows by the dustbin on their line.
+        deleteButton = roundButton(DELETE_LABEL, 0xDDC62828, dp(52));
+        deleteButton.setContentDescription("Delete the not-ticked rows");
+        deleteButton.setOnTouchListener(new DragOrTap(this::toggleDelete, null));
+        LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
+        deleteLp.topMargin = dp(6);
+        controls.addView(deleteButton, deleteLp);
         // Small screen-share switch, usable right on the page.
         shareButton = roundButton(SHARE_OFF_LABEL, 0xFF5F5B6E, dp(40));
         shareButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
@@ -398,7 +405,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             stop("Stopped");
             return;
         }
-        if (busy) return;
+        if (busy || deleteRunning) return;
         busy = true;
         running = true;
         stepMode = step;
@@ -582,7 +589,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
      * page, scroll it down, and tap that page's "Back" button too.
      */
     private void backScrollBack() {
-        if (running || busy || backRunning) return;
+        if (running || busy || backRunning || deleteRunning) return;
         backRunning = true;
         backButton.setAlpha(0.5f);
         tapPageBack(BACK_SEARCH_SCROLLS, first -> {
@@ -605,14 +612,25 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                         return;
                     }
                     endBack(null);
-                    if (Keywords.loadChain(this, Keywords.CHAIN_BACK_DROP)) {
-                        handler.postDelayed(() -> {
-                            if (!running && !busy) run(STEP_DROP);
-                        }, 1000);
+                    // Back twice lands on the list: delete the not-ticked rows there first.
+                    if (Keywords.loadChain(this, Keywords.CHAIN_BACK_DELETE)
+                            && !notTickedRows().isEmpty()) {
+                        handler.postDelayed(() -> startDelete(this::afterBack), 1000);
+                    } else {
+                        afterBack();
                     }
                 }), 500);
             }, Keywords.loadBackWait(this));
         });
+    }
+
+    /** Back (and any Delete after it) finished: go on to Drop when chained. */
+    private void afterBack() {
+        if (Keywords.loadChain(this, Keywords.CHAIN_BACK_DROP)) {
+            handler.postDelayed(() -> {
+                if (!running && !busy && !deleteRunning) run(STEP_DROP);
+            }, 1000);
+        }
     }
 
     private void endBack(String problem) {
@@ -672,6 +690,435 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
         }
         return best;
+    }
+
+    // ---- Delete the not-ticked rows -------------------------------------------
+
+    private static final String DELETE_LABEL = "🗑\nDel";
+    /** Looks (and scrolls) allowed to bring one row onto the screen. */
+    private static final int DELETE_STEPS = 40;
+    /** A card's number on its own: "2", "12.", "(3)", "#4" (OCR may read 1 as l, I or |, 0 as O). */
+    private static final java.util.regex.Pattern CARD_NUMBER =
+            java.util.regex.Pattern.compile("^[(#]?([0-9lI|O]{1,4})[.):]?$");
+    /** Words on a "Delete?" dialog's confirm button, the likeliest first. */
+    private static final List<String> CONFIRM_WORDS = java.util.Arrays.asList(
+            "delete", "yes", "yes delete", "remove", "confirm", "ok");
+    private TextView deleteButton;
+    private boolean deleteRunning;
+    /** Bumped on every start, so callbacks from a stopped run do nothing. */
+    private int deleteGen;
+    private int deleteSteps, deleteTries, deleted;
+    private String lastScreenKey;
+    private Runnable afterDelete;
+
+    /** A piece of text on screen (from the page itself or the screenshot); a card number if set. */
+    private static final class Line {
+        final Rect box;
+        final String text;
+        int number = -1;
+
+        Line(Rect box, String text) {
+            this.box = box;
+            this.text = text;
+        }
+    }
+
+    /** One look at the screen: its text, and its pixels when a screenshot was possible. */
+    private static final class Seen {
+        final List<Line> lines = new ArrayList<>();
+        int[] px;
+        int w, h;
+    }
+
+    private void toggleDelete() {
+        if (deleteRunning) endDelete("Stopped");
+        else startDelete(null);
+    }
+
+    /**
+     * Deletes the not-ticked rows (the Tick list, febff96): for the smallest row, find its
+     * number on screen (scrolling to it), tap the dustbin on the same line, confirm, and take a
+     * new screenshot to check the card went. The rows after it then move up one, so the list
+     * shifts down one too, and the next row is done the same way. {@code then} runs after.
+     */
+    private void startDelete(Runnable then) {
+        if (running || busy || backRunning || deleteRunning || isLooping()) return;
+        List<Integer> rows = notTickedRows();
+        if (rows.isEmpty()) {
+            Toast.makeText(this, "Not-ticked list is empty - nothing to delete",
+                    Toast.LENGTH_SHORT).show();
+            if (then != null) then.run();
+            return;
+        }
+        afterDelete = then;
+        deleteRunning = true;
+        deleteGen++;
+        deleted = 0;
+        deleteTries = 0;
+        deleteSteps = 0;
+        lastScreenKey = null;
+        deleteButton.setText("■\nStop");
+        showStatus("delete: rows " + rows);
+        handler.postDelayed(deleteStep(this::deleteNext), 300);
+    }
+
+    private void endDelete(String message) {
+        if (!deleteRunning) return;
+        deleteRunning = false;
+        deleteGen++;
+        deleteButton.setText(DELETE_LABEL);
+        setButtonVisible(true);
+        showStatus("delete: " + message);
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+        Runnable then = afterDelete;
+        afterDelete = null;
+        if (then != null && !"Stopped".equals(message)) handler.postDelayed(then, 1000);
+    }
+
+    /** A step of this delete run: skipped once the run ends, and a crash ends the run. */
+    private Runnable deleteStep(Runnable r) {
+        int gen = deleteGen;
+        return () -> {
+            if (!deleteRunning || gen != deleteGen) return;
+            try {
+                r.run();
+            } catch (Throwable e) {
+                endDelete("Error: " + e);
+            }
+        };
+    }
+
+    private android.content.SharedPreferences tickPrefs() {
+        return getSharedPreferences(com.example.checkboxticker.CheckboxService.PREFS, MODE_PRIVATE);
+    }
+
+    private int pref(String key, int fallback) {
+        return Math.max(0, Math.min(10000, tickPrefs().getInt(key, fallback)));
+    }
+
+    private void deleteNext() {
+        List<Integer> rows = notTickedRows();
+        if (rows.isEmpty()) {
+            endDelete("Deleted " + deleted + " - not-ticked list is empty");
+            return;
+        }
+        if (deleted >= Math.max(1, tickPrefs().getInt("maxDeletes", 20))) {
+            endDelete("Stopped after " + deleted + " deletes");
+            return;
+        }
+        showStatus("delete: looking for " + rows.get(0));
+        readScreen(seen -> findRow(rows.get(0), seen));
+    }
+
+    /** Takes a screenshot (our buttons hidden) and reads it, together with the page's own text. */
+    private void readScreen(Consumer<Seen> done) {
+        setButtonVisible(false);
+        handler.postDelayed(deleteStep(() -> capture(bmp -> deleteStep(() -> {
+            setButtonVisible(true);
+            Seen seen = new Seen();
+            for (TextNode t : texts(false)) seen.lines.add(new Line(t.bounds, t.text));
+            if (bmp == null) {
+                done.accept(seen);
+                return;
+            }
+            seen.w = bmp.getWidth();
+            seen.h = bmp.getHeight();
+            seen.px = new int[seen.w * seen.h];
+            bmp.getPixels(seen.px, 0, seen.w, 0, 0, seen.w, seen.h);
+            reader.readAll(bmp, 0, 0, lines -> deleteStep(() -> {
+                for (ScreenReader.Found f : lines) seen.lines.add(new Line(f.box, f.text));
+                done.accept(seen);
+            }).run());
+        }).run())), 150);
+    }
+
+    /** The row's number on screen and in reach: tap its bin. Otherwise scroll towards it. */
+    private void findRow(int target, Seen seen) {
+        Rect screen = screenBounds();
+        List<Line> numbers = cardNumbers(seen);
+        Line hit = null;
+        for (Line l : numbers) if (l.number == target) hit = l;
+        int safeTop = screen.height() / 8;
+        int safeBottom = gestureTop() - mm(12);
+        if (hit != null && hit.box.top >= safeTop && hit.box.bottom <= safeBottom) {
+            deleteSteps = 0;
+            lastScreenKey = null;
+            tapBin(target, hit, seen);
+            return;
+        }
+        String key = screenKey(seen);
+        if (key.equals(lastScreenKey)) {
+            endDelete("Row " + target + " not found - the page no longer scrolls");
+            return;
+        }
+        lastScreenKey = key;
+        if (++deleteSteps > DELETE_STEPS) {
+            endDelete("Row " + target + " not found");
+            return;
+        }
+        int dy; // > 0: bring what is further down the page up
+        if (hit != null) {
+            dy = hit.box.centerY() - screen.height() * 2 / 5;
+        } else if (numbers.isEmpty() || numbers.get(numbers.size() - 1).number < target) {
+            dy = screen.height() / 2;
+        } else if (numbers.get(0).number > target) {
+            dy = -screen.height() / 2;
+        } else {
+            dy = screen.height() / 4; // between the numbers seen but not read: nudge and look again
+        }
+        showStatus("delete: row " + target + " - scrolling " + (dy > 0 ? "down" : "up"));
+        scrollPage(dy);
+        handler.postDelayed(deleteStep(() -> readScreen(s -> findRow(target, s))),
+                pref("scrollWaitMs", 300) + 400L);
+    }
+
+    /** The card numbers on screen, top to bottom: a number on its own in the left part. */
+    private List<Line> cardNumbers(Seen seen) {
+        Rect screen = screenBounds();
+        List<Line> out = new ArrayList<>();
+        for (Line l : seen.lines) {
+            java.util.regex.Matcher m = CARD_NUMBER.matcher(l.text.trim());
+            if (!m.matches() || !m.group(1).matches(".*[0-9].*")) continue;
+            if (l.box.centerX() > screen.width() * 2 / 5) continue;
+            if (l.box.top < screen.height() / 20 || l.box.bottom > gestureTop()) continue;
+            String digits = m.group(1).replace('l', '1').replace('I', '1').replace('|', '1')
+                    .replace('O', '0');
+            int n = Integer.parseInt(digits);
+            if (n <= 0) continue;
+            boolean twice = false; // the page's text and the screenshot both found it
+            for (Line o : out) {
+                if (o.number == n && Math.abs(o.box.centerY() - l.box.centerY()) < mm(4)) twice = true;
+            }
+            if (twice) continue;
+            l.number = n;
+            out.add(l);
+        }
+        out.sort((a, b) -> Integer.compare(a.box.top, b.box.top));
+        return out;
+    }
+
+    /** What is on screen, to tell when a scroll moved nothing (the end of the page). */
+    private static String screenKey(Seen seen) {
+        List<String> parts = new ArrayList<>();
+        for (Line l : seen.lines) parts.add(l.text + "@" + l.box.top / 8);
+        java.util.Collections.sort(parts);
+        return String.join("|", parts);
+    }
+
+    /** Taps the dustbin on the number's line, then deals with a confirm dialog. */
+    private void tapBin(int target, Line number, Seen seen) {
+        Rect bin = binBeside(number, seen);
+        if (bin == null) {
+            endDelete("No dustbin found on the line of row " + target);
+            return;
+        }
+        Set<String> before = cardText(number, seen);
+        List<Line> confirmsBefore = confirmLines(seen.lines);
+        tapThrough(bin.centerX(), bin.centerY());
+        showStatus("delete: row " + target + " - bin tapped");
+        handler.postDelayed(deleteStep(() -> confirm(target, before, confirmsBefore, 3)),
+                pref("delWaitMs", 800));
+    }
+
+    /**
+     * The dustbin right of the number on the same line: a node that says delete / bin / trash,
+     * else the biggest icon in the screenshot on that line (the bin, not the thin arrow).
+     */
+    private Rect binBeside(Line number, Seen seen) {
+        Rect screen = screenBounds();
+        int half = Math.max(number.box.height(), mm(4));
+        int cy = number.box.centerY();
+        for (TextNode t : texts(false)) {
+            String raw = t.text;
+            String w = Keywords.norm(raw);
+            boolean named = raw.contains("🗑") || w.equals("delete") || w.contains("trash")
+                    || w.equals("bin") || w.contains("dustbin") || w.equals("remove")
+                    || w.startsWith("delete ");
+            if (!named || Math.abs(t.bounds.centerY() - cy) > half) continue;
+            if (t.bounds.left <= number.box.right || t.bounds.width() > screen.width() / 4) continue;
+            return t.bounds;
+        }
+        if (seen.px == null) return null;
+        int x0 = Math.max(number.box.right + mm(8), seen.w * 2 / 5);
+        int x1 = seen.w * 97 / 100; // not the scroll bar at the edge
+        int[] r = BinFinder.find(seen.px, seen.w, seen.h, cy - half, cy + half, x0, x1, mm(1));
+        return r == null ? null : new Rect(r[0], r[1], r[2], r[3]);
+    }
+
+    /**
+     * The text of the card under a number (name, date of birth, ...), down to the next card's
+     * number, so a new screenshot can tell whether that card is still there.
+     */
+    private Set<String> cardText(Line number, Seen seen) {
+        int bottom = number.box.bottom + mm(30);
+        for (Line n : cardNumbers(seen)) {
+            if (n.box.top > number.box.bottom) bottom = Math.min(bottom, n.box.top);
+        }
+        Set<String> out = new HashSet<>();
+        for (Line l : seen.lines) {
+            if (l.box.top < number.box.bottom - mm(1) || l.box.top >= bottom) continue;
+            if (CARD_NUMBER.matcher(l.text.trim()).matches()) continue;
+            String t = Keywords.norm(l.text);
+            if (t.length() >= 4) out.add(t);
+        }
+        return out;
+    }
+
+    /** Most of the text is the same: the same card. */
+    private static boolean sameCard(Set<String> a, Set<String> b) {
+        if (a.isEmpty() || b.isEmpty()) return false;
+        int common = 0;
+        for (String s : a) if (b.contains(s)) common++;
+        return common >= Math.max(1, (Math.min(a.size(), b.size()) + 1) / 2);
+    }
+
+    private static List<Line> confirmLines(List<Line> lines) {
+        List<Line> out = new ArrayList<>();
+        for (Line l : lines) if (CONFIRM_WORDS.contains(Keywords.norm(l.text))) out.add(l);
+        return out;
+    }
+
+    /** A confirm button that was not on the page before the bin tap, the likeliest word first. */
+    private Line newConfirm(List<Line> lines, List<Line> before) {
+        Line best = null;
+        int bestRank = Integer.MAX_VALUE;
+        for (Line l : confirmLines(lines)) {
+            String w = Keywords.norm(l.text);
+            boolean old = false;
+            for (Line b : before) {
+                if (Keywords.norm(b.text).equals(w)
+                        && Math.abs(b.box.centerX() - l.box.centerX()) < mm(3)
+                        && Math.abs(b.box.centerY() - l.box.centerY()) < mm(3)) old = true;
+            }
+            int rank = CONFIRM_WORDS.indexOf(w);
+            if (!old && rank < bestRank) {
+                best = l;
+                bestRank = rank;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * After the bin tap: tap the dialog's confirm button if one came up, then check the card
+     * went. The page's own text is tried first; a screenshot when that has no button.
+     */
+    private void confirm(int target, Set<String> before, List<Line> confirmsBefore, int looksLeft) {
+        List<Line> tree = new ArrayList<>();
+        for (TextNode t : texts(false)) tree.add(new Line(t.bounds, t.text));
+        Line button = newConfirm(tree, confirmsBefore);
+        if (button != null) {
+            confirmTapped(target, before, button);
+            return;
+        }
+        readScreen(seen -> {
+            Line b = newConfirm(seen.lines, confirmsBefore);
+            if (b != null) {
+                confirmTapped(target, before, b);
+            } else if (gone(before, seen)) {
+                rowDeleted(target, seen); // deleted straight away, no dialog
+            } else if (looksLeft > 1) {
+                handler.postDelayed(deleteStep(() ->
+                        confirm(target, before, confirmsBefore, looksLeft - 1)), 300);
+            } else {
+                verify(target, before, 2);
+            }
+        });
+    }
+
+    private void confirmTapped(int target, Set<String> before, Line button) {
+        tapThrough(button.box.centerX(), button.box.centerY());
+        showStatus("delete: row " + target + " - tapped " + button.text);
+        handler.postDelayed(deleteStep(() -> verify(target, before, 3)), pref("delCheckMs", 900));
+    }
+
+    /** A new screenshot: the card must be gone. If not, look again, then tap its bin again. */
+    private void verify(int target, Set<String> before, int looksLeft) {
+        readScreen(seen -> {
+            if (gone(before, seen)) {
+                rowDeleted(target, seen);
+            } else if (looksLeft > 1) {
+                handler.postDelayed(deleteStep(() -> verify(target, before, looksLeft - 1)), 600);
+            } else if (++deleteTries < 2) {
+                showStatus("delete: row " + target + " still there - trying again");
+                findRow(target, seen);
+            } else {
+                endDelete("Row " + target + " did not go away - stopped");
+            }
+        });
+    }
+
+    /** No card on screen has the deleted card's text any more. */
+    private boolean gone(Set<String> before, Seen seen) {
+        if (before.isEmpty()) return true; // nothing to compare: trust the tap
+        for (Line n : cardNumbers(seen)) {
+            if (sameCard(before, cardText(n, seen))) return false;
+        }
+        return true;
+    }
+
+    /** The row went: every later row moves up one, so the list does too. Then the next row. */
+    private void rowDeleted(int target, Seen seen) {
+        deleted++;
+        deleteTries = 0;
+        List<Integer> rows = new ArrayList<>();
+        for (int r : notTickedRows()) {
+            if (r < target) rows.add(r);
+            else if (r > target) rows.add(r - 1);
+        }
+        replaceNotTickedRows(rows);
+        showStatus("delete: row " + target + " deleted (" + deleted + ")");
+        if (rows.isEmpty()) {
+            endDelete("Deleted " + deleted + " - not-ticked list is empty");
+        } else if (deleted >= Math.max(1, tickPrefs().getInt("maxDeletes", 20))) {
+            endDelete("Stopped after " + deleted + " deletes");
+        } else {
+            findRow(rows.get(0), seen); // this screenshot already shows the page as it is now
+        }
+    }
+
+    /** Taps, letting the tap through our own buttons when they sit on that spot. */
+    private void tapThrough(int x, int y) {
+        Rect ours = null;
+        if (controls != null && controls.isShown()) {
+            int[] at = new int[2];
+            controls.getLocationOnScreen(at);
+            ours = new Rect(at[0], at[1], at[0] + controls.getWidth(), at[1] + controls.getHeight());
+        }
+        if (ours == null || !ours.contains(x, y)) {
+            tap(x, y);
+            return;
+        }
+        buttonParams.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        windowManager.updateViewLayout(controls, buttonParams);
+        handler.postDelayed(() -> {
+            tap(x, y);
+            handler.postDelayed(() -> {
+                buttonParams.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                if (controls != null) windowManager.updateViewLayout(controls, buttonParams);
+            }, 300);
+        }, 100);
+    }
+
+    /** Moves the page by {@code dy} pixels (> 0 shows what is further down), without a fling. */
+    private void scrollPage(int dy) {
+        Rect screen = screenBounds();
+        int x = screen.centerX();
+        int dist = Math.max(mm(8), Math.min(Math.abs(dy), screen.height() * 3 / 5));
+        if (dy > 0) {
+            int from = screen.height() * 3 / 4;
+            drag(x, from, x, from - dist, 450);
+        } else {
+            int from = screen.height() / 5;
+            drag(x, from, x, from + dist, 450);
+        }
+    }
+
+    /** Where the system's gesture / navigation strip starts: never tapped. */
+    private int gestureTop() {
+        int id = getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+        int bar = id > 0 ? getResources().getDimensionPixelSize(id) : 0;
+        return screenBounds().height() - Math.max(bar, dp(24)) - dp(16);
     }
 
     /** Shows the share-your-screen prompt over the current page (no page change). */
