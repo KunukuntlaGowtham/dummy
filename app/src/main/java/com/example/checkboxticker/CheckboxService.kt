@@ -283,6 +283,7 @@ open class CheckboxService : AccessibilityService() {
         val item = onScreen[i]
         notePageColour {
             if (!looping) return@notePageColour
+            tickedBox = Rect(item.box)
             val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
             if (ok) ticked++
             status("box ${item.number}: tapped" + (if (ok) "" else " - refused"))
@@ -679,6 +680,7 @@ open class CheckboxService : AccessibilityService() {
             return
         }
         val box = boxes[i]
+        tickedBox = Rect(box)
         val ok = gestureTap(box.exactCenterX(), box.exactCenterY())
         main.postDelayed(
             { afterTick { tapNext(boxes, i + 1, gap, done + if (ok) 1 else 0) } },
@@ -709,6 +711,7 @@ open class CheckboxService : AccessibilityService() {
                     finishRun(done)
                 } else {
                     showMarkers(listOf(box))
+                    tickedBox = Rect(box)
                     val ok = gestureTap(box.exactCenterX(), box.exactCenterY())
                     val gap = p.getInt("gapMs", 250).coerceIn(0, 5000).toLong().coerceAtLeast(60L)
                     main.postDelayed(
@@ -759,15 +762,27 @@ open class CheckboxService : AccessibilityService() {
         }
     }
 
-    /** The pop-up's button: the biggest patch of the colour that the page did not already have. */
-    private fun popupButton(patches: List<Pair<Rect, Int>>): Rect? {
+    /** The box just ticked - once ticked it may turn the pop-up colour, and must not be tapped. */
+    private var tickedBox: Rect? = null
+
+    /**
+     * The pop-up's button: the biggest patch of the colour that the page did not already have,
+     * never the box just ticked (a ticked box can turn that colour itself, and tapping it
+     * would untick it). Button-shaped (wider than tall) patches come first.
+     */
+    private fun popupButton(patches: List<Pair<Rect, Int>>, allowSquare: Boolean): Rect? {
         val near = dp(8)
-        return patches.filter { (r, _) ->
-            !hitsBubble(r) && pagePatches.none {
-                abs(it.centerX() - r.centerX()) <= near && abs(it.centerY() - r.centerY()) <= near &&
-                    abs(it.width() - r.width()) <= near && abs(it.height() - r.height()) <= near
-            }
-        }.maxByOrNull { it.second }?.first
+        val ticked = tickedBox?.let { Rect(it).apply { inset(-dp(10), -dp(10)) } }
+        val fresh = patches.filter { (r, _) ->
+            !hitsBubble(r) &&
+                (ticked == null || !Rect.intersects(ticked, r)) &&
+                pagePatches.none {
+                    abs(it.centerX() - r.centerX()) <= near && abs(it.centerY() - r.centerY()) <= near &&
+                        abs(it.width() - r.width()) <= near && abs(it.height() - r.height()) <= near
+                }
+        }
+        val buttons = fresh.filter { (r, _) -> r.width() >= r.height() * 3 / 2 }
+        return (if (allowSquare) buttons.ifEmpty { fresh } else buttons).maxByOrNull { it.second }?.first
     }
 
     /**
@@ -790,7 +805,8 @@ open class CheckboxService : AccessibilityService() {
 
         screen.findColourPatches(colour, tolerance, skipTop) { patches ->
             if (!looping && !running) return@findColourPatches
-            val box = popupButton(patches)
+            // Checking it closed: only a button shape, never a (checkbox-like) square.
+            val box = popupButton(patches, allowSquare = !tappedOnce)
             if (box == null) {
                 if (tappedOnce) {
                     status("pop-up: cleared")
