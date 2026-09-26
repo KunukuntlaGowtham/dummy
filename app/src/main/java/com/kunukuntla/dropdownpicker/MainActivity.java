@@ -114,6 +114,14 @@ public class MainActivity extends Activity {
                 on -> tickPrefs(e -> e.putBoolean("showStatus", on))));
         tick.addView(toggle("Number boxes by the number beside them", tp.getBoolean("rowNumbers", false),
                 on -> tickPrefs(e -> e.putBoolean("rowNumbers", on))));
+        View clearRows = pillButton("Clear not-ticked list", false, v -> {
+            tickPrefs(e -> e.remove(CheckboxService.FAILED_ROWS));
+            Toast.makeText(this, "Not-ticked list cleared", Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clearLp.topMargin = dp(10);
+        tick.addView(clearRows, clearLp);
         tick.addView(divider());
         tick.addView(valueRow("Pop-up colour", String.format(Locale.ROOT, "#%06X",
                 tp.getInt("colour", CheckboxService.DEFAULT_COLOUR)), InputType.TYPE_CLASS_TEXT, s -> {

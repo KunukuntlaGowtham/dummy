@@ -42,6 +42,7 @@ open class CheckboxService : AccessibilityService() {
         const val REPORT_FILE = "scan_report.txt"
         const val FAILED_FILE = "failed.txt"
         const val DEFAULT_COLOUR = 0x663398        // the purple button in the pop-up
+        const val FAILED_ROWS = "failedRows"       // page row numbers not ticked, across runs
         private const val POPUP_LOOKS = 4               // first look + 3 more if not there yet
         private const val POPUP_RETRY_MS = 60L   // the screenshot gap already spaces the looks
         @Volatile
@@ -235,10 +236,26 @@ open class CheckboxService : AccessibilityService() {
     // ---------------------------------------------------------------- a snap at a time
 
     /** A checkbox of the current snap: its number, where it is, and what it looks like. */
-    private class Numbered(val number: Int, val box: Rect, val look: BoxLook.Look?)
+    /** [page] is true when [number] is the one printed beside the box on the page. */
+    private class Numbered(val number: Int, val box: Rect, val look: BoxLook.Look?, val page: Boolean = false)
 
     /** This run numbers boxes by the number printed beside them (setting "rowNumbers"). */
     private var pageNumbering = false
+
+    /**
+     * With page numbering, the row numbers of boxes that did not tick, kept across runs: a
+     * re-check adds new misses and drops rows that ticked this time. Cleared from the app.
+     */
+    private fun failedRows(): MutableSet<Int> =
+        (prefs().getString(FAILED_ROWS, "") ?: "").split(",")
+            .mapNotNull { it.trim().toIntOrNull() }.toSortedSet()
+
+    private fun saveFailedRows(rows: Set<Int>) {
+        prefs().edit().putString(FAILED_ROWS, rows.sorted().joinToString(",")).apply()
+    }
+
+    /** How many boxes are listed as not ticked (page rows when numbering by the page). */
+    private fun failedCount(): Int = if (pageNumbering) failedRows().size else failed.size
 
     /** Page numbers already handled this run, so a box seen again after a scroll is skipped. */
     private val pageNumbersSeen = HashSet<Int>()
@@ -303,7 +320,7 @@ open class CheckboxService : AccessibilityService() {
             // Already handled under this number (seen again after a scroll): skip it.
             if (label != null && !pageNumbersSeen.add(label)) continue
             attempts++
-            onScreen.add(Numbered(label ?: attempts, c.first, c.second))
+            onScreen.add(Numbered(label ?: attempts, c.first, c.second, label != null))
         }
         run {
             if (onScreen.isEmpty()) {
@@ -358,10 +375,18 @@ open class CheckboxService : AccessibilityService() {
             if (!looping) return@findBoxes
             for (item in onScreen) {
                 if (boxes.any { Rect.intersects(it, item.box) }) {
-                    noteNotTicked(item.number)
+                    noteNotTicked(item.number, item.page)
                     item.look?.let {
                         oldLooks.add(it)
                         if (oldLooks.size > 30) oldLooks.removeAt(0)
+                    }
+                } else if (pageNumbering && item.page) {
+                    // Ticked this time: no longer missing.
+                    val rows = failedRows()
+                    if (rows.remove(item.number)) {
+                        saveFailedRows(rows)
+                        updatePanel()
+                        showNumbers()
                     }
                 }
             }
@@ -378,13 +403,19 @@ open class CheckboxService : AccessibilityService() {
      * 5 and 9 failing read "4, 4, 7".
      */
     private fun failedText(): String =
-        // With the page's own numbers, show them as they are on the page.
-        if (pageNumbering) failed.joinToString(", ")
+        // Page numbers: all rows missed so far (this run and earlier ones), in order, each
+        // less the misses before it - rows 6, 8 and 14 read "6, 7, 12".
+        if (pageNumbering) failedRows().sorted().mapIndexed { i, n -> n - i }.joinToString(", ")
         else failed.mapIndexed { i, n -> n - i }.joinToString(", ")
 
     /** Writes down a box that did not tick and shows its number. */
-    private fun noteNotTicked(number: Int) {
+    private fun noteNotTicked(number: Int, page: Boolean) {
         failed.add(number)
+        if (pageNumbering && page) {
+            val rows = failedRows()
+            rows.add(number)
+            saveFailedRows(rows)
+        }
         try {
             openFileOutput(FAILED_FILE, Context.MODE_APPEND).use {
                 it.write("box $number not ticked\n".toByteArray())
@@ -511,7 +542,7 @@ open class CheckboxService : AccessibilityService() {
      * button where they are easy to see. It stays after the run, until the next START.
      */
     private fun showNumbers() {
-        if (failed.isEmpty()) {
+        if (failedCount() == 0) {
             hideNumbers()
             return
         }
@@ -602,7 +633,7 @@ open class CheckboxService : AccessibilityService() {
             return
         }
         val view = ensurePanel() ?: return
-        val tally = if (failed.isEmpty()) {
+        val tally = if (failedCount() == 0) {
             "all ticked so far"
         } else {
             "not ticked: " + failedText()
