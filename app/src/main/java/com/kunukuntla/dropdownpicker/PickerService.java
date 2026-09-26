@@ -117,7 +117,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         if (tickButton != null) tickButton.setText(TICK_LABEL);
         if ("Stopped".equals(why) || !Keywords.loadChain(this, Keywords.CHAIN_TICK_BACK)) return;
         handler.postDelayed(() -> {
-            if (!running && !busy && !isLooping()) backScrollBack();
+            if (!running && !busy && !isLooping()) backScrollBack(false);
         }, 1000);
     }
 
@@ -246,7 +246,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         // Back, scroll on the other page, Back again.
         backButton = roundButton("↩\nBack", 0xFF8D6E63, dp(52));
         backButton.setContentDescription("Back, scroll, Back");
-        backButton.setOnTouchListener(new DragOrTap(this::backScrollBack, null));
+        backButton.setOnTouchListener(new DragOrTap(() -> backScrollBack(false), null));
         LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dp(52), dp(52));
         backLp.topMargin = dp(6);
         controls.addView(backButton, backLp);
@@ -257,6 +257,16 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         LinearLayout.LayoutParams deleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
         deleteLp.topMargin = dp(6);
         controls.addView(deleteButton, deleteLp);
+        // Back twice, then Delete, in one tap.
+        backDeleteButton = roundButton("↩🗑\nB+Del", 0xDDAD1457, dp(52));
+        backDeleteButton.setContentDescription("Back twice, then delete the not-ticked rows");
+        backDeleteButton.setOnTouchListener(new DragOrTap(() -> {
+            if (deleteRunning) endDelete("Stopped");
+            else backScrollBack(true);
+        }, null));
+        LinearLayout.LayoutParams backDeleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
+        backDeleteLp.topMargin = dp(6);
+        controls.addView(backDeleteButton, backDeleteLp);
         // Small screen-share switch, usable right on the page.
         shareButton = roundButton(SHARE_OFF_LABEL, 0xFF5F5B6E, dp(40));
         shareButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
@@ -586,17 +596,16 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     /**
      * Back button: tap the page's own "Back" button (scrolling down to it), wait for the other
-     * page, scroll it down, and tap that page's "Back" button too.
+     * page, scroll it down, and tap that page's "Back" button too - the phone's Back when a page
+     * has none, so it always goes back twice. {@code thenDelete}: then Delete (the B+Del button).
      */
-    private void backScrollBack() {
+    private void backScrollBack(boolean thenDelete) {
         if (running || busy || backRunning || deleteRunning) return;
         backRunning = true;
         backButton.setAlpha(0.5f);
         tapPageBack(BACK_SEARCH_SCROLLS, first -> {
-            if (!first) {
-                endBack("Couldn't find the page's Back button");
-                return;
-            }
+            // No Back button on the page: the phone's own Back instead, so it is always twice.
+            if (!first) performGlobalAction(GLOBAL_ACTION_BACK);
             handler.postDelayed(() -> {
                 int scrollMm = Keywords.loadBackScroll(this);
                 if (scrollMm > 0) {
@@ -607,15 +616,13 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                     swipe(x, from, x, to, 250);
                 }
                 handler.postDelayed(() -> tapPageBack(BACK_SEARCH_SCROLLS, second -> {
-                    if (!second) {
-                        endBack("Couldn't find the Back button on the second page");
-                        return;
-                    }
+                    if (!second) performGlobalAction(GLOBAL_ACTION_BACK);
                     endBack(null);
                     // Back twice lands on the list: delete the not-ticked rows there first.
-                    if (Keywords.loadChain(this, Keywords.CHAIN_BACK_DELETE)
-                            && !notTickedRows().isEmpty()) {
-                        handler.postDelayed(() -> startDelete(this::afterBack), 1000);
+                    if (thenDelete || (Keywords.loadChain(this, Keywords.CHAIN_BACK_DELETE)
+                            && !notTickedRows().isEmpty())) {
+                        handler.postDelayed(() -> startDelete(this::afterBack),
+                                Keywords.loadBackWait(this));
                     } else {
                         afterBack();
                     }
@@ -704,6 +711,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private static final List<String> CONFIRM_WORDS = java.util.Arrays.asList(
             "delete", "yes", "yes delete", "remove", "confirm", "ok");
     private TextView deleteButton;
+    private TextView backDeleteButton;
     private boolean deleteRunning;
     /** Bumped on every start, so callbacks from a stopped run do nothing. */
     private int deleteGen;
@@ -764,7 +772,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         lastScreenKey = null;
         deleteButton.setText("■\nStop");
         showStatus("delete: list " + listText());
-        handler.postDelayed(deleteStep(this::deleteNext), 300);
+        handler.postDelayed(deleteStep(this::deleteNext), 100);
     }
 
     private void endDelete(String message) {
@@ -833,11 +841,17 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             seen.h = bmp.getHeight();
             seen.px = new int[seen.w * seen.h];
             bmp.getPixels(seen.px, 0, seen.w, 0, 0, seen.w, seen.h);
+            // The page's own text already gives the numbers beside the bins: no slow OCR.
+            if (!binsOnScreen(seen).isEmpty()) {
+                bmp.recycle();
+                done.accept(seen);
+                return;
+            }
             reader.readAll(bmp, 0, 0, lines -> deleteStep(() -> {
                 for (ScreenReader.Found f : lines) seen.lines.add(new Line(f.box, f.text));
                 done.accept(seen);
             }).run());
-        }).run())), 150);
+        }).run())), 50);
     }
 
     /** The row's number on screen and in reach: tap its bin. Otherwise scroll towards it. */
@@ -877,7 +891,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         showStatus("delete: row " + target + " - scrolling " + (dy > 0 ? "down" : "up"));
         scrollPage(dy);
         handler.postDelayed(deleteStep(() -> readScreen(s -> findRow(target, s))),
-                pref("scrollWaitMs", 300) + 400L);
+                pref("scrollWaitMs", 300) + 150L);
     }
 
     /** A dustbin on screen, the number on its line (as the Tick reads it), and that number's text. */
@@ -960,8 +974,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         List<Line> confirmsBefore = confirmLines(seen.lines);
         tapThrough(bin.centerX(), bin.centerY());
         showStatus("delete: row " + target + " - bin tapped");
-        handler.postDelayed(deleteStep(() -> confirm(target, before, confirmsBefore, 3)),
-                pref("delWaitMs", 800));
+        long deadline = android.os.SystemClock.uptimeMillis() + pref("delWaitMs", 500);
+        handler.postDelayed(deleteStep(() -> confirm(target, before, confirmsBefore, deadline)),
+                120);
     }
 
     /**
@@ -1044,15 +1059,21 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     /**
-     * After the bin tap: tap the dialog's confirm button if one came up, then check the card
-     * went. The page's own text is tried first; a screenshot when that has no button.
+     * After the bin tap: tap the dialog's confirm button as soon as it comes up (the page's own
+     * text, checked every 100 ms - no screenshot needed), then check the card went. When no
+     * button shows up by {@code deadline}, one screenshot decides.
      */
-    private void confirm(int target, Set<String> before, List<Line> confirmsBefore, int looksLeft) {
+    private void confirm(int target, Set<String> before, List<Line> confirmsBefore, long deadline) {
         List<Line> tree = new ArrayList<>();
         for (TextNode t : texts(false)) tree.add(new Line(t.bounds, t.text));
         Line button = newConfirm(tree, confirmsBefore);
         if (button != null) {
             confirmTapped(target, before, button);
+            return;
+        }
+        if (android.os.SystemClock.uptimeMillis() < deadline) {
+            handler.postDelayed(deleteStep(() ->
+                    confirm(target, before, confirmsBefore, deadline)), 100);
             return;
         }
         readScreen(seen -> {
@@ -1061,11 +1082,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 confirmTapped(target, before, b);
             } else if (gone(before, seen)) {
                 rowDeleted(target, seen); // deleted straight away, no dialog
-            } else if (looksLeft > 1) {
-                handler.postDelayed(deleteStep(() ->
-                        confirm(target, before, confirmsBefore, looksLeft - 1)), 300);
             } else {
-                verify(target, before, 2);
+                verify(target, before, 3);
             }
         });
     }
@@ -1073,7 +1091,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private void confirmTapped(int target, Set<String> before, Line button) {
         tapThrough(button.box.centerX(), button.box.centerY());
         showStatus("delete: row " + target + " - tapped " + button.text);
-        handler.postDelayed(deleteStep(() -> verify(target, before, 3)), pref("delCheckMs", 900));
+        handler.postDelayed(deleteStep(() -> verify(target, before, 4)), pref("delCheckMs", 400));
     }
 
     /** A new screenshot: the card must be gone. If not, look again, then tap its bin again. */
@@ -1082,7 +1100,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             if (gone(before, seen)) {
                 rowDeleted(target, seen);
             } else if (looksLeft > 1) {
-                handler.postDelayed(deleteStep(() -> verify(target, before, looksLeft - 1)), 600);
+                handler.postDelayed(deleteStep(() -> verify(target, before, looksLeft - 1)), 250);
             } else if (++deleteTries < 2) {
                 showStatus("delete: row " + target + " still there - trying again");
                 findRow(target, seen);

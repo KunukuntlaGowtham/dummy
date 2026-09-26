@@ -112,8 +112,6 @@ public class MainActivity extends Activity {
                 on -> tickPrefs(e -> e.putBoolean("tapColour", on))));
         tick.addView(toggle("Show status line", tp.getBoolean("showStatus", true),
                 on -> tickPrefs(e -> e.putBoolean("showStatus", on))));
-        tick.addView(toggle("Number boxes by the number beside them", tp.getBoolean("rowNumbers", false),
-                on -> tickPrefs(e -> e.putBoolean("rowNumbers", on))));
         View clearRows = pillButton("Clear not-ticked list", false, v -> {
             tickPrefs(e -> e.remove(CheckboxService.FAILED_ROWS));
             Toast.makeText(this, "Not-ticked list cleared", Toast.LENGTH_SHORT).show();
@@ -140,7 +138,7 @@ public class MainActivity extends Activity {
         String[][] links = {{Keywords.CHAIN_DROP_CAL, "Drop → Cal"},
                 {Keywords.CHAIN_CAL_TICK, "Cal → Tick (after Continue)"},
                 {Keywords.CHAIN_TICK_BACK, "Tick → Back"},
-                {Keywords.CHAIN_BACK_DELETE, "Back → Delete not-ticked"},
+                {Keywords.CHAIN_BACK_DELETE, "Back (twice) → Delete not-ticked"},
                 {Keywords.CHAIN_BACK_DROP, "Back → Drop"}};
         for (String[] link : links) {
             chain.addView(toggle(link[1], Keywords.loadChain(this, link[0]),
@@ -166,8 +164,8 @@ public class MainActivity extends Activity {
 
         // Delete: the not-ticked rows, each by the dustbin on its number's line
         LinearLayout del = card(body, "🗑", "Delete", 0xFFC62828);
-        del.addView(numberRow("After bin tap (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
-        del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 900), "delCheckMs", 0, 10000));
+        del.addView(numberRow("Wait for confirm box (ms)", tp.getInt("delWaitMs", 500), "delWaitMs", 0, 10000));
+        del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 400), "delCheckMs", 0, 10000));
         del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
 
         // Last run

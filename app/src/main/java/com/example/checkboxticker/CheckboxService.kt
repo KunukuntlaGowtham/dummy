@@ -205,9 +205,10 @@ open class CheckboxService : AccessibilityService() {
         lastBox = null
         attempts = 0
         failed.clear()
-        pageNumbering = prefs().getBoolean("rowNumbers", false)
+        // A box is always known by the number printed on its line, wherever the run starts.
+        pageNumbering = true
         // Every Tick run starts its own not-ticked list: nothing left over from an earlier one.
-        if (pageNumbering) saveFailedRows(emptySet())
+        saveFailedRows(emptySet())
         pageNumbersSeen.clear()
         showNumbers()
         onScreen.clear()
@@ -241,8 +242,8 @@ open class CheckboxService : AccessibilityService() {
     /** [page] is true when [number] is the one printed beside the box on the page. */
     private class Numbered(val number: Int, val box: Rect, val look: BoxLook.Look?, val page: Boolean = false)
 
-    /** This run numbers boxes by the number printed beside them (setting "rowNumbers"). */
-    private var pageNumbering = false
+    /** Boxes are numbered by the number printed beside them (always, since the Delete button). */
+    private var pageNumbering = true
 
     /**
      * With page numbering, the row numbers of boxes that did not tick in this Tick run (saved,
@@ -336,7 +337,8 @@ open class CheckboxService : AccessibilityService() {
             // Already handled under this number (seen again after a scroll): skip it.
             if (label != null && !pageNumbersSeen.add(label)) continue
             attempts++
-            onScreen.add(Numbered(label ?: attempts, c.first, c.second, label != null))
+            // No number read on its line: 0 ("?"), never a count that looks like a row number.
+            onScreen.add(Numbered(label ?: 0, c.first, c.second, label != null))
         }
         run {
             if (onScreen.isEmpty()) {
@@ -348,7 +350,7 @@ open class CheckboxService : AccessibilityService() {
                 return
             }
             emptySnaps = 0
-            status("boxes ${onScreen.first().number} to ${onScreen.last().number} on this screen")
+            status("boxes ${name(onScreen.first())} to ${name(onScreen.last())} on this screen")
             tickNext(0)
         }
     }
@@ -372,12 +374,14 @@ open class CheckboxService : AccessibilityService() {
             tickedBox = Rect(item.box)
             val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
             if (ok) ticked++
-            status("box ${item.number}: tapped" + (if (ok) "" else " - refused"))
+            status("box ${name(item)}: tapped" + (if (ok) "" else " - refused"))
             main.postDelayed({
                 if (looping) afterTick { tickNext(i + 1) }
             }, waitMs(prefs(), "tickWaitMs", 300))
         }
     }
+
+    private fun name(item: Numbered) = if (item.page) item.number.toString() else "?"
 
     /** Step 3: snap again - a box still empty where it was did not tick. */
     private fun checkSnap() {
