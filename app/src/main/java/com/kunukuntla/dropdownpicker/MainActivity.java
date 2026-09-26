@@ -112,6 +112,8 @@ public class MainActivity extends Activity {
                 on -> tickPrefs(e -> e.putBoolean("tapColour", on))));
         tick.addView(toggle("Show status line", tp.getBoolean("showStatus", true),
                 on -> tickPrefs(e -> e.putBoolean("showStatus", on))));
+        tick.addView(toggle("Number boxes by the number beside them", tp.getBoolean("rowNumbers", false),
+                on -> tickPrefs(e -> e.putBoolean("rowNumbers", on))));
         tick.addView(divider());
         tick.addView(valueRow("Pop-up colour", String.format(Locale.ROOT, "#%06X",
                 tp.getInt("colour", CheckboxService.DEFAULT_COLOUR)), InputType.TYPE_CLASS_TEXT, s -> {

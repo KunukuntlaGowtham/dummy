@@ -121,6 +121,74 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         }, 1000);
     }
 
+    /** A row number at the start of a piece of text: "1", "2.", "(12)", "3) I agree ...". */
+    private static final java.util.regex.Pattern ROW_NUMBER =
+            java.util.regex.Pattern.compile("^\\(?(\\d{1,4})[.):]?(?:\\s.*)?$", java.util.regex.Pattern.DOTALL);
+
+    /**
+     * For the ticker's "number boxes by the number beside them" setting: the number printed on
+     * the same horizontal line as each box. From the page's own text first; for boxes still
+     * without one, from a screenshot read with text recognition.
+     */
+    @Override
+    protected void rowNumbers(List<Rect> boxes, com.example.checkboxticker.CheckboxService.RowNumbersDone done) {
+        List<Integer> labels = new ArrayList<>();
+        List<Rect> where = new ArrayList<>();
+        List<String> what = new ArrayList<>();
+        for (TextNode t : texts(false)) {
+            where.add(t.bounds);
+            what.add(t.text);
+        }
+        boolean missing = false;
+        for (Rect b : boxes) {
+            Integer n = numberBeside(b, where, what);
+            labels.add(n);
+            if (n == null) missing = true;
+        }
+        if (!missing) {
+            done.done(labels);
+            return;
+        }
+        capture(bmp -> {
+            if (bmp == null) {
+                done.done(labels);
+                return;
+            }
+            reader.readAll(bmp, 0, 0, lines -> safe(() -> {
+                List<Rect> ocrWhere = new ArrayList<>();
+                List<String> ocrWhat = new ArrayList<>();
+                for (ScreenReader.Found f : lines) {
+                    ocrWhere.add(f.box);
+                    ocrWhat.add(f.text);
+                }
+                for (int i = 0; i < boxes.size(); i++) {
+                    if (labels.get(i) == null) labels.set(i, numberBeside(boxes.get(i), ocrWhere, ocrWhat));
+                }
+                done.done(labels);
+            }).run());
+        });
+    }
+
+    /** The nearest number on exactly the same line as the box (left or right of it), or null. */
+    private Integer numberBeside(Rect box, List<Rect> where, List<String> what) {
+        int tolerance = Math.max(box.height() / 2, mm(1.5f));
+        Integer best = null;
+        int bestGap = Integer.MAX_VALUE;
+        for (int i = 0; i < where.size(); i++) {
+            Rect r = where.get(i);
+            if (Math.abs(r.centerY() - box.centerY()) > tolerance) continue; // not on the same line
+            if (Rect.intersects(r, box)) continue;
+            java.util.regex.Matcher m = ROW_NUMBER.matcher(what.get(i).trim());
+            if (!m.matches()) continue;
+            int gap = r.left >= box.right ? r.left - box.right : box.left - r.right;
+            if (gap < bestGap) {
+                bestGap = gap;
+                best = Integer.parseInt(m.group(1));
+            }
+        }
+        return best;
+    }
+
     /** Our floating buttons and outlines, so the ticker never scans or taps them. */
     @Override
     protected List<Rect> extraOwnWindows() {

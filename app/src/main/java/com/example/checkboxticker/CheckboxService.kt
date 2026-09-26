@@ -204,6 +204,8 @@ open class CheckboxService : AccessibilityService() {
         lastBox = null
         attempts = 0
         failed.clear()
+        pageNumbering = prefs().getBoolean("rowNumbers", false)
+        pageNumbersSeen.clear()
         showNumbers()
         onScreen.clear()
         oldLooks.clear()
@@ -235,6 +237,25 @@ open class CheckboxService : AccessibilityService() {
     /** A checkbox of the current snap: its number, where it is, and what it looks like. */
     private class Numbered(val number: Int, val box: Rect, val look: BoxLook.Look?)
 
+    /** This run numbers boxes by the number printed beside them (setting "rowNumbers"). */
+    private var pageNumbering = false
+
+    /** Page numbers already handled this run, so a box seen again after a scroll is skipped. */
+    private val pageNumbersSeen = HashSet<Int>()
+
+    /**
+     * The number printed on the same horizontal line as each box (like "1", "2.", "(12)"), or
+     * null where there is none. Default: none; a subclass that can read the page answers.
+     */
+    protected open fun rowNumbers(boxes: List<Rect>, done: RowNumbersDone) {
+        done.done(boxes.map { null })
+    }
+
+    /** Hands back one number (or null) per box, in the same order. */
+    fun interface RowNumbersDone {
+        fun done(labels: List<Int?>)
+    }
+
     private val onScreen = ArrayList<Numbered>()        // this snap's boxes, top to bottom
     private val oldLooks = ArrayList<BoxLook.Look>()    // boxes that did not tick, to know again
     private var emptySnaps = 0                          // snaps in a row with nothing new
@@ -253,24 +274,45 @@ open class CheckboxService : AccessibilityService() {
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
-            val limit = maxBoxes()
-            onScreen.clear()
+            val candidates = ArrayList<Pair<Rect, BoxLook.Look?>>()
             for (box in found) {
-                if (attempts >= limit) break
                 val look = sketch?.let { lookOf(it, box) }
                 // A box that did not tick stays empty, and may still be on screen after the
                 // scroll: it is known by what is written beside it, and not numbered again.
                 if (look != null && oldLooks.any { BoxLook.same(it, look) }) continue
-                attempts++
-                onScreen.add(Numbered(attempts, Rect(box), look))
+                candidates.add(Pair(Rect(box), look))
             }
+            if (pageNumbering && candidates.isNotEmpty()) {
+                status("reading the numbers beside the boxes")
+                rowNumbers(candidates.map { it.first }) { labels ->
+                    if (looping) numberSnap(candidates, labels)
+                }
+            } else {
+                numberSnap(candidates, candidates.map { null })
+            }
+        }
+    }
+
+    /** Step 1b: number this snap's boxes - by the page's own numbers where found - and tick. */
+    private fun numberSnap(candidates: List<Pair<Rect, BoxLook.Look?>>, labels: List<Int?>) {
+        val limit = maxBoxes()
+        onScreen.clear()
+        for ((k, c) in candidates.withIndex()) {
+            if (attempts >= limit) break
+            val label = labels.getOrNull(k)
+            // Already handled under this number (seen again after a scroll): skip it.
+            if (label != null && !pageNumbersSeen.add(label)) continue
+            attempts++
+            onScreen.add(Numbered(label ?: attempts, c.first, c.second))
+        }
+        run {
             if (onScreen.isEmpty()) {
                 if (attempts >= limit) {
                     stopLoop("Stopped after $limit boxes")
                 } else {
                     nothingNew()
                 }
-                return@findBoxesWithSketch
+                return
             }
             emptySnaps = 0
             status("boxes ${onScreen.first().number} to ${onScreen.last().number} on this screen")
@@ -336,7 +378,9 @@ open class CheckboxService : AccessibilityService() {
      * 5 and 9 failing read "4, 4, 7".
      */
     private fun failedText(): String =
-        failed.mapIndexed { i, n -> n - i }.joinToString(", ")
+        // With the page's own numbers, show them as they are on the page.
+        if (pageNumbering) failed.joinToString(", ")
+        else failed.mapIndexed { i, n -> n - i }.joinToString(", ")
 
     /** Writes down a box that did not tick and shows its number. */
     private fun noteNotTicked(number: Int) {
