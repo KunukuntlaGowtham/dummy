@@ -54,7 +54,7 @@ import java.util.function.Consumer;
  */
 public class PickerService extends com.example.checkboxticker.CheckboxService {
 
-    private static final long OPEN_WAIT_MS = 450;
+    private static final long OPEN_WAIT_MS = 350;
     private static final int MAX_MONTH_CHANGES = 12;
     /** Draw outlines where the app taps. Off: taps happen without any marker. */
     private static final boolean SHOW_TAPS = false;
@@ -391,7 +391,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                     open(targets);
                 }).run());
             });
-        })), 120);
+        })), 60);
     }
 
     private void open(List<Target> targets) {
@@ -764,7 +764,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         swipeList(t, visible);
         // Let the list settle before looking again.
         handler.postDelayed(safe(() -> search(t, before, keywords, exact, checksLeft,
-                scrollsLeft - 1, nowStuck, seen)), 700);
+                scrollsLeft - 1, nowStuck, seen)), 550);
     }
 
     /**
@@ -788,7 +788,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             if (crop != bmp) bmp.recycle();
             reader.find(crop, left, top, keywords, exact, beforeOcr, mm(3), (found, text, error) ->
                     safe(() -> cb.done(found, text, error)).run());
-        })), 80);
+        })), 50);
     }
 
     /** A medium-speed 30 mm drag up inside the open list. */
@@ -915,7 +915,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         }
         log("Calendar: want " + date + (calMode == DayChoice.MODE_EXACT ? " (exact)" : " (or best)"));
         handler.postDelayed(safe(() -> calendarStep(date, calMode, MAX_MONTH_CHANGES, PAGE_SCROLLS)),
-                stepMode == STEP_CAL ? 0 : 500);
+                stepMode == STEP_CAL ? 0 : 300);
     }
 
     /**
@@ -934,7 +934,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
             log("No month name yet, scrolling down 10 mm");
             pageSwipe(true);
-            handler.postDelayed(safe(() -> calendarStep(date, mode, changesLeft, scrollsLeft - 1)), 350);
+            handler.postDelayed(safe(() -> calendarStep(date, mode, changesLeft, scrollsLeft - 1)), 250);
             return;
         }
         int want = DayChoice.monthOf(date);
@@ -955,7 +955,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         if ((below || above) && scrollsLeft > 0) {
             log("Calendar is " + (below ? "below" : "above") + " the screen, scrolling 10 mm");
             pageSwipe(below);
-            handler.postDelayed(safe(() -> calendarStep(date, mode, changesLeft, scrollsLeft - 1)), 350);
+            handler.postDelayed(safe(() -> calendarStep(date, mode, changesLeft, scrollsLeft - 1)), 250);
             return;
         }
 
@@ -967,7 +967,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
             log("Calendar shows " + shown.text + ", tapping " + (diff > 0 ? "next" : "previous"));
             tapArrow(shown, grid, diff > 0);
-            handler.postDelayed(safe(() -> calendarStep(date, mode, changesLeft - 1, scrollsLeft)), 600);
+            handler.postDelayed(safe(() -> calendarStep(date, mode, changesLeft - 1, scrollsLeft)), 400);
             return;
         }
 
@@ -994,7 +994,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             bmp.recycle();
             log("Day colours: " + seen.toString().trim());
             chooseDay(date.getDayOfMonth(), mode, days, colours);
-        })), 120);
+        })), 60);
     }
 
     private void chooseDay(int want, int mode, TextNode[] days, String[] colours) {
@@ -1179,8 +1179,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 int to = Math.max(mm(5), from - mm(100));
                 log("Fast scroll down " + (from - to) + " px (100 mm)");
                 swipe(x, from, x, to, 150);
-                handler.postDelayed(safe(() -> formStep(new boolean[3], FORM_SCROLLS, message)), 600);
-            }), 400);
+                handler.postDelayed(safe(() -> formStep(new boolean[3], FORM_SCROLLS, message)), 450);
+            }), 250);
             return;
         }
         if (!Keywords.loadFinish(this)) {
@@ -1191,8 +1191,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         handler.postDelayed(safe(() -> {
             log("Quick 10 mm scroll, then Check");
             pageSwipe(true);
-            handler.postDelayed(safe(() -> formStep(new boolean[3], FORM_SCROLLS, message)), 350);
-        }), 500);
+            handler.postDelayed(safe(() -> formStep(new boolean[3], FORM_SCROLLS, message)), 250);
+        }), 300);
     }
 
     /**
@@ -1276,7 +1276,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                         log("Tapping left of \"" + agree.getText() + "\" at " + x + "," + y);
                         showHighlight(null, null, null, x, y);
                         tap(x, y);
-                        handler.postDelayed(safe(() -> formStep(done, scrollsLeft, summary)), 300);
+                        handler.postDelayed(safe(() -> formStep(done, scrollsLeft, summary)), 200);
                         return;
                     }
                     if (target == null) {
@@ -1287,10 +1287,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                     log("Tapping the drawn " + FORM_STEPS[stage] + " at " + target.toShortString());
                     showHighlight(null, null, target, -1, -1);
                     tap(target.centerX(), target.centerY());
-                    handler.postDelayed(safe(() -> formStep(done, scrollsLeft, summary)), 300);
+                    handler.postDelayed(safe(() -> formStep(done, scrollsLeft, summary)), 200);
                 }));
             }).start();
-        })), 80);
+        })), 50);
     }
 
     /** Presses Continue if it is on screen, else scrolls the page 10 mm and looks again. */
@@ -1322,7 +1322,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             return;
         }
         pageSwipe(true);
-        handler.postDelayed(safe(() -> formStep(done, scrollsLeft - 1, summary)), 300);
+        handler.postDelayed(safe(() -> formStep(done, scrollsLeft - 1, summary)), 220);
     }
 
     /** Taps a radio button or checkbox like a finger (on its label if the box itself is tiny). */

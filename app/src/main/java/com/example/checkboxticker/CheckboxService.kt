@@ -43,7 +43,7 @@ open class CheckboxService : AccessibilityService() {
         const val FAILED_FILE = "failed.txt"
         const val DEFAULT_COLOUR = 0x663398        // the purple button in the pop-up
         private const val POPUP_LOOKS = 4               // first look + 3 more if not there yet
-        private const val POPUP_RETRY_MS = 300L
+        private const val POPUP_RETRY_MS = 60L   // the screenshot gap already spaces the looks
         @Volatile
         var instance: CheckboxService? = null
     }
@@ -245,6 +245,7 @@ open class CheckboxService : AccessibilityService() {
             return
         }
         status("snap")
+        pageAfterPopup = null
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
@@ -281,7 +282,13 @@ open class CheckboxService : AccessibilityService() {
             return
         }
         val item = onScreen[i]
-        notePageColour {
+        val cached = pageAfterPopup
+        pageAfterPopup = null
+        if (cached != null) {
+            // The last pop-up check already shows the page as it is now: no extra picture.
+            pagePatches = cached
+        }
+        notePageColour(cached != null) {
             if (!looping) return@notePageColour
             tickedBox = Rect(item.box)
             val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
@@ -743,8 +750,15 @@ open class CheckboxService : AccessibilityService() {
     /** Patches of the pop-up colour on the page just before the last tick (the page's own). */
     private var pagePatches: List<Rect> = emptyList()
 
+    /** The page's patches from the last look that found no pop-up, reused for the next tick. */
+    private var pageAfterPopup: List<Rect>? = null
+
     /** Notes the page's own patches of the pop-up colour, then carries on. */
-    private fun notePageColour(then: () -> Unit) {
+    private fun notePageColour(alreadyKnown: Boolean, then: () -> Unit) {
+        if (alreadyKnown) {
+            then()
+            return
+        }
         val p = prefs()
         val screen = eyes()
         if (!p.getBoolean("tapColour", true) || screen == null) {
@@ -810,11 +824,13 @@ open class CheckboxService : AccessibilityService() {
             if (box == null) {
                 if (tappedOnce) {
                     status("pop-up: cleared")
+                    pageAfterPopup = patches.map { it.first }
                     next()
                 } else if (looksLeft > 1) {
                     main.postDelayed({ clearPopup(looksLeft - 1, false, next) }, POPUP_RETRY_MS)
                 } else {
                     status("pop-up: no new ${String.format("#%06X", colour)} below the top $skipTop%")
+                    pageAfterPopup = patches.map { it.first }
                     next()
                 }
             } else if (tappedOnce && looksLeft <= 0) {

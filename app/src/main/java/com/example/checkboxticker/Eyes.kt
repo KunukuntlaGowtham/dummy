@@ -158,7 +158,7 @@ class ShotEyes(
     }
 
     companion object {
-        private const val MIN_GAP_MS = 350L
+        private const val MIN_GAP_MS = 340L    // Android allows one every 333 ms
     }
 }
 
