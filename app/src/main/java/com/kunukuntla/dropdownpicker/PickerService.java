@@ -168,20 +168,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         });
     }
 
-    /** Number-guided Tick: the numbers standing on their own in the page's text on screen. */
-    @Override
-    protected List<Integer> numbersOnScreen() {
-        Rect screen = screenBounds();
-        List<Integer> out = new ArrayList<>();
-        for (TextNode t : texts(false)) {
-            if (t.bounds.top < screen.height() / 20) continue; // not the status bar
-            java.util.regex.Matcher m = CARD_NUMBER.matcher(t.text.trim());
-            if (!m.matches() || !m.group(1).matches("[0-9]+")) continue;
-            out.add(Integer.parseInt(m.group(1)));
-        }
-        return out;
-    }
-
     /** The nearest number on exactly the same line as the box (left or right of it), or null. */
     private Integer numberBeside(Rect box, List<Rect> where, List<String> what) {
         int tolerance = Math.max(box.height() / 2, mm(1.5f));
@@ -423,8 +409,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         runLog.setLength(0);
         log("Start: " + STEP_LABELS[step].replace('\n', ' '));
         if (step == STEP_DROP) {
-            if (direct()) directDrop();
-            else findAndOpen();
+            findAndOpen();
         } else if (step == STEP_CAL) {
             startCalendar("Calendar test");
         } else {
@@ -886,12 +871,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             seen.h = bmp.getHeight();
             seen.px = new int[seen.w * seen.h];
             bmp.getPixels(seen.px, 0, seen.w, 0, 0, seen.w, seen.h);
-            // Add-on: the page's own text already gives the numbers beside the bins - no OCR.
-            if (tickPrefs().getBoolean("delPageNumbers", false) && !binsOnScreen(seen).isEmpty()) {
-                bmp.recycle();
-                done.accept(seen);
-                return;
-            }
             reader.readAll(bmp, 0, 0, lines -> deleteStep(() -> {
                 for (ScreenReader.Found f : lines) seen.lines.add(new Line(f.box, f.text));
                 done.accept(seen);
@@ -1596,115 +1575,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         return out;
     }
 
-    // ---- Direct mode (add-on): Drop through accessibility ----------------------
-
-    /** The Direct switch in the app: click the page's controls instead of tapping. */
-    private boolean direct() {
-        return Keywords.loadDirect(this);
-    }
-
-    /**
-     * Direct Drop: opens the top-most dropdown the page reports (a select / spinner / combo
-     * box, or anything that can expand) with a click, then clicks the option straight through
-     * accessibility - also one scrolled out of the list. Falls back to the screenshot way when
-     * the page reports no dropdown or no matching option.
-     */
-    private void directDrop() {
-        List<Target> targets = new ArrayList<>(nodeTargets());
-        if (targets.isEmpty()) targets.addAll(expandables());
-        if (targets.isEmpty()) {
-            log("Direct: the page reports no dropdown, using the screenshot");
-            findAndOpen();
-            return;
-        }
-        Target t = targets.get(0);
-        Set<String> before = new HashSet<>();
-        for (TextNode n : texts(true)) before.add(n.key());
-        log("Direct: opening the dropdown at " + t.line.toShortString());
-        showHighlight(t.line, null, null, -1, -1);
-        boolean ok = t.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                || t.node.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND.getId());
-        if (!ok) tap(t.tapX, t.tapY);
-        handler.postDelayed(safe(() -> directPick(t, before, 6)), OPEN_WAIT_MS);
-    }
-
-    /** Controls the page says can be expanded (a web select or combo box), top to bottom. */
-    private List<Target> expandables() {
-        List<Target> out = new ArrayList<>();
-        for (AccessibilityNodeInfo root : roots()) {
-            List<AccessibilityNodeInfo> stack = new ArrayList<>();
-            stack.add(root);
-            while (!stack.isEmpty()) {
-                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
-                if (n == null) continue;
-                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
-                if (!n.isVisibleToUser() || !n.getActionList().contains(
-                        AccessibilityNodeInfo.AccessibilityAction.ACTION_EXPAND)) continue;
-                Rect r = new Rect();
-                n.getBoundsInScreen(r);
-                if (!r.isEmpty()) out.add(new Target(r, null, r.centerX(), r.centerY(), n));
-            }
-        }
-        out.sort((a, b) -> Integer.compare(a.line.top, b.line.top));
-        return out;
-    }
-
-    /** The list is open: click the option (first one, or the keyword's) directly. */
-    private void directPick(Target t, Set<String> before, int looksLeft) {
-        if (!running) return;
-        // New text in the dropdown's column; a pop-up list elsewhere (a native select) counts too.
-        List<TextNode> opts = options(t, before, true);
-        if (opts.isEmpty()) {
-            for (TextNode n : texts(true)) {
-                if (!before.contains(n.key()) && !n.bounds.contains(t.tapX, t.tapY)) opts.add(n);
-            }
-            opts.sort((a, b) -> Integer.compare(a.bounds.top, b.bounds.top));
-        }
-        if (opts.isEmpty()) {
-            if (looksLeft > 1) {
-                handler.postDelayed(safe(() -> directPick(t, before, looksLeft - 1)), 150);
-            } else {
-                log("Direct: no options showed up, using the screenshot");
-                pick(t, before);
-            }
-            return;
-        }
-        List<String> keywords = Keywords.list(this);
-        int mode = Keywords.loadPickMode(this);
-        TextNode choice = null;
-        String matched = null;
-        if (mode == Keywords.PICK_BELOW || keywords.isEmpty()) {
-            choice = opts.get(0);
-        } else {
-            boolean exact = mode == Keywords.PICK_EXACT;
-            search:
-            for (String k : keywords) {
-                for (TextNode o : opts) {
-                    String text = Keywords.norm(o.text);
-                    if (exact ? text.equals(k) : text.contains(k)) {
-                        choice = o;
-                        matched = k;
-                        break search;
-                    }
-                }
-            }
-        }
-        if (choice == null) {
-            log("Direct: no option matches the keywords, searching with screenshots");
-            pick(t, before);
-            return;
-        }
-        if (!choice.node.isVisibleToUser()) {
-            choice.node.performAction(
-                    AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-        }
-        boolean ok = clickSelfOrParent(choice.node);
-        if (!ok) tap(choice.bounds.centerX(), choice.bounds.centerY());
-        log("Direct: " + (ok ? "clicked" : "tapped") + " \"" + choice.text + "\"");
-        afterDropdown("Selected: " + choice.text
-                + (matched != null ? " (keyword \"" + matched + "\")" : "") + " - direct");
-    }
-
     // ---- Calendar day --------------------------------------------------------
 
     /** Dropdown step finished: go on to the calendar if a day is set, else stop. */
@@ -1846,13 +1716,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         }
         TextNode cell = days[pick];
         showHighlight(null, null, cell.bounds, -1, -1);
-        if (direct() && clickSelfOrParent(cell.node)) {
-            log("Clicked day " + pick + " directly");
-        } else {
-            // A real tap on the day's box, like a finger.
-            log("Tapping day " + pick + " at " + cell.bounds.centerX() + "," + cell.bounds.centerY());
-            tap(cell.bounds.centerX(), cell.bounds.centerY());
-        }
+        // A real tap on the day's box, like a finger.
+        log("Tapping day " + pick + " at " + cell.bounds.centerX() + "," + cell.bounds.centerY());
+        tap(cell.bounds.centerX(), cell.bounds.centerY());
         afterCalendar(pick == want ? "Selected day " + pick + " (" + colours[pick].toLowerCase(Locale.ROOT) + ")"
                 : "Day " + want + " is " + colours[want].toLowerCase(Locale.ROOT)
                 + ", selected nearest open day " + pick + " ("
@@ -2131,13 +1997,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
             Rect r = new Rect();
             cont.getBoundsInScreen(r);
+            log("Pressing Continue");
             showHighlight(null, null, r, -1, -1);
-            if (direct() && clickSelfOrParent(cont)) {
-                log("Clicked Continue directly");
-            } else {
-                log("Pressing Continue");
-                tap(r.centerX(), r.centerY());
-            }
+            tap(r.centerX(), r.centerY());
             stop(summary + ". Pressed Continue");
             if (Keywords.loadChain(this, Keywords.CHAIN_CAL_TICK)) {
                 // Next page loads, then the ticker takes over by itself.
@@ -2160,10 +2022,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     /** Taps a radio button or checkbox like a finger (on its label if the box itself is tiny). */
     private void tick(AccessibilityNodeInfo n, String what) {
-        if (direct() && clickSelfOrParent(n)) {
-            log("Clicked the " + what + " directly");
-            return;
-        }
         Rect r = new Rect();
         n.getBoundsInScreen(r);
         if (r.width() < mm(2) || r.height() < mm(2)) {
@@ -2452,23 +2310,6 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             Toast.makeText(this, "Couldn't open the share menu. The picture is in your Gallery "
                     + "under Pictures/DropdownPicker.", Toast.LENGTH_LONG).show();
         }
-    }
-
-    /**
-     * Clicks the node, or the nearest parent that takes a click - but never a big container
-     * (a quarter of the screen or more), which would click somewhere else entirely.
-     */
-    private boolean clickSelfOrParent(AccessibilityNodeInfo n) {
-        Rect screen = screenBounds();
-        long limit = (long) screen.width() * screen.height() / 4;
-        int depth = 0;
-        for (AccessibilityNodeInfo p = n; p != null && depth < 5; p = p.getParent(), depth++) {
-            Rect r = new Rect();
-            p.getBoundsInScreen(r);
-            if (depth > 0 && (long) r.width() * r.height() >= limit) return false;
-            if (p.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
-        }
-        return false;
     }
 
     // ---- Helpers ---------------------------------------------------------------

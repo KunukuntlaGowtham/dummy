@@ -28,18 +28,6 @@ final class Keywords {
         prefs(context).edit().putInt("pick_mode", mode).apply();
     }
 
-    /**
-     * Add-on: Drop, Cal and Check click the page's controls straight through accessibility
-     * (no taps at screen positions); anything the page doesn't report falls back to taps.
-     */
-    static boolean loadDirect(Context context) {
-        return prefs(context).getBoolean("direct", false);
-    }
-
-    static void saveDirect(Context context, boolean on) {
-        prefs(context).edit().putBoolean("direct", on).apply();
-    }
-
     /** Whether to tick the radio button and checkbox and press Continue after the date. */
     static boolean loadFinish(Context context) {
         return prefs(context).getBoolean("finish_form", true);

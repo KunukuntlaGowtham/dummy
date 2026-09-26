@@ -71,8 +71,6 @@ open class CheckboxService : AccessibilityService() {
 
     override fun onServiceConnected() {
         instance = this
-        // Samples from the removed sample collection: free the space.
-        Thread { java.io.File(filesDir, "samples").deleteRecursively() }.start()
         windowManager = getSystemService(WindowManager::class.java)
         applySettings()
     }
@@ -212,10 +210,6 @@ open class CheckboxService : AccessibilityService() {
         // Every Tick run starts its own not-ticked list: nothing left over from an earlier one.
         saveFailedRows(emptySet())
         pageNumbersSeen.clear()
-        guided = pageNumbering && prefs().getBoolean("guided", false)
-        lastMaxNumber = null
-        atListEnd = false
-        skippedNoNumber = 0
         showNumbers()
         onScreen.clear()
         oldLooks.clear()
@@ -234,8 +228,7 @@ open class CheckboxService : AccessibilityService() {
         running = false
         lastBox = null
         updateBubble()
-        status("$why - numbered $attempts, ticked ${attempts - failed.size}" +
-            (if (guided && skippedNoNumber > 0) ", $skippedNoNumber square(s) with no number skipped" else ""))
+        status("$why - numbered $attempts, ticked ${attempts - failed.size}")
         toast("$why after $attempts boxes")
         onLoopStopped(why)
     }
@@ -302,19 +295,6 @@ open class CheckboxService : AccessibilityService() {
     private var emptySnaps = 0                          // snaps in a row with nothing new
     private var scrolledOnce = false
 
-    /**
-     * Add-on "Number-guided" (setting "guided", with page numbering): only a box with a row
-     * number read on its line is ticked (no stray taps on icons), and the run stops as soon as
-     * a scroll brings no higher row number (the end of the list).
-     */
-    private var guided = false
-    private var lastMaxNumber: Int? = null              // highest row number on the last snap
-    private var atListEnd = false                       // a scroll brought no higher number
-    private var skippedNoNumber = 0                     // squares with no number on their line
-
-    /** The row numbers the page's own text shows on screen. Default: none. */
-    protected open fun numbersOnScreen(): List<Int> = emptyList()
-
     /** Step 1: snap, find the boxes, number the new ones. */
     private fun snap() {
         if (!looping) return
@@ -325,11 +305,6 @@ open class CheckboxService : AccessibilityService() {
         }
         status("snap")
         pageAfterPopup = null
-        if (guided) {
-            val maxNow = numbersOnScreen().maxOrNull()
-            atListEnd = scrolledOnce && maxNow != null && maxNow == lastMaxNumber
-            if (maxNow != null) lastMaxNumber = maxNow
-        }
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
@@ -359,11 +334,6 @@ open class CheckboxService : AccessibilityService() {
         for ((k, c) in candidates.withIndex()) {
             if (attempts >= limit) break
             val label = labels.getOrNull(k)
-            // Number-guided: a square with no row number on its line is not a row's box.
-            if (guided && label == null) {
-                skippedNoNumber++
-                continue
-            }
             // Already handled under this number (seen again after a scroll): skip it.
             if (label != null && !pageNumbersSeen.add(label)) continue
             attempts++
@@ -427,8 +397,7 @@ open class CheckboxService : AccessibilityService() {
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
             for (item in onScreen) {
-                val stillEmpty = boxes.any { Rect.intersects(it, item.box) }
-                if (stillEmpty) {
+                if (boxes.any { Rect.intersects(it, item.box) }) {
                     noteNotTicked(item.number, item.page)
                     item.look?.let {
                         oldLooks.add(it)
@@ -494,10 +463,6 @@ open class CheckboxService : AccessibilityService() {
     /** No new box on this snap. Three in a row after scrolling means the end of the page. */
     private fun nothingNew() {
         emptySnaps++
-        if (guided && atListEnd) {
-            stopLoop("Reached the end of the list (last row $lastMaxNumber)")
-            return
-        }
         if (scrolledOnce && emptySnaps >= 3) {
             stopLoop("Reached the end of the page")
             return
