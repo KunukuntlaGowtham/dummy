@@ -310,6 +310,20 @@ open class CheckboxService : AccessibilityService() {
     private var atListEnd = false                       // a scroll brought no higher number
     private var skippedNoNumber = 0                     // squares with no number on their line
 
+    /**
+     * Add-on "Collect samples" (setting "collectSamples"): saves a small picture of each
+     * [samples] square under its label (for training a model later), then runs [then].
+     * Default: nothing to save; a subclass that can take screenshots saves them.
+     */
+    protected open fun collectSamples(samples: List<Pair<String, Rect>>, then: Runnable) {
+        then.run()
+    }
+
+    private fun collecting() = prefs().getBoolean("collectSamples", false)
+
+    /** Squares the number-guided run skipped on this snap (no row number): "not a box". */
+    private val skippedThisSnap = ArrayList<Rect>()
+
     /** The row numbers the page's own text shows on screen. Default: none. */
     protected open fun numbersOnScreen(): List<Int> = emptyList()
 
@@ -354,12 +368,14 @@ open class CheckboxService : AccessibilityService() {
     private fun numberSnap(candidates: List<Pair<Rect, BoxLook.Look?>>, labels: List<Int?>) {
         val limit = maxBoxes()
         onScreen.clear()
+        skippedThisSnap.clear()
         for ((k, c) in candidates.withIndex()) {
             if (attempts >= limit) break
             val label = labels.getOrNull(k)
             // Number-guided: a square with no row number on its line is not a row's box.
             if (guided && label == null) {
                 skippedNoNumber++
+                skippedThisSnap.add(Rect(c.first))
                 continue
             }
             // Already handled under this number (seen again after a scroll): skip it.
@@ -381,7 +397,14 @@ open class CheckboxService : AccessibilityService() {
             }
             emptySnaps = 0
             status("boxes ${name(onScreen.first())} to ${name(onScreen.last())} on this screen")
-            tickNext(0)
+            if (collecting()) {
+                // Before ticking: every box found is an empty box; skipped squares are not boxes.
+                val samples = onScreen.map { Pair("empty_box", Rect(it.box)) } +
+                    skippedThisSnap.map { Pair("not_a_box", Rect(it)) }
+                collectSamples(samples, Runnable { if (looping) tickNext(0) })
+            } else {
+                tickNext(0)
+            }
         }
     }
 
@@ -424,7 +447,11 @@ open class CheckboxService : AccessibilityService() {
         status("checking")
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
+            val samples = ArrayList<Pair<String, Rect>>()
             for (item in onScreen) {
+                // After ticking: the same place, now ticked - or still empty.
+                samples.add(Pair(if (boxes.any { Rect.intersects(it, item.box) }) "did_not_tick"
+                    else "ticked_box", Rect(item.box)))
                 if (boxes.any { Rect.intersects(it, item.box) }) {
                     noteNotTicked(item.number, item.page)
                     item.look?.let {
@@ -442,7 +469,11 @@ open class CheckboxService : AccessibilityService() {
                 }
             }
             val limit = maxBoxes()
-            if (attempts >= limit) stopLoop("Stopped after $limit boxes") else scrollOn()
+            val next = Runnable {
+                if (!looping) return@Runnable
+                if (attempts >= limit) stopLoop("Stopped after $limit boxes") else scrollOn()
+            }
+            if (collecting()) collectSamples(samples, next) else next.run()
         }
     }
 

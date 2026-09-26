@@ -185,6 +185,30 @@ public class MainActivity extends Activity {
                 on -> tickPrefs(e -> e.putBoolean("delPageNumbers", on))));
         del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
 
+        // Box model (add-on): collect samples now, a trained model later
+        LinearLayout model = card(body, "🧠", "Box model (add-on)", 0xFF5E35B1);
+        model.addView(toggle("Collect samples during Tick (pictures of each box)",
+                tp.getBoolean("collectSamples", false),
+                on -> tickPrefs(e -> e.putBoolean("collectSamples", on))));
+        sampleCount = label("");
+        model.addView(sampleCount);
+        LinearLayout sampleButtons = new LinearLayout(this);
+        sampleButtons.setOrientation(LinearLayout.HORIZONTAL);
+        sampleButtons.addView(pillButton("Export samples", true, v -> exportSamples()));
+        View clearSamples = pillButton("Clear samples", false, v -> {
+            deleteTree(new java.io.File(getFilesDir(), PickerService.SAMPLES_DIR));
+            updateSampleCount();
+            Toast.makeText(this, "Samples cleared", Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams clearSamplesLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        clearSamplesLp.leftMargin = dp(8);
+        sampleButtons.addView(clearSamples, clearSamplesLp);
+        LinearLayout.LayoutParams sampleButtonsLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sampleButtonsLp.topMargin = dp(10);
+        model.addView(sampleButtons, sampleButtonsLp);
+
         // Last run
         LinearLayout log = card(body, "≡", "Last run", 0xFF6D6A7C);
         lastRun = new TextView(this);
@@ -560,7 +584,100 @@ public class MainActivity extends Activity {
         refresh();
     }
 
+    private TextView sampleCount;
+
+    /** How many samples there are, per label. */
+    private void updateSampleCount() {
+        if (sampleCount == null) return;
+        java.io.File root = new java.io.File(getFilesDir(), PickerService.SAMPLES_DIR);
+        java.io.File[] labels = root.listFiles();
+        StringBuilder sb = new StringBuilder("Samples: ")
+                .append(PickerService.countFiles(root));
+        if (labels != null) {
+            for (java.io.File l : labels) {
+                if (l.isDirectory()) {
+                    sb.append("\n  ").append(l.getName()).append(": ")
+                            .append(PickerService.countFiles(l));
+                }
+            }
+        }
+        sb.append("\nAbout 300+ (with some did_not_tick and not_a_box) is enough to train.");
+        sampleCount.setText(sb.toString());
+    }
+
+    /** Zips all samples into Downloads (DropdownPicker-samples-*.zip) and opens Share. */
+    private void exportSamples() {
+        java.io.File root = new java.io.File(getFilesDir(), PickerService.SAMPLES_DIR);
+        if (PickerService.countFiles(root) == 0) {
+            Toast.makeText(this, "No samples yet - switch on Collect samples and run Tick",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            Toast.makeText(this, "Exporting needs Android 10 or newer", Toast.LENGTH_LONG).show();
+            return;
+        }
+        String name = "DropdownPicker-samples-" + System.currentTimeMillis() + ".zip";
+        android.content.ContentValues values = new android.content.ContentValues();
+        values.put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name);
+        values.put(android.provider.MediaStore.Downloads.MIME_TYPE, "application/zip");
+        values.put(android.provider.MediaStore.Downloads.RELATIVE_PATH,
+                android.os.Environment.DIRECTORY_DOWNLOADS);
+        android.net.Uri uri = getContentResolver().insert(
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) {
+            Toast.makeText(this, "Couldn't create the file in Downloads", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try (java.io.OutputStream os = getContentResolver().openOutputStream(uri);
+             java.util.zip.ZipOutputStream zip = new java.util.zip.ZipOutputStream(os)) {
+            addToZip(zip, root, "");
+        } catch (java.io.IOException e) {
+            Toast.makeText(this, "Export failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+            return;
+        }
+        Toast.makeText(this, "Saved to Downloads/" + name, Toast.LENGTH_LONG).show();
+        Intent send = new Intent(Intent.ACTION_SEND)
+                .setType("application/zip")
+                .putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        send.setClipData(android.content.ClipData.newRawUri("samples", uri));
+        try {
+            startActivity(Intent.createChooser(send, "Send the samples"));
+        } catch (RuntimeException ignored) {
+            // It is in Downloads anyway.
+        }
+    }
+
+    private static void addToZip(java.util.zip.ZipOutputStream zip, java.io.File dir, String path)
+            throws java.io.IOException {
+        java.io.File[] list = dir.listFiles();
+        if (list == null) return;
+        byte[] buf = new byte[8192];
+        for (java.io.File f : list) {
+            String name = path + f.getName();
+            if (f.isDirectory()) {
+                addToZip(zip, f, name + "/");
+                continue;
+            }
+            zip.putNextEntry(new java.util.zip.ZipEntry(name));
+            try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                int n;
+                while ((n = in.read(buf)) > 0) zip.write(buf, 0, n);
+            }
+            zip.closeEntry();
+        }
+    }
+
+    private static void deleteTree(java.io.File f) {
+        java.io.File[] list = f.listFiles();
+        if (list != null) for (java.io.File c : list) deleteTree(c);
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+    }
+
     private void refresh() {
+        updateSampleCount();
         boolean on = isServiceEnabled();
         accessibilityChip.setText((on ? "●  " : "○  ") + "Accessibility " + (on ? "on" : "off"));
         accessibilityChip.setBackground(rounded(on ? 0x33FFFFFF : 0x55D64545, dp(20), 0));
