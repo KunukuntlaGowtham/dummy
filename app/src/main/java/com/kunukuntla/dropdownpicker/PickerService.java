@@ -114,7 +114,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     @Override
     protected void onLoopStopped(String why) {
         if (tickButton != null) tickButton.setText(TICK_LABEL);
-        if ("Stopped".equals(why) || !Keywords.loadChain(this, Keywords.CHAIN_TICK_BDEL)) return;
+        // Only a run that finished normally (end of the page, or the box limit) goes on - not
+        // Stop, and not one that broke off because the screen couldn't be read.
+        boolean finished = why.startsWith("Reached the end") || why.startsWith("Stopped after");
+        if (!finished || !Keywords.loadChain(this, Keywords.CHAIN_TICK_BDEL)) return;
         handler.postDelayed(() -> {
             if (!running && !busy && !isLooping()) backScrollBack(true);
         }, 1000);
@@ -247,6 +250,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         backDeleteButton.setContentDescription("Back twice, then delete the not-ticked rows");
         backDeleteButton.setOnTouchListener(new DragOrTap(() -> {
             if (deleteRunning) endDelete("Stopped");
+            else if (backRunning) endBack("Stopped");
             else backScrollBack(true);
         }, null));
         LinearLayout.LayoutParams backDeleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
@@ -390,6 +394,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     /** Tick button: start or stop the Checkbox Ticker's run. Long-press still shows See. */
     private void toggleTicker() {
+        // Stop is always allowed; a new run not while B+Del is going back or deleting.
+        if (!isLooping() && (backRunning || deleteRunning)) return;
         toggleLoop();
         handler.postDelayed(() -> tickButton.setText(isLooping() ? "■\nStop" : TICK_LABEL), 300);
     }
@@ -400,7 +406,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             stop("Stopped");
             return;
         }
-        if (busy || deleteRunning) return;
+        // Not while B+Del is going back or deleting: both would tap the page at once.
+        if (busy || deleteRunning || backRunning) return;
         busy = true;
         running = true;
         stepMode = step;
@@ -578,6 +585,21 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private static final int BACK_SEARCH_SCROLLS = 20;
     private boolean backRunning;
+    /** Bumped when Back ends, so its waiting steps do nothing after Stop. */
+    private int backGen;
+
+    /** A step of Back: skipped once Back has ended; a crash ends Back instead of the service. */
+    private Runnable backStep(Runnable r) {
+        int gen = backGen;
+        return () -> {
+            if (!backRunning || gen != backGen) return;
+            try {
+                r.run();
+            } catch (Throwable e) {
+                endBack("Back stopped: " + e);
+            }
+        };
+    }
 
     /**
      * B+Del's Back part: tap the page's own "Back" button (scrolling down to it if needed), wait
@@ -590,7 +612,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         backRunning = true;
         backDeleteButton.setAlpha(0.5f);
         showStatus("back: 1st Back");
-        pressPageBack(() -> {
+        backStep(() -> pressPageBack(() -> {
             int scrollMm = Keywords.loadBackScroll(this);
             if (scrollMm > 0) {
                 Rect screen = screenBounds();
@@ -599,15 +621,15 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 drag(x, from, x, Math.max(mm(5), from - mm(scrollMm)), 350);
             }
             // Let the scroll come to rest: a tap on a moving page only stops it.
-            handler.postDelayed(() -> {
+            handler.postDelayed(backStep(() -> {
                 showStatus("back: 2nd Back");
                 pressPageBack(() -> {
                     endBack(null);
                     if (thenDelete) startDelete(this::afterBack);
                     else afterBack();
                 });
-            }, 650);
-        });
+            }), 650);
+        })).run();
     }
 
     /**
@@ -620,7 +642,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             if (back == null) {
                 performGlobalAction(GLOBAL_ACTION_BACK);
                 // Nothing to watch: wait the set time, as before.
-                handler.postDelayed(then, Keywords.loadBackWait(this));
+                handler.postDelayed(backStep(then), Keywords.loadBackWait(this));
                 return;
             }
             Rect r = new Rect();
@@ -645,7 +667,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         int x = screen.centerX();
         int from = screen.height() * 4 / 5;
         drag(x, from, x, screen.height() / 5, 300);
-        handler.postDelayed(() -> findPageBack(scrollsLeft - 1, done), 550);
+        handler.postDelayed(backStep(() -> findPageBack(scrollsLeft - 1, done)), 550);
     }
 
     /** The texts on the page (no positions, so a scroll or a pressed button looks the same). */
@@ -667,7 +689,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private void pollNewPage(AccessibilityNodeInfo back, Set<String> before, Set<String> last,
                              long start, long end, Runnable then) {
-        handler.postDelayed(() -> {
+        handler.postDelayed(backStep(() -> {
             long now = android.os.SystemClock.uptimeMillis();
             Set<String> texts = pageTexts();
             boolean backGone;
@@ -681,11 +703,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             boolean mostlyNew = !texts.isEmpty() && common * 2 < texts.size();
             boolean still = texts.equals(last) && !texts.isEmpty();
             if (((backGone || mostlyNew) && still && now - start >= 400) || now >= end) {
-                handler.postDelayed(then, 200);
+                handler.postDelayed(backStep(then), 200);
             } else {
                 pollNewPage(back, before, texts, start, end, then);
             }
-        }, 150);
+        }), 150);
     }
 
     /** Back (and any Delete after it) finished: go on to Drop when chained. */
@@ -699,6 +721,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private void endBack(String problem) {
         backRunning = false;
+        backGen++;
         backDeleteButton.setAlpha(1f);
         if (problem != null) Toast.makeText(this, problem, Toast.LENGTH_SHORT).show();
     }
@@ -861,12 +884,14 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         setButtonVisible(false);
         handler.postDelayed(deleteStep(() -> capture(bmp -> deleteStep(() -> {
             setButtonVisible(true);
-            Seen seen = new Seen();
-            for (TextNode t : texts(false)) seen.lines.add(new Line(t.bounds, t.text));
             if (bmp == null) {
-                done.accept(seen);
+                // Without a picture the dustbins can't be found or a delete checked: stop and
+                // say why, rather than scrolling about blind.
+                endDelete("No screenshot: " + screenshotError);
                 return;
             }
+            Seen seen = new Seen();
+            for (TextNode t : texts(false)) seen.lines.add(new Line(t.bounds, t.text));
             seen.w = bmp.getWidth();
             seen.h = bmp.getHeight();
             seen.px = new int[seen.w * seen.h];
