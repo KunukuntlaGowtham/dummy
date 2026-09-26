@@ -224,7 +224,11 @@ open class CheckboxService : AccessibilityService() {
         updateBubble()
         status("$why - numbered $attempts, ticked ${attempts - failed.size}")
         toast("$why after $attempts boxes")
+        onLoopStopped(why)
     }
+
+    /** A run ended: [why] is "Stopped" when STOP was pressed, else why it finished by itself. */
+    protected open fun onLoopStopped(why: String) {}
 
     // ---------------------------------------------------------------- a snap at a time
 

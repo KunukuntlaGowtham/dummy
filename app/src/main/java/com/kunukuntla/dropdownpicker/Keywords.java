@@ -54,6 +54,20 @@ final class Keywords {
         prefs(context).edit().putInt("back_scroll", mm).apply();
     }
 
+    /** Links between the buttons: each starts the next one 1 s after it finishes. */
+    static final String CHAIN_DROP_CAL = "chain_drop_cal";
+    static final String CHAIN_CAL_TICK = "auto_tick"; // the earlier "Tick after Continue" switch
+    static final String CHAIN_TICK_BACK = "chain_tick_back";
+    static final String CHAIN_BACK_DROP = "chain_back_drop";
+
+    static boolean loadChain(Context context, String link) {
+        return prefs(context).getBoolean(link, CHAIN_CAL_TICK.equals(link));
+    }
+
+    static void saveChain(Context context, String link, boolean on) {
+        prefs(context).edit().putBoolean(link, on).apply();
+    }
+
     /** Whether to start Tick by itself 1 s after Continue is pressed. */
     static boolean loadAutoTick(Context context) {
         return prefs(context).getBoolean("auto_tick", true);

@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
 
+
 /**
  * Accessibility service that shows floating Start and See buttons. Start takes
  * a screenshot, finds the top-most dropdown's line and taps once 4 mm above it
@@ -108,6 +109,16 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             String want = isLooping() ? "■\nStop" : TICK_LABEL;
             if (!want.contentEquals(tickButton.getText())) tickButton.setText(want);
         }
+    }
+
+    /** The ticker run ended; if it finished by itself (not Stop), go on to Back when chained. */
+    @Override
+    protected void onLoopStopped(String why) {
+        if (tickButton != null) tickButton.setText(TICK_LABEL);
+        if ("Stopped".equals(why) || !Keywords.loadChain(this, Keywords.CHAIN_TICK_BACK)) return;
+        handler.postDelayed(() -> {
+            if (!running && !busy && !isLooping()) backScrollBack();
+        }, 1000);
     }
 
     /** Our floating buttons and outlines, so the ticker never scans or taps them. */
@@ -495,26 +506,104 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private long lastShareAsk;
 
-    /** Back button: press Back, wait, scroll down on that page, press Back again. */
+    private static final int BACK_SEARCH_SCROLLS = 20;
+    private boolean backRunning;
+
+    /**
+     * Back button: tap the page's own "Back" button (scrolling down to it), wait for the other
+     * page, scroll it down, and tap that page's "Back" button too.
+     */
     private void backScrollBack() {
-        if (running || busy) return;
-        int waitMs = Keywords.loadBackWait(this);
-        int scrollMm = Keywords.loadBackScroll(this);
+        if (running || busy || backRunning) return;
+        backRunning = true;
         backButton.setAlpha(0.5f);
-        performGlobalAction(GLOBAL_ACTION_BACK);
-        handler.postDelayed(() -> {
-            if (scrollMm > 0) {
-                Rect screen = screenBounds();
-                int x = screen.centerX();
-                int from = screen.height() * 3 / 4;
-                int to = Math.max(mm(5), from - mm(scrollMm));
-                swipe(x, from, x, to, 250);
+        tapPageBack(BACK_SEARCH_SCROLLS, first -> {
+            if (!first) {
+                endBack("Couldn't find the page's Back button");
+                return;
             }
             handler.postDelayed(() -> {
-                performGlobalAction(GLOBAL_ACTION_BACK);
-                backButton.setAlpha(1f);
-            }, 600);
-        }, waitMs);
+                int scrollMm = Keywords.loadBackScroll(this);
+                if (scrollMm > 0) {
+                    Rect screen = screenBounds();
+                    int x = screen.centerX();
+                    int from = screen.height() * 3 / 4;
+                    int to = Math.max(mm(5), from - mm(scrollMm));
+                    swipe(x, from, x, to, 250);
+                }
+                handler.postDelayed(() -> tapPageBack(BACK_SEARCH_SCROLLS, second -> {
+                    if (!second) {
+                        endBack("Couldn't find the Back button on the second page");
+                        return;
+                    }
+                    endBack(null);
+                    if (Keywords.loadChain(this, Keywords.CHAIN_BACK_DROP)) {
+                        handler.postDelayed(() -> {
+                            if (!running && !busy) run(STEP_DROP);
+                        }, 1000);
+                    }
+                }), 500);
+            }, Keywords.loadBackWait(this));
+        });
+    }
+
+    private void endBack(String problem) {
+        backRunning = false;
+        backButton.setAlpha(1f);
+        if (problem != null) Toast.makeText(this, problem, Toast.LENGTH_SHORT).show();
+    }
+
+    /** Finds the page's "Back" button (the lowest one on screen), scrolling down to it, and taps it. */
+    private void tapPageBack(int scrollsLeft, Consumer<Boolean> done) {
+        AccessibilityNodeInfo back = pageBackButton();
+        if (back != null) {
+            Rect r = new Rect();
+            back.getBoundsInScreen(r);
+            tap(r.centerX(), r.centerY());
+            done.accept(true);
+            return;
+        }
+        if (scrollsLeft <= 0) {
+            done.accept(false);
+            return;
+        }
+        Rect screen = screenBounds();
+        int x = screen.centerX();
+        int from = screen.height() * 3 / 4;
+        swipe(x, from, x, Math.max(mm(5), from - mm(40)), 200);
+        handler.postDelayed(() -> tapPageBack(scrollsLeft - 1, done), 350);
+    }
+
+    /** A visible button whose text is "Back" (or "Go back" / "Previous"), lowest on screen. */
+    private AccessibilityNodeInfo pageBackButton() {
+        Rect screen = screenBounds();
+        AccessibilityNodeInfo best = null;
+        int bestTop = -1;
+        for (AccessibilityNodeInfo root : roots()) {
+            List<AccessibilityNodeInfo> stack = new ArrayList<>();
+            stack.add(root);
+            while (!stack.isEmpty()) {
+                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+                if (n == null) continue;
+                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
+                if (!n.isVisibleToUser()) continue;
+                CharSequence t = n.getText();
+                if (t == null || t.length() == 0) t = n.getContentDescription();
+                if (t == null) continue;
+                String text = Keywords.norm(t.toString());
+                if (!(text.equals("back") || text.equals("go back") || text.equals("previous")
+                        || text.startsWith("back "))) continue;
+                AccessibilityNodeInfo target = clickableSelfOrParent(n);
+                Rect r = new Rect();
+                target.getBoundsInScreen(r);
+                if (r.isEmpty() || r.top < 0 || r.bottom > screen.bottom) continue;
+                if (r.top > bestTop) {
+                    best = target;
+                    bestTop = r.top;
+                }
+            }
+        }
+        return best;
     }
 
     /** Shows the share-your-screen prompt over the current page (no page change). */
@@ -890,8 +979,12 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private void afterDropdown(String message) {
         if (!running) return;
         if (stepMode == STEP_DROP) {
-            // Testing the dropdown on its own.
             stop(message);
+            if (Keywords.loadChain(this, Keywords.CHAIN_DROP_CAL)) {
+                handler.postDelayed(() -> {
+                    if (!running && !busy) run(STEP_CAL);
+                }, 1000);
+            }
             return;
         }
         startCalendar(message);
@@ -1306,7 +1399,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             showHighlight(null, null, r, -1, -1);
             tap(r.centerX(), r.centerY());
             stop(summary + ". Pressed Continue");
-            if (Keywords.loadAutoTick(this)) {
+            if (Keywords.loadChain(this, Keywords.CHAIN_CAL_TICK)) {
                 // Next page loads, then the ticker takes over by itself.
                 handler.postDelayed(() -> {
                     if (!running && !isLooping()) {

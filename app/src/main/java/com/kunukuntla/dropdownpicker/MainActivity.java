@@ -103,8 +103,7 @@ public class MainActivity extends Activity {
         cal.addView(colourChips());
         cal.addView(toggle("Then Available, checkbox, Continue", Keywords.loadFinish(this),
                 on -> Keywords.saveFinish(this, on)));
-        cal.addView(toggle("Start Tick 1 s after Continue", Keywords.loadAutoTick(this),
-                on -> Keywords.saveAutoTick(this, on)));
+
 
         // Tick (Checkbox Ticker)
         SharedPreferences tp = getSharedPreferences(CheckboxService.PREFS, Context.MODE_PRIVATE);
@@ -125,6 +124,17 @@ public class MainActivity extends Activity {
         tick.addView(numberRow("After tick (ms)", tp.getInt("tickWaitMs", 300), "tickWaitMs", 0, 10000));
         tick.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 300), "clearWaitMs", 0, 10000));
         tick.addView(numberRow("After scroll (ms)", tp.getInt("scrollWaitMs", 300), "scrollWaitMs", 0, 10000));
+
+        // Chain: each button starts the next one 1 s after it finishes
+        LinearLayout chain = card(body, "⛓", "Chain", 0xFF6C3FD1);
+        String[][] links = {{Keywords.CHAIN_DROP_CAL, "Drop → Cal"},
+                {Keywords.CHAIN_CAL_TICK, "Cal → Tick (after Continue)"},
+                {Keywords.CHAIN_TICK_BACK, "Tick → Back"},
+                {Keywords.CHAIN_BACK_DROP, "Back → Drop"}};
+        for (String[] link : links) {
+            chain.addView(toggle(link[1], Keywords.loadChain(this, link[0]),
+                    on -> Keywords.saveChain(this, link[0], on)));
+        }
 
         // Back, scroll, Back
         LinearLayout back = card(body, "↩", "Back", 0xFF8D6E63);
