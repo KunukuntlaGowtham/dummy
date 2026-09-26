@@ -835,9 +835,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     /** The row's number on screen and in reach: tap its bin. Otherwise scroll towards it. */
     private void findRow(int target, Seen seen) {
         Rect screen = screenBounds();
-        List<Line> numbers = cardNumbers(seen);
-        Line hit = null;
-        for (Line l : numbers) if (l.number == target) hit = l;
+        List<Bin> numbers = binsOnScreen(seen);
+        Bin hit = null;
+        for (Bin b : numbers) if (b.number == target) hit = b;
         int safeTop = screen.height() / 8;
         int safeBottom = gestureTop() - mm(12);
         if (hit != null && hit.box.top >= safeTop && hit.box.bottom <= safeBottom) {
@@ -870,6 +870,46 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         scrollPage(dy);
         handler.postDelayed(deleteStep(() -> readScreen(s -> findRow(target, s))),
                 pref("scrollWaitMs", 300) + 400L);
+    }
+
+    /** A dustbin on screen, the number on its line (as the Tick reads it), and that number's text. */
+    private static final class Bin {
+        final Rect box;
+        final int number;
+        final Line row;
+
+        Bin(Rect box, int number, Line row) {
+            this.box = box;
+            this.number = number;
+            this.row = row;
+        }
+    }
+
+    /**
+     * Every dustbin on screen, top to bottom, each with its number found the way the Tick
+     * numbers its boxes ({@link #numberBeside}): the nearest number on exactly the same
+     * horizontal line as the bin, from the page's own text and the screenshot's.
+     */
+    private List<Bin> binsOnScreen(Seen seen) {
+        List<Rect> where = new ArrayList<>();
+        List<String> what = new ArrayList<>();
+        for (Line l : seen.lines) {
+            where.add(l.box);
+            what.add(l.text);
+        }
+        List<Bin> out = new ArrayList<>();
+        // A bin sits on a card's number line: look along each line that starts with a number.
+        for (Line row : cardNumbers(seen)) {
+            Rect bin = binBeside(row, seen);
+            if (bin == null) continue;
+            Integer n = numberBeside(bin, where, what);
+            if (n == null || n <= 0) continue;
+            boolean twice = false;
+            for (Bin o : out) if (o.number == n || Rect.intersects(o.box, bin)) twice = true;
+            if (!twice) out.add(new Bin(bin, n, row));
+        }
+        out.sort((a, b) -> Integer.compare(a.box.top, b.box.top));
+        return out;
     }
 
     /** The card numbers on screen, top to bottom: a number on its own in the left part. */
@@ -906,13 +946,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     /** Taps the dustbin on the number's line, then deals with a confirm dialog. */
-    private void tapBin(int target, Line number, Seen seen) {
-        Rect bin = binBeside(number, seen);
-        if (bin == null) {
-            endDelete("No dustbin found on the line of row " + target);
-            return;
-        }
-        Set<String> before = cardText(number, seen);
+    private void tapBin(int target, Bin hit, Seen seen) {
+        Rect bin = hit.box;
+        Set<String> before = cardText(hit.row, seen);
         List<Line> confirmsBefore = confirmLines(seen.lines);
         tapThrough(bin.centerX(), bin.centerY());
         showStatus("delete: row " + target + " - bin tapped");
