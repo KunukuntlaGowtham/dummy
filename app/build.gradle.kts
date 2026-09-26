@@ -45,11 +45,9 @@ android {
 }
 
 dependencies {
-    // On-device text reading (OCR), bundled offline: the recognition model ships inside
-    // the APK, so it works on first launch with no internet and no Google Play services
-    // dependency (unlike the play-services-mlkit-text-recognition variant, which downloads
-    // the model on demand). Adds roughly 15-20 MB to the APK.
-    implementation("com.google.mlkit:text-recognition:16.0.0")
+    // On-device text reading (OCR). The Play Services version keeps the APK small:
+    // the recognition model is downloaded by Google Play services, not bundled.
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
     // The Checkbox Ticker's box-look checks run as unit tests.
     testImplementation("junit:junit:4.13.2")
 }
