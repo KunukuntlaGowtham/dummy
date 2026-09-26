@@ -708,6 +708,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     /** Bumped on every start, so callbacks from a stopped run do nothing. */
     private int deleteGen;
     private int deleteSteps, deleteTries, deleted;
+    /** The list as it is shown ("6, 7, 12"), deleted in that order; the next one is at [deleted]. */
+    private final List<Integer> deleteQueue = new ArrayList<>();
     private String lastScreenKey;
     private Runnable afterDelete;
 
@@ -736,10 +738,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     /**
-     * Deletes the not-ticked rows (the Tick list, febff96): for the smallest row, find its
-     * number on screen (scrolling to it), tap the dustbin on the same line, confirm, and take a
-     * new screenshot to check the card went. The rows after it then move up one, so the list
-     * shifts down one too, and the next row is done the same way. {@code then} runs after.
+     * Deletes the not-ticked list exactly as it is shown ("6, 7, 12" - each row already less
+     * the misses before it, so after 6 goes the old 7 is the new 6 and the list's own next
+     * number is right): one number after another, find it on screen (scrolling to it), tap the
+     * dustbin on its line, confirm, and take a new screenshot to check the card went, then move
+     * on to the next number in the list. {@code then} runs after.
      */
     private void startDelete(Runnable then) {
         if (running || busy || backRunning || deleteRunning || isLooping()) return;
@@ -754,11 +757,13 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         deleteRunning = true;
         deleteGen++;
         deleted = 0;
+        deleteQueue.clear();
+        for (int i = 0; i < rows.size(); i++) deleteQueue.add(rows.get(i) - i);
         deleteTries = 0;
         deleteSteps = 0;
         lastScreenKey = null;
         deleteButton.setText("■\nStop");
-        showStatus("delete: rows " + rows);
+        showStatus("delete: list " + listText());
         handler.postDelayed(deleteStep(this::deleteNext), 300);
     }
 
@@ -797,17 +802,20 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     private void deleteNext() {
-        List<Integer> rows = notTickedRows();
-        if (rows.isEmpty()) {
-            endDelete("Deleted " + deleted + " - not-ticked list is empty");
-            return;
+        int target = deleteQueue.get(deleted);
+        showStatus("delete " + target + " (" + (deleted + 1) + " of " + deleteQueue.size()
+                + ") - list " + listText());
+        readScreen(seen -> findRow(target, seen));
+    }
+
+    /** The list being deleted, the ones done ticked off: "✓6, ✓7, 12". */
+    private String listText() {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < deleteQueue.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(i < deleted ? "✓" : "").append(deleteQueue.get(i));
         }
-        if (deleted >= Math.max(1, tickPrefs().getInt("maxDeletes", 20))) {
-            endDelete("Stopped after " + deleted + " deletes");
-            return;
-        }
-        showStatus("delete: looking for " + rows.get(0));
-        readScreen(seen -> findRow(rows.get(0), seen));
+        return sb.toString();
     }
 
     /** Takes a screenshot (our buttons hidden) and reads it, together with the page's own text. */
@@ -1097,19 +1105,23 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private void rowDeleted(int target, Seen seen) {
         deleted++;
         deleteTries = 0;
+        // Keep the saved list to the ones not deleted yet, so a stopped run carries on from
+        // there. The rows after the deleted one moved up one; what the list shows stays the same.
         List<Integer> rows = new ArrayList<>();
         for (int r : notTickedRows()) {
             if (r < target) rows.add(r);
             else if (r > target) rows.add(r - 1);
         }
-        replaceNotTickedRows(rows);
-        showStatus("delete: row " + target + " deleted (" + deleted + ")");
-        if (rows.isEmpty()) {
-            endDelete("Deleted " + deleted + " - not-ticked list is empty");
+        replaceNotTickedRows(deleted >= deleteQueue.size() ? new ArrayList<>() : rows);
+        if (deleted >= deleteQueue.size()) {
+            endDelete("Deleted " + listText() + " - done");
         } else if (deleted >= Math.max(1, tickPrefs().getInt("maxDeletes", 20))) {
             endDelete("Stopped after " + deleted + " deletes");
         } else {
-            findRow(rows.get(0), seen); // this screenshot already shows the page as it is now
+            int next = deleteQueue.get(deleted);
+            showStatus("delete: " + target + " deleted - next " + next + " (" + (deleted + 1)
+                    + " of " + deleteQueue.size() + ") - list " + listText());
+            findRow(next, seen); // this screenshot already shows the page as it is now
         }
     }
 

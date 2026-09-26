@@ -206,6 +206,8 @@ open class CheckboxService : AccessibilityService() {
         attempts = 0
         failed.clear()
         pageNumbering = prefs().getBoolean("rowNumbers", false)
+        // Every Tick run starts its own not-ticked list: nothing left over from an earlier one.
+        if (pageNumbering) saveFailedRows(emptySet())
         pageNumbersSeen.clear()
         showNumbers()
         onScreen.clear()
@@ -243,8 +245,8 @@ open class CheckboxService : AccessibilityService() {
     private var pageNumbering = false
 
     /**
-     * With page numbering, the row numbers of boxes that did not tick, kept across runs: a
-     * re-check adds new misses and drops rows that ticked this time. Cleared from the app.
+     * With page numbering, the row numbers of boxes that did not tick in this Tick run (saved,
+     * so Delete can use them after Back). Emptied when a Tick run starts, or from the app.
      */
     private fun failedRows(): MutableSet<Int> =
         (prefs().getString(FAILED_ROWS, "") ?: "").split(",")
