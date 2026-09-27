@@ -214,7 +214,6 @@ open class CheckboxService : AccessibilityService() {
         givenUpRows.clear()
         notBoxes = 0
         retryPass = false
-        atLimit = false
         showNumbers()
         onScreen.clear()
         oldLooks.clear()
@@ -340,17 +339,9 @@ open class CheckboxService : AccessibilityService() {
     private fun numberSnap(candidates: List<Pair<Rect, BoxLook.Look?>>, labels: List<Int?>) {
         val limit = maxBoxes()
         onScreen.clear()
-        var pastLimit = false
         for ((k, c) in candidates.withIndex()) {
-            // Order count: at most "limit" boxes. By the page's number: up to row "limit".
-            if (!pageNumbering && attempts >= limit) break
-            if (pastLimit) continue // below the last row wanted
+            if (attempts >= limit) break
             val label = labels.getOrNull(k)
-            if (pageNumbering && label != null && label >= limit) {
-                atLimit = true
-                pastLimit = true
-                if (label > limit) continue
-            }
             if (label != null) {
                 // Known by its number: skip only one already ticked or already given up on.
                 if (label in doneRows || label in givenUpRows) continue
@@ -367,9 +358,7 @@ open class CheckboxService : AccessibilityService() {
         }
         run {
             if (onScreen.isEmpty()) {
-                if (atLimit) {
-                    stopLoop("Stopped at row $limit")
-                } else if (!pageNumbering && attempts >= limit) {
+                if (attempts >= limit) {
                     stopLoop("Stopped after $limit boxes")
                 } else {
                     nothingNew()
@@ -406,7 +395,7 @@ open class CheckboxService : AccessibilityService() {
             status("box ${name(item)}: tapped" + (if (ok) "" else " - refused"))
             main.postDelayed({
                 if (looping) afterTick { tickNext(i + 1) }
-            }, waitMs(prefs(), "tickWaitMs", 200))
+            }, waitMs(prefs(), "tickWaitMs", 300))
         }
     }
 
@@ -461,11 +450,7 @@ open class CheckboxService : AccessibilityService() {
                 }
             }
             val limit = maxBoxes()
-            when {
-                atLimit -> stopLoop("Stopped at row $limit")
-                !pageNumbering && attempts >= limit -> stopLoop("Stopped after $limit boxes")
-                else -> scrollOn()
-            }
+            if (attempts >= limit) stopLoop("Stopped after $limit boxes") else scrollOn()
         }
     }
 
@@ -476,7 +461,6 @@ open class CheckboxService : AccessibilityService() {
     private val doneRows = HashSet<Int>()
     private val givenUpRows = HashSet<Int>()
     private var retryPass = false
-    private var atLimit = false                         // the row "Max boxes" has been reached
     private var snapLowest = 0
     private var notBoxes = 0                            // squares not shaped like a box
 
@@ -544,10 +528,9 @@ open class CheckboxService : AccessibilityService() {
         if (!looping) return
         val lowest = maxOf(snapLowest, onScreen.maxOfOrNull { it.box.bottom } ?: 0)
         val h = resources.displayMetrics.heightPixels
-        // At most "Scroll per screen" (65% by default): a little overlap, so a box the finder
-        // missed once is still on the next picture instead of scrolling away unseen.
-        val pct = prefs().getInt("scrollPct", 65).coerceIn(20, 90)
-        val distance = (lowest + dp(16) - dp(72)).coerceIn(dp(48), h * pct / 100)
+        // At most half a screen: every box is on at least two pictures, so one the finder
+        // missed once gets a second chance instead of scrolling away unseen.
+        val distance = (lowest + dp(16) - dp(72)).coerceIn(dp(48), h / 2)
         scrollBy(distance)
     }
 
@@ -568,7 +551,7 @@ open class CheckboxService : AccessibilityService() {
         swipeUp(distance)
         scrolledOnce = true
         lastBox = null
-        main.postDelayed({ snap() }, waitMs(prefs(), "scrollWaitMs", 300) + 250L)
+        main.postDelayed({ snap() }, waitMs(prefs(), "scrollWaitMs", 300) + 400L)
     }
 
     /**
@@ -582,14 +565,14 @@ open class CheckboxService : AccessibilityService() {
         val to = (from - distance).coerceAtLeast(metrics.heightPixels * 0.1f)
         try {
             val path = Path().apply { moveTo(x, from); lineTo(x, to) }
-            val drag = GestureDescription.StrokeDescription(path, 0L, 350L, true)
+            val drag = GestureDescription.StrokeDescription(path, 0L, 500L, true)
             dispatchGesture(
                 GestureDescription.Builder().addStroke(drag).build(),
                 object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         try {
                             val hold = Path().apply { moveTo(x, to) }
-                            val still = drag.continueStroke(hold, 0L, 120L, false)
+                            val still = drag.continueStroke(hold, 0L, 200L, false)
                             dispatchGesture(
                                 GestureDescription.Builder().addStroke(still).build(), null, null
                             )
@@ -1037,7 +1020,7 @@ open class CheckboxService : AccessibilityService() {
                 status("pop-up: tapped ${box.centerX()},${box.centerY()}")
                 // Check it closed; if not, one more tap (looksLeft 0 marks the second tap).
                 main.postDelayed({ clearPopup(if (tappedOnce) 0 else 1, true, next) },
-                    waitMs(p, "clearWaitMs", 250))
+                    waitMs(p, "clearWaitMs", 300))
             }
         }
     }

@@ -160,10 +160,9 @@ public class MainActivity extends Activity {
                 }));
         tickAdv.addView(numberRow("Colour tolerance", tp.getInt("colourTol", 60), "colourTol", 0, 200));
         tickAdv.addView(numberRow("Ignore top of screen (%)", tp.getInt("skipTopPct", 20), "skipTopPct", 0, 90));
-        tickAdv.addView(numberRow("Last row (or max boxes)", tp.getInt("maxBoxes", 500), "maxBoxes", 1, 500));
-        tickAdv.addView(numberRow("Scroll per screen (%)", tp.getInt("scrollPct", 65), "scrollPct", 20, 90));
-        tickAdv.addView(numberRow("After tick (ms)", tp.getInt("tickWaitMs", 200), "tickWaitMs", 0, 10000));
-        tickAdv.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 250), "clearWaitMs", 0, 10000));
+        tickAdv.addView(numberRow("Max boxes", tp.getInt("maxBoxes", 15), "maxBoxes", 1, 500));
+        tickAdv.addView(numberRow("After tick (ms)", tp.getInt("tickWaitMs", 300), "tickWaitMs", 0, 10000));
+        tickAdv.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 300), "clearWaitMs", 0, 10000));
         tickAdv.addView(numberRow("After scroll (ms)", tp.getInt("scrollWaitMs", 300), "scrollWaitMs", 0, 10000));
 
         // Chain: each button starts the next one 1 s after it finishes
