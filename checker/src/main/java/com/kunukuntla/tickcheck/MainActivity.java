@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
                 + "ticks tap the purple ☑+ Save button (4-5 times over the whole page).\n"
                 + "3. At the end tap the green 📋 List button: the rows not ticked, from all the saves. "
                 + "Copy numbers copies them; New list starts over.\n\n"
-                + "It only reads the page through accessibility - nothing is tapped or changed.");
+                + "Each Save takes a screenshot: the empty boxes on it (like the main app's Tick) and the numbers beside them. Nothing is tapped or changed. Android 11 or newer.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));

@@ -40,3 +40,9 @@ android {
     }
 }
 
+
+dependencies {
+    // Reads the row numbers off the screenshot. The Play Services version keeps the APK
+    // small: the model comes from Play services.
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+}

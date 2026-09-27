@@ -48,6 +48,20 @@ final class Rows {
         return out;
     }
 
+    /** Numbers the page itself reports on screen (text that is just a number), with where. */
+    static List<Snap.Word> numbersOnScreen(AccessibilityService service) {
+        List<Snap.Word> out = new ArrayList<>();
+        for (AccessibilityNodeInfo n : nodes(service)) {
+            String l = label(n);
+            if (!l.matches(ROW_NUMBER)) continue;
+            Rect r = new Rect();
+            n.getBoundsInScreen(r);
+            if (r.width() <= 0 || r.height() <= 0 || !n.isVisibleToUser()) continue;
+            out.add(new Snap.Word(l, r));
+        }
+        return out;
+    }
+
     private static boolean isCheckbox(AccessibilityNodeInfo n) {
         String cls = n.getClassName() == null ? "" : n.getClassName().toString();
         if (cls.endsWith("RadioButton") || cls.endsWith("Switch")) return false;
