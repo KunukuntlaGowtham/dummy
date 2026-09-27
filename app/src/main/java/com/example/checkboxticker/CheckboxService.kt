@@ -210,6 +210,7 @@ open class CheckboxService : AccessibilityService() {
         // Every Tick run starts its own not-ticked list: nothing left over from an earlier one.
         saveFailedRows(emptySet())
         pageNumbersSeen.clear()
+        tickedHere.clear()
         atLimit = false
         showNumbers()
         onScreen.clear()
@@ -388,6 +389,7 @@ open class CheckboxService : AccessibilityService() {
         notePageColour(cached != null) {
             if (!looping) return@notePageColour
             tickedBox = Rect(item.box)
+            tickedHere.add(Rect(item.box))
             val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
             if (ok) ticked++
             status("box ${name(item)}: tapped" + (if (ok) "" else " - refused"))
@@ -493,6 +495,7 @@ open class CheckboxService : AccessibilityService() {
         if (!looping) return
         status("scrolling")
         swipeUp(distance)
+        tickedHere.clear()
         scrolledOnce = true
         lastBox = null
         main.postDelayed({ snap() }, waitMs(prefs(), "scrollWaitMs", 300) + 400L)
@@ -772,6 +775,7 @@ open class CheckboxService : AccessibilityService() {
         }
 
         running = true
+        tickedHere.clear()
         silentRun = fromAuto
         updateBubble()
 
@@ -809,6 +813,7 @@ open class CheckboxService : AccessibilityService() {
         }
         val box = boxes[i]
         tickedBox = Rect(box)
+        tickedHere.add(Rect(box))
         val ok = gestureTap(box.exactCenterX(), box.exactCenterY())
         main.postDelayed(
             { afterTick { tapNext(boxes, i + 1, gap, done + if (ok) 1 else 0) } },
@@ -840,6 +845,7 @@ open class CheckboxService : AccessibilityService() {
                 } else {
                     showMarkers(listOf(box))
                     tickedBox = Rect(box)
+                    tickedHere.add(Rect(box))
                     val ok = gestureTap(box.exactCenterX(), box.exactCenterY())
                     val gap = p.getInt("gapMs", 250).coerceIn(0, 5000).toLong().coerceAtLeast(60L)
                     main.postDelayed(
@@ -901,16 +907,26 @@ open class CheckboxService : AccessibilityService() {
     private var tickedBox: Rect? = null
 
     /**
+     * Every box ticked on this screen so far. A ticked box turns the pop-up's colour too, and
+     * while its tick animates its patch changes shape - so without this, an earlier box could
+     * pass for a "new" pop-up button and be tapped again, unticking it (only the last box of a
+     * screen stayed ticked). Cleared when the page scrolls, as the boxes move.
+     */
+    private val tickedHere = ArrayList<Rect>()
+
+    /**
      * The pop-up's button: the biggest patch of the colour that the page did not already have,
      * never the box just ticked (a ticked box can turn that colour itself, and tapping it
      * would untick it). Button-shaped (wider than tall) patches come first.
      */
     private fun popupButton(patches: List<Pair<Rect, Int>>, allowSquare: Boolean): Rect? {
         val near = dp(8)
-        val ticked = tickedBox?.let { Rect(it).apply { inset(-dp(10), -dp(10)) } }
+        val ticked = (tickedHere + listOfNotNull(tickedBox)).map {
+            Rect(it).apply { inset(-dp(10), -dp(10)) }
+        }
         val fresh = patches.filter { (r, _) ->
             !hitsBubble(r) &&
-                (ticked == null || !Rect.intersects(ticked, r)) &&
+                ticked.none { Rect.intersects(it, r) } &&
                 pagePatches.none {
                     abs(it.centerX() - r.centerX()) <= near && abs(it.centerY() - r.centerY()) <= near &&
                         abs(it.width() - r.width()) <= near && abs(it.height() - r.height()) <= near
