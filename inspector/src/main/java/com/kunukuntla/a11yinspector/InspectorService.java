@@ -62,6 +62,13 @@ public class InspectorService extends AccessibilityService {
         if (ticker != null) ticker.stop("Stopped");
         if (deleter != null) deleter.stop("Stopped");
         if (teacher != null) teacher.cancel();
+        if (booker != null) booker.stop("Stopped");
+        if (bookButton != null) {
+            try {
+                windowManager.removeView(bookButton);
+            } catch (RuntimeException ignored) {
+            }
+        }
         if (teachButton != null) {
             try {
                 windowManager.removeView(teachButton);
@@ -342,6 +349,138 @@ public class InspectorService extends AccessibilityService {
             else showTeachChoices();
         });
         windowManager.addView(teachButton, lp);
+        showBookButton();
+    }
+
+    // ---- the Book button: dropdown option, date, checkbox, radio, Continue --------------
+
+    private TextView bookButton;
+    private Booker booker;
+
+    private void showBookButton() {
+        booker = new Booker(this, (summary, log) -> {
+            try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
+                out.write(log.getBytes());
+            } catch (java.io.IOException ignored) {
+            }
+            bookButton.setText("📅\nBook");
+            showCard(summary);
+        });
+        bookButton = new TextView(this);
+        bookButton.setText("📅\nBook");
+        bookButton.setTextColor(Color.WHITE);
+        bookButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        bookButton.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(0xEE1565C0);
+        bg.setStroke(dp(2), 0x66FFFFFF);
+        bookButton.setBackground(bg);
+        bookButton.setElevation(dp(4));
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(dp(56), dp(56),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.x = dp(12);
+        lp.y = dp(424);
+        bookButton.setOnClickListener(v -> {
+            closeCard();
+            if (booker.isRunning()) booker.stop("Stopped");
+            else askBooking();
+        });
+        windowManager.addView(bookButton, lp);
+    }
+
+    /** Asks for the dropdown option, the date and the radio button, then fills the page. */
+    private void askBooking() {
+        closeAsk();
+        android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(16), dp(18), dp(10));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF81B1D22);
+        bg.setCornerRadius(dp(16));
+        box.setBackground(bg);
+        TextView title = new TextView(this);
+        title.setText("Book: fill this page");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        box.addView(title);
+        TextView hint = new TextView(this);
+        hint.setText("Chooses the dropdown option, the date (moving months if needed), ticks the "
+                + "checkbox, picks the radio button, then presses Continue. Leave a box empty to skip it.");
+        hint.setTextColor(0xCCFFFFFF);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        hint.setPadding(0, dp(4), 0, dp(6));
+        box.addView(hint);
+        android.widget.EditText option = field(box, "Dropdown option (a few of its words)",
+                "e.g. Tirumala Male Only", prefs.getString("book_option", ""), android.text.InputType.TYPE_CLASS_TEXT);
+        android.widget.EditText date = field(box, "Date", "e.g. 15/10/2026",
+                prefs.getString("book_date", ""), android.text.InputType.TYPE_CLASS_DATETIME
+                        | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
+        android.widget.EditText radio = field(box, "Radio button (a few of its words; empty = the first)",
+                "e.g. Batch A", prefs.getString("book_radio", ""), android.text.InputType.TYPE_CLASS_TEXT);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.END);
+        row.addView(cardButton("Cancel", v -> closeAsk()));
+        row.addView(cardButton("Start", v -> {
+            Booker.Plan plan = new Booker.Plan();
+            plan.option = option.getText().toString().trim();
+            plan.radio = radio.getText().toString().trim();
+            String d = date.getText().toString().trim();
+            if (!d.isEmpty() && !Booker.parseDate(d, plan)) {
+                Toast.makeText(this, "Type the date like 15/10/2026", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            prefs.edit().putString("book_option", plan.option).putString("book_date", d)
+                    .putString("book_radio", plan.radio).apply();
+            closeAsk();
+            bookButton.setText("■\nStop");
+            handler.postDelayed(() -> booker.start(plan), 400); // the keyboard goes down first
+        }));
+        box.addView(row);
+
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                getResources().getDisplayMetrics().widthPixels * 90 / 100,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        lp.y = dp(90);
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
+        try {
+            windowManager.addView(box, lp);
+            ask = box;
+            option.requestFocus();
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "Couldn't show the form: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private android.widget.EditText field(LinearLayout box, String label, String hint, String value, int type) {
+        TextView l = new TextView(this);
+        l.setText(label);
+        l.setTextColor(0xFF9AE6A1);
+        l.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        l.setPadding(0, dp(8), 0, 0);
+        box.addView(l);
+        android.widget.EditText e = new android.widget.EditText(this);
+        e.setInputType(type);
+        e.setSingleLine(true);
+        e.setText(value);
+        e.setHint(hint);
+        e.setTextColor(Color.WHITE);
+        e.setHintTextColor(0x88FFFFFF);
+        e.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        box.addView(e, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+        return e;
     }
 
     private void showTeachChoices() {
