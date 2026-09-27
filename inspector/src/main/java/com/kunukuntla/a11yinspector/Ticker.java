@@ -194,6 +194,7 @@ final class Ticker {
                     clearPopups(before, base, looksLeft - 1, then);
                 } else {
                     if (now == null) log("pop-up: no screenshot (Android 11+ needed) - not checked");
+                    else log("pop-up: no new purple button found");
                     then.run();
                 }
             });
@@ -209,7 +210,15 @@ final class Ticker {
         int near = dp(8), pad = dp(12);
         Rect best = null, bestSquare = null;
         int boxArea = dp(30) * dp(30);
+        Rect screen = screen();
+        int topBar = barHeight("status_bar_height") + dp(6);
+        int bottomBar = screen.height() - barHeight("navigation_bar_height") - dp(6);
+        StringBuilder seenNew = new StringBuilder();
         for (Rect r : now) {
+            // Not a bar: the status bar (the app colours it when a pop-up opens), the
+            // navigation strip, or anything nearly the full width of the screen (a header).
+            if (r.bottom <= topBar || r.top < topBar / 2 || r.top >= bottomBar) continue;
+            if (r.width() >= screen.width() * 9 / 10) continue;
             boolean old = false;
             for (Rect b : base) {
                 if (Math.abs(b.centerX() - r.centerX()) <= near && Math.abs(b.centerY() - r.centerY()) <= near
@@ -229,6 +238,8 @@ final class Ticker {
                 }
             }
             if (isBox) continue;
+            seenNew.append(' ').append(r.centerX()).append(',').append(r.centerY())
+                    .append(" (").append(r.width()).append('x').append(r.height()).append(')');
             long area = (long) r.width() * r.height();
             if (r.width() >= r.height() * 3 / 2) {
                 if (best == null || area > (long) best.width() * best.height()) best = r;
@@ -236,7 +247,13 @@ final class Ticker {
                 if (bestSquare == null || area > (long) bestSquare.width() * bestSquare.height()) bestSquare = r;
             }
         }
+        if (seenNew.length() > 0) log("pop-up: new purple patches:" + seenNew);
         return best != null ? best : bestSquare;
+    }
+
+    private int barHeight(String name) {
+        int id = service.getResources().getIdentifier(name, "dimen", "android");
+        return id > 0 ? service.getResources().getDimensionPixelSize(id) : dp(24);
     }
 
     private int dp(int v) {
