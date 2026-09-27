@@ -271,8 +271,8 @@ public class CheckService extends AccessibilityService {
         List<String> not = notTicked();
         int ticked = 0;
         for (boolean t : state.values()) if (t) ticked++;
-        return (not.isEmpty() ? "✅ None left unticked" : "☐ " + String.join(", ", not))
-                + "\n" + "not ticked · ☑ " + ticked + " of " + state.size() + " rows seen · on screen now: ☐"
+        return (not.isEmpty() ? "✅ None left unticked" : "☐ " + String.join(", ", shifted(not)))
+                + "\n" + "rows " + String.join(", ", not) + " not ticked · ☑ " + ticked + " of " + state.size() + " rows seen · on screen now: ☐"
                 + emptyNow + " ☑" + tickedNow;
     }
 
@@ -331,6 +331,16 @@ public class CheckService extends AccessibilityService {
         return keys;
     }
 
+    /**
+     * The not-ticked rows as they will be numbered when each is deleted in turn from the top:
+     * every earlier deletion moves the later rows up one. 6, 8, 10 -> 6, 7, 8; 4, 10, 12 -> 4, 9, 10.
+     */
+    private static List<String> shifted(List<String> rows) {
+        List<String> out = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) out.add(String.valueOf(Integer.parseInt(rows.get(i)) - i));
+        return out;
+    }
+
     private List<String> notTicked() {
         List<String> out = new ArrayList<>();
         for (String k : sortedKeys()) if (!state.get(k)) out.add(k);
@@ -348,14 +358,16 @@ public class CheckService extends AccessibilityService {
         StringBuilder text = new StringBuilder();
         text.append(state.size()).append(" rows seen\n\n");
         if (not.isEmpty()) text.append("✅ All ticked\n");
-        else text.append("☐ NOT ticked (").append(not.size()).append("):\n").append(String.join(", ", not)).append('\n');
+        else text.append("☐ NOT ticked (").append(not.size()).append("):\n")
+                .append(String.join(", ", shifted(not))).append("\n(rows ").append(String.join(", ", not))
+                .append(" - each one less by the not-ticked rows before it)\n");
         if (!yes.isEmpty()) text.append("\n☑ Ticked (").append(yes.size()).append("): ").append(String.join(", ", yes)).append('\n');
         String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date());
         try (FileOutputStream out = openFileOutput(RESULT_FILE, MODE_PRIVATE)) {
             out.write(("Tick Check - " + stamp + "\n\n" + text).getBytes());
         } catch (java.io.IOException ignored) {
         }
-        showCard(text.toString().trim(), String.join(", ", not));
+        showCard(text.toString().trim(), String.join(", ", shifted(not)));
     }
 
     private void newList() {
