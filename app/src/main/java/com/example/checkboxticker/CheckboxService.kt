@@ -395,7 +395,7 @@ open class CheckboxService : AccessibilityService() {
             status("box ${name(item)}: tapped" + (if (ok) "" else " - refused"))
             main.postDelayed({
                 if (looping) afterTick { tickNext(i + 1) }
-            }, waitMs(prefs(), "tickWaitMs", 300))
+            }, waitMs(prefs(), "tickWaitMs", 200))
         }
     }
 
@@ -528,9 +528,10 @@ open class CheckboxService : AccessibilityService() {
         if (!looping) return
         val lowest = maxOf(snapLowest, onScreen.maxOfOrNull { it.box.bottom } ?: 0)
         val h = resources.displayMetrics.heightPixels
-        // At most half a screen: every box is on at least two pictures, so one the finder
-        // missed once gets a second chance instead of scrolling away unseen.
-        val distance = (lowest + dp(16) - dp(72)).coerceIn(dp(48), h / 2)
+        // At most "Scroll per screen" (65% by default): a little overlap, so a box the finder
+        // missed once is still on the next picture instead of scrolling away unseen.
+        val pct = prefs().getInt("scrollPct", 65).coerceIn(20, 90)
+        val distance = (lowest + dp(16) - dp(72)).coerceIn(dp(48), h * pct / 100)
         scrollBy(distance)
     }
 
@@ -551,7 +552,7 @@ open class CheckboxService : AccessibilityService() {
         swipeUp(distance)
         scrolledOnce = true
         lastBox = null
-        main.postDelayed({ snap() }, waitMs(prefs(), "scrollWaitMs", 300) + 400L)
+        main.postDelayed({ snap() }, waitMs(prefs(), "scrollWaitMs", 300) + 250L)
     }
 
     /**
@@ -565,14 +566,14 @@ open class CheckboxService : AccessibilityService() {
         val to = (from - distance).coerceAtLeast(metrics.heightPixels * 0.1f)
         try {
             val path = Path().apply { moveTo(x, from); lineTo(x, to) }
-            val drag = GestureDescription.StrokeDescription(path, 0L, 500L, true)
+            val drag = GestureDescription.StrokeDescription(path, 0L, 350L, true)
             dispatchGesture(
                 GestureDescription.Builder().addStroke(drag).build(),
                 object : AccessibilityService.GestureResultCallback() {
                     override fun onCompleted(gestureDescription: GestureDescription?) {
                         try {
                             val hold = Path().apply { moveTo(x, to) }
-                            val still = drag.continueStroke(hold, 0L, 200L, false)
+                            val still = drag.continueStroke(hold, 0L, 120L, false)
                             dispatchGesture(
                                 GestureDescription.Builder().addStroke(still).build(), null, null
                             )
@@ -1020,7 +1021,7 @@ open class CheckboxService : AccessibilityService() {
                 status("pop-up: tapped ${box.centerX()},${box.centerY()}")
                 // Check it closed; if not, one more tap (looksLeft 0 marks the second tap).
                 main.postDelayed({ clearPopup(if (tappedOnce) 0 else 1, true, next) },
-                    waitMs(p, "clearWaitMs", 300))
+                    waitMs(p, "clearWaitMs", 250))
             }
         }
     }
