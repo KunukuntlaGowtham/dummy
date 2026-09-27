@@ -46,7 +46,7 @@ final class Ticker {
     private final List<String> failedRows = new ArrayList<>();
     private String lastScreen = "";
     private final ScreenWords words;
-    /** Where the page shows "OK" by itself (read once per screen): not a pop-up's. */
+    /** Where the page shows an "OK" that isn't a pop-up's (it stayed after 3 presses). */
     private List<Rect> pageOks;
     /** A pop-up came after an earlier tick this run: wait a little longer for the next one. */
     private boolean popupsSeen;
@@ -74,10 +74,11 @@ final class Ticker {
         failedRows.clear();
         ticked = notTicked = popups = stillScreens = 0;
         lastScreen = "";
-        pageOks = null;
+        pageOks = new ArrayList<>();
+        showTries = endChecks = 0;
         popupsSeen = false;
         quietBoxes = 0;
-        okSpot = null;
+        okSpot = lastOk = null;
         okLook = okGone = null;
         log("Tick: clicking every empty checkbox directly, clearing pop-ups");
         later(this::next, 100);
@@ -102,6 +103,26 @@ final class Ticker {
     private void next() {
         Box b = firstEmptyBox();
         if (b == null) {
+            // The page reports its checkboxes further down too (0 high while off screen):
+            // bring the next one on screen instead of scrolling blind, and stop as soon as
+            // the page has no empty one left at all.
+            AccessibilityNodeInfo further = anyEmptyBox();
+            if (further == null) {
+                if (endChecks++ >= 1) {
+                    stop("No empty checkbox left on the page");
+                } else {
+                    log("no empty checkbox left on the page - one scroll to be sure");
+                    scroll();
+                    later(this::next, 450);
+                }
+                return;
+            }
+            if (showTries++ < 2) {
+                log("an empty checkbox further on - bringing it on screen");
+                further.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+                later(this::next, 300);
+                return;
+            }
             String screen = screenKey();
             if (screen.equals(lastScreen) && ++stillScreens >= 2) {
                 stop("No empty checkbox left (the page no longer scrolls)");
@@ -111,22 +132,25 @@ final class Ticker {
             lastScreen = screen;
             log("no empty checkbox on this screen - scrolling on");
             scroll();
-            pageOks = null; // a new screen: read its words again
-            later(this::next, 600);
+            showTries = 0;
+            later(this::next, 450);
             return;
         }
+        showTries = 0;
+        endChecks = 0;
         tried.add(b.node);
-        Set<String> before = clickableKeys();
-        // Any OK already on the page before the tick is not a pop-up's (read once a screen).
-        if (pageOks != null) {
-            tickBox(b, before, pageOks);
-            return;
+        tickBox(b, clickableKeys(), pageOks);
+    }
+
+    private int showTries, endChecks;
+
+    /** Any empty, enabled checkbox not tried yet, on screen or not. */
+    private AccessibilityNodeInfo anyEmptyBox() {
+        for (Node n : all()) {
+            AccessibilityNodeInfo node = n.node;
+            if (isCheckbox(node) && !node.isChecked() && node.isEnabled() && !tried.contains(node)) return node;
         }
-        words.read(seen -> {
-            if (!running) return;
-            pageOks = okWords(seen);
-            tickBox(b, before, pageOks);
-        });
+        return null;
     }
 
     /** Pop-up taps after the current box - at most 3, so an OK that won't go can't loop. */
@@ -188,7 +212,10 @@ final class Ticker {
      */
     private void clearPopups(Set<String> before, List<Rect> oldOks, int looksLeft, Runnable then) {
         if (popupTaps >= 3) {
-            log("pop-up: 3 taps after this box already - going on");
+            log("pop-up: 3 taps after this box already - going on; that OK is ignored from now on");
+            if (lastOk != null) oldOks.add(new Rect(lastOk));
+            okSpot = null;
+            okLook = okGone = null;
             later(then, 150);
             return;
         }
@@ -229,6 +256,7 @@ final class Ticker {
                     }
                 }
                 if (ok != null) {
+                    lastOk = new Rect(ok);
                     log("pop-up: pressing OK at " + ok.centerX() + "," + ok.centerY() + how);
                     tap(ok.centerX(), ok.centerY());
                     popups++;
@@ -239,8 +267,12 @@ final class Ticker {
                         later(() -> words.shot(false, after -> {
                             if (!running) return;
                             double[] g = after == null || okSpot == null ? null : after.grid(okSpot);
-                            if (g != null && okLook != null && BinFinder.similarity(g, okLook) < 0.97) okGone = g;
-                            clearPopups(clickableKeys(), oldOks, 1, then); // a second pop-up may follow
+                            if (g != null && okLook != null && BinFinder.similarity(g, okLook) < 0.97) {
+                                okGone = g;
+                                then.run();
+                            } else {
+                                clearPopups(clickableKeys(), oldOks, 1, then); // still there, or another
+                            }
                         }), 150);
                     } else {
                         // Known pop-up: straight on; one left open is found at the next box.
@@ -259,7 +291,7 @@ final class Ticker {
     }
 
     /** Where the pop-up's OK was, a little bigger (its button), and how it looked. */
-    private Rect okSpot;
+    private Rect okSpot, lastOk;
     private double[] okLook, okGone;
 
     private Rect grow(Rect r) {

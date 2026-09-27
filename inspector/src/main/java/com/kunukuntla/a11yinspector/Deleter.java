@@ -33,6 +33,8 @@ final class Deleter {
     private static final String[] POPUP_WORDS = {"yes", "yes delete", "yes remove", "delete",
             "remove", "confirm", "ok", "okay", "done", "got it", "close"};
     private static final int POPUPS = 2;
+    /** The page's own words (read once at the start): a Yes / OK among them isn't a pop-up's. */
+    private List<ScreenWords.Word> pageWords = new ArrayList<>();
 
     private final AccessibilityService service;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -70,7 +72,12 @@ final class Deleter {
         Collections.sort(sorted, Collections.reverseOrder());
         for (Integer n : sorted) todo.add(String.valueOf(n));
         log("Delete rows " + String.join(", ", todo) + " (highest first)");
-        later(this::nextRow, 50);
+        known.clear();
+        words.read(seen -> {
+            if (!running) return;
+            pageWords = seen == null ? new ArrayList<>() : seen;
+            nextRow();
+        });
     }
 
     void stop(String why) {
@@ -129,7 +136,7 @@ final class Deleter {
             return;
         }
         Set<String> before = clickableKeys();
-        words.shot(true, shot -> {
+        words.shot(false, shot -> {
             if (!running) return;
             if (shot == null) {
                 fail(num, "couldn't take a screenshot to find its dustbin (Android 11+ needed)");
@@ -140,11 +147,12 @@ final class Deleter {
                 fail(num, "no dustbin picture on its line - nothing pressed");
                 return;
             }
-            press(num, t, bin, before, shot.words == null ? new ArrayList<>() : shot.words);
+            preShot = shot;
+            press(num, t, bin, before);
         });
     }
 
-    private void press(String num, Target t, Rect bin, Set<String> before, List<ScreenWords.Word> base) {
+    private void press(String num, Target t, Rect bin, Set<String> before) {
         // The page's own button over the dustbin, if it has one; else a tap on the picture.
         AccessibilityNodeInfo node = null;
         for (AccessibilityNodeInfo c : t.buttons) {
@@ -154,7 +162,7 @@ final class Deleter {
         log("row " + num + (t.name.isEmpty() ? "" : " (" + t.name + ")") + ": pressing its dustbin at "
                 + bin.centerX() + "," + bin.centerY());
         if (node == null || !node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(bin.centerX(), bin.centerY());
-        clearPopup(num, t, before, base, 1, 10, null);
+        clearPopup(num, t, before, 1, known.isEmpty() ? 8 : 16, 150);
     }
 
     // ---- which icon is the dustbin: compared with the two dustbin pictures ------------
@@ -225,13 +233,31 @@ final class Deleter {
         return bestLike >= BIN_MATCH ? best : null;
     }
 
+    /** A pop-up button pressed before: where it was and how it looked. */
+    private static final class Known {
+        final Rect spot;
+        final double[] look;
+        final String text;
+
+        Known(Rect spot, double[] look, String text) {
+            this.spot = spot;
+            this.look = look;
+            this.text = text;
+        }
+    }
+
+    /** Pop-up buttons pressed this run: later pop-ups are spotted from pixels alone (fast). */
+    private final List<Known> known = new ArrayList<>();
+    /** The screen just before the row's dustbin was pressed (no pop-up on it yet). */
+    private ScreenWords.Shot preShot;
+
     /**
-     * Looks for pop-up {@code which} (1 or 2) up to {@code looksLeft} times and presses its
-     * Yes / Delete / OK. {@code lastTap} (text@rect) is the button just pressed: a pop-up that
-     * is still fading out isn't pressed twice.
+     * Looks for pop-up {@code which} up to {@code looksLeft} times and presses its Yes /
+     * Delete / OK. A pop-up seen before is spotted from the screenshot's pixels (about 3
+     * looks a second); the words are read (slower) only every third look, or while no
+     * pop-up is known yet.
      */
-    private void clearPopup(String num, Target t, Set<String> before, List<ScreenWords.Word> base,
-                            int which, int looksLeft, String lastTap) {
+    private void clearPopup(String num, Target t, Set<String> before, int which, int looksLeft, long delay) {
         later(() -> {
             // 1) A pop-up the page reports.
             AccessibilityNodeInfo button = popupButton(before);
@@ -240,47 +266,83 @@ final class Deleter {
                 String what = label(button);
                 log("pop-up " + which + ": pressing \"" + what + "\" at " + r.centerX() + "," + r.centerY());
                 if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
-                afterPopup(num, t, before, base, which, what + "@" + r.toShortString());
+                Set<String> seen = new HashSet<>(before);
+                seen.add(key(button, r));
+                afterPopup(num, t, seen, which);
                 return;
             }
-            // 2) A pop-up the page doesn't report: its button's word read off a screenshot.
-            words.read(seen -> {
+            // 2) A pop-up the page doesn't report: a known button's look, or its word.
+            boolean ocr = known.isEmpty() || looksLeft <= 1 || looksLeft % 3 == 0;
+            words.shot(ocr, shot -> {
                 if (!running) return;
-                ScreenWords.Word w = seen == null ? null : newButtonWord(seen, base, lastTap);
-                if (w != null) {
-                    log("pop-up " + which + ": pressing \"" + w.text + "\" at " + w.box.centerX() + ","
-                            + w.box.centerY());
-                    tap(w.box.centerX(), w.box.centerY());
-                    afterPopup(num, t, before, base, which, w.text + "@" + w.box.toShortString());
+                Rect hit = null;
+                String what = null;
+                if (shot != null) {
+                    double bestLike = 0;
+                    for (Known k : known) {
+                        double[] g = shot.grid(k.spot);
+                        if (g == null) continue;
+                        double like = BinFinder.similarity(g, k.look);
+                        // Not if the page looked like that there anyway, before the press.
+                        double[] was = preShot == null ? null : preShot.grid(k.spot);
+                        if (was != null && BinFinder.similarity(g, was) >= like - 0.02) continue;
+                        if (like >= 0.95 && like > bestLike) {
+                            bestLike = like;
+                            hit = k.spot;
+                            what = k.text + "\" (spotted by its look)";
+                        }
+                    }
+                    if (hit == null && shot.words != null) {
+                        ScreenWords.Word w = newButtonWord(shot.words, pageWords);
+                        if (w != null) {
+                            hit = w.box;
+                            what = w.text + "\"";
+                            Rect spot = grow(w.box);
+                            double[] look = shot.grid(spot);
+                            if (look != null) known.add(new Known(spot, look, w.text));
+                        }
+                    }
+                }
+                if (hit != null) {
+                    log("pop-up " + which + ": pressing \"" + what + " at " + hit.centerX() + "," + hit.centerY());
+                    tap(hit.centerX(), hit.centerY());
+                    afterPopup(num, t, before, which);
                 } else if (looksLeft > 1) {
-                    clearPopup(num, t, before, base, which, looksLeft - 1, lastTap);
+                    clearPopup(num, t, before, which, looksLeft - 1, 0);
                 } else {
-                    if (seen == null) log("pop-up " + which + ": couldn't read the screen (Android 11+ needed)");
-                    else log("pop-up " + which + ": none came");
-                    later(() -> check(num, t), 300);
+                    if (shot == null) log("pop-up " + which + ": couldn't read the screen (Android 11+ needed)");
+                    else if (which <= POPUPS) log("pop-up " + which + ": none came");
+                    check(num, t, 10);
                 }
             });
-        }, which == 1 ? 250 : 400);
+        }, delay);
     }
 
-    private void afterPopup(String num, Target t, Set<String> before, List<ScreenWords.Word> base,
-                            int which, String tapped) {
+    private void afterPopup(String num, Target t, Set<String> before, int which) {
         popups++;
-        if (which >= POPUPS) {
-            later(() -> check(num, t), 600);
-            return;
-        }
-        Set<String> seen = new HashSet<>(before);
-        seen.add(tapped);
-        clearPopup(num, t, seen, base, which + 1, 10, tapped);
+        // The next pop-up (the "deleted" OK), then one quick look for anything left open.
+        // Wait a moment first, so the one just pressed has gone and isn't pressed twice.
+        if (which < POPUPS) clearPopup(num, t, before, which + 1, known.isEmpty() ? 6 : 10, 400);
+        else if (which == POPUPS) clearPopup(num, t, before, which + 1, 2, 400);
+        else check(num, t, 10);
     }
 
-    /** Did the row go? Its name is no longer on the page. */
-    private void check(String num, Target t) {
+    private Rect grow(Rect r) {
+        Rect g = new Rect(r);
+        g.inset(-Math.max(dp(6), r.width() / 4), -Math.max(dp(4), r.height() / 3));
+        return g;
+    }
+
+    /** Did the row go? Its name is no longer on the page (checked a few times, 150 ms apart). */
+    private void check(String num, Target t, int looksLeft) {
         if (t.name.isEmpty()) {
             log("row " + num + ": done (no name to check it by)");
             deleted.add(num);
         } else if (nameOnPage(t.name)) {
+            if (looksLeft > 1) {
+                later(() -> check(num, t, looksLeft - 1), 150);
+                return;
+            }
             log("row " + num + ": \"" + t.name + "\" is still on the page ✗");
             failed.add(num);
         } else {
@@ -288,7 +350,7 @@ final class Deleter {
             deleted.add(num);
         }
         todo.remove(0);
-        later(this::nextRow, 250);
+        later(this::nextRow, 150);
     }
 
     private void fail(String num, String why) {
@@ -330,8 +392,7 @@ final class Deleter {
     }
 
     /** A Yes / Delete / OK word on screen now that wasn't there before the delete press. */
-    private ScreenWords.Word newButtonWord(List<ScreenWords.Word> now, List<ScreenWords.Word> base,
-                                           String lastTap) {
+    private ScreenWords.Word newButtonWord(List<ScreenWords.Word> now, List<ScreenWords.Word> base) {
         int near = dp(12);
         ScreenWords.Word best = null;
         int bestRank = Integer.MAX_VALUE;
@@ -348,12 +409,6 @@ final class Deleter {
                 }
             }
             if (old) continue;
-            if (lastTap != null && lastTap.startsWith(w.text + "@")) {
-                Rect was = Rect.unflattenFromString(lastTap.substring(w.text.length() + 1)
-                        .replace("[", "").replace("]", " ").replace(",", " ").trim());
-                if (was != null && Math.abs(was.centerX() - w.box.centerX()) <= near
-                        && Math.abs(was.centerY() - w.box.centerY()) <= near) continue;
-            }
             if (rank < bestRank) {
                 best = w;
                 bestRank = rank;
