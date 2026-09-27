@@ -211,6 +211,12 @@ open class CheckboxService : AccessibilityService() {
         saveFailedRows(emptySet())
         pageNumbersSeen.clear()
         tickedHere.clear()
+        tickLog.setLength(0)
+        tickLogStart = SystemClock.uptimeMillis()
+        val p = prefs()
+        tlog("START: numbers " + (if (pageNumbering) "beside box" else "order count") +
+            ", limit ${maxBoxes()}, clear pop-up " + (if (p.getBoolean("tapColour", true)) "on" else "off") +
+            ", waits tick ${p.getInt("tickWaitMs", 300)} / pop-up ${p.getInt("clearWaitMs", 300)} ms")
         atLimit = false
         showNumbers()
         onScreen.clear()
@@ -231,6 +237,9 @@ open class CheckboxService : AccessibilityService() {
         lastBox = null
         updateBubble()
         status("$why - numbered $attempts, ticked ${attempts - failed.size}")
+        tlog("END: $why - numbered $attempts, not ticked: " + failedText().ifEmpty { "none" })
+        getSharedPreferences("settings", Context.MODE_PRIVATE).edit()
+            .putString("last_run", "Tick run\n" + tickLog.toString()).apply()
         toast("$why after $attempts boxes")
         onLoopStopped(why)
     }
@@ -313,12 +322,17 @@ open class CheckboxService : AccessibilityService() {
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
+            tlog("snap: ${boxes.size} empty square(s), ${found.size} usable: " +
+                found.joinToString("; ") { rectText(it) })
             val candidates = ArrayList<Pair<Rect, BoxLook.Look?>>()
             for (box in found) {
                 val look = sketch?.let { lookOf(it, box) }
                 // A box that did not tick stays empty, and may still be on screen after the
                 // scroll: it is known by what is written beside it, and not numbered again.
-                if (look != null && oldLooks.any { BoxLook.same(it, look) }) continue
+                if (look != null && oldLooks.any { BoxLook.same(it, look) }) {
+                    tlog("  skip ${rectText(box)}: looks like a box that did not tick before")
+                    continue
+                }
                 candidates.add(Pair(Rect(box), look))
             }
             if (pageNumbering && candidates.isNotEmpty()) {
@@ -337,18 +351,32 @@ open class CheckboxService : AccessibilityService() {
         val limit = maxBoxes()
         onScreen.clear()
         var pastLimit = false
+        if (pageNumbering) {
+            tlog("numbers beside them: " + candidates.indices.joinToString(", ") { k ->
+                "${rectText(candidates[k].first)} -> ${labels.getOrNull(k) ?: "?"}"
+            })
+        }
         for ((k, c) in candidates.withIndex()) {
             // Order count: at most "limit" boxes. By the page's number: up to row "limit".
             if (!pageNumbering && attempts >= limit) break
-            if (pastLimit) continue // below the last row wanted
             val label = labels.getOrNull(k)
+            if (pastLimit) { // below the last row wanted
+                tlog("  skip ${rectText(c.first)} (row ${label ?: "?"}): below the last row $limit")
+                continue
+            }
             if (pageNumbering && label != null && label >= limit) {
                 atLimit = true
                 pastLimit = true
-                if (label > limit) continue
+                if (label > limit) {
+                    tlog("  skip ${rectText(c.first)} (row $label): past the last row $limit")
+                    continue
+                }
             }
             // Already handled under this number (seen again after a scroll): skip it.
-            if (label != null && !pageNumbersSeen.add(label)) continue
+            if (label != null && !pageNumbersSeen.add(label)) {
+                tlog("  skip ${rectText(c.first)} (row $label): row $label already handled")
+                continue
+            }
             attempts++
             // Order count: the count. By the page's number: 0 ("?") when none was read on its
             // line, never a count that looks like a row number.
@@ -392,7 +420,7 @@ open class CheckboxService : AccessibilityService() {
             tickedHere.add(Rect(item.box))
             val ok = gestureTap(item.box.exactCenterX(), item.box.exactCenterY())
             if (ok) ticked++
-            status("box ${name(item)}: tapped" + (if (ok) "" else " - refused"))
+            status("box ${name(item)}: tapped at ${rectText(item.box)}" + (if (ok) "" else " - refused"))
             main.postDelayed({
                 if (looping) afterTick { tickNext(i + 1) }
             }, waitMs(prefs(), "tickWaitMs", 300))
@@ -413,7 +441,9 @@ open class CheckboxService : AccessibilityService() {
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
             for (item in onScreen) {
-                if (boxes.any { Rect.intersects(it, item.box) }) {
+                val empty = boxes.any { Rect.intersects(it, item.box) }
+                tlog("  check box ${name(item)}: " + if (empty) "still EMPTY ✗" else "ticked ✓")
+                if (empty) {
                     noteNotTicked(item.number, item.page)
                     item.look?.let {
                         oldLooks.add(it)
@@ -669,8 +699,20 @@ open class CheckboxService : AccessibilityService() {
     private fun status(text: String) {
         android.util.Log.i("CheckboxTicker", text)
         lastStatus = text
+        if (looping) tlog(text)
         updatePanel()
     }
+
+    /** What this Tick run saw and did, step by step - saved to the app's Last run card. */
+    private val tickLog = StringBuilder()
+    private var tickLogStart = 0L
+
+    private fun tlog(line: String) {
+        if (tickLog.length > 30000) return
+        tickLog.append(SystemClock.uptimeMillis() - tickLogStart).append(" ms  ").append(line).append('\n')
+    }
+
+    private fun rectText(r: Rect) = "${r.centerX()},${r.centerY()} (${r.width()}x${r.height()})"
 
     private fun updatePanel() {
         if (!prefs().getBoolean("showStatus", true)) {
