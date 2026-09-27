@@ -15,3 +15,4 @@ dependencyResolutionManagement {
 rootProject.name = "DropdownPicker"
 include(":app")
 include(":inspector")
+include(":checker")
