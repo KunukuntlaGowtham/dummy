@@ -103,11 +103,18 @@ final class ScreenWords {
                         HardwareBuffer buffer = result.getHardwareBuffer();
                         try {
                             Bitmap hw = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
-                            if (hw != null) {
-                                // Standard colours, so pixels compare with the button pictures.
-                                soft = Bitmap.createBitmap(hw.getWidth(), hw.getHeight(),
-                                        Bitmap.Config.ARGB_8888, false, ColorSpace.get(ColorSpace.Named.SRGB));
-                                new Canvas(soft).drawBitmap(hw, 0, 0, null);
+                            // A screenshot is a hardware bitmap: copy it to memory first (it
+                            // can't be drawn or read directly), then into standard colours so
+                            // pixels compare with the button pictures.
+                            Bitmap copy = hw == null ? null : hw.copy(Bitmap.Config.ARGB_8888, false);
+                            ColorSpace srgb = ColorSpace.get(ColorSpace.Named.SRGB);
+                            if (copy != null && copy.getColorSpace() != null && !srgb.equals(copy.getColorSpace())) {
+                                soft = Bitmap.createBitmap(copy.getWidth(), copy.getHeight(),
+                                        Bitmap.Config.ARGB_8888, false, srgb);
+                                new Canvas(soft).drawBitmap(copy, 0, 0, null);
+                                copy.recycle();
+                            } else {
+                                soft = copy;
                             }
                         } catch (RuntimeException ignored) {
                             soft = null;

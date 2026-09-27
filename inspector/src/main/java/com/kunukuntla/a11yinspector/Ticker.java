@@ -50,6 +50,8 @@ final class Ticker {
     private List<Rect> pageOks;
     /** A pop-up came after an earlier tick this run: wait a little longer for the next one. */
     private boolean popupsSeen;
+    /** Boxes in a row after which no pop-up came: stop waiting long for one. */
+    private int quietBoxes;
 
     Ticker(AccessibilityService service, Listener listener) {
         this.service = service;
@@ -74,6 +76,7 @@ final class Ticker {
         lastScreen = "";
         pageOks = null;
         popupsSeen = false;
+        quietBoxes = 0;
         okSpot = null;
         okLook = okGone = null;
         log("Tick: clicking every empty checkbox directly, clearing pop-ups");
@@ -166,7 +169,7 @@ final class Ticker {
 
     /** How often to look for a pop-up after a tick: longer once pop-ups have been coming. */
     private int firstLooks() {
-        return popupsSeen ? 5 : 2;
+        return popupsSeen ? 6 : quietBoxes >= 3 ? 2 : 4;
     }
 
     private void done(Box b, String how, Set<String> before, List<Rect> oldOks) {
@@ -248,6 +251,7 @@ final class Ticker {
                 } else {
                     if (shot == null) log("pop-up: couldn't read the screen (Android 11+ needed) - not checked");
                     else log("pop-up: no new OK on screen - none to clear");
+                    if (popupTaps == 0) quietBoxes++;
                     then.run();
                 }
             });
