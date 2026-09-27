@@ -58,6 +58,13 @@ public class InspectorService extends AccessibilityService {
     @Override
     public void onDestroy() {
         closeCard();
+        if (ticker != null) ticker.stop("Stopped");
+        if (tickButton != null) {
+            try {
+                windowManager.removeView(tickButton);
+            } catch (RuntimeException ignored) {
+            }
+        }
         if (button != null) {
             try {
                 windowManager.removeView(button);
@@ -136,6 +143,82 @@ public class InspectorService extends AccessibilityService {
             }
         });
         windowManager.addView(button, buttonParams);
+        showTickButton();
+    }
+
+    // ---- the Tick button: tick every checkbox directly, clear pop-ups ----------------
+
+    private TextView tickButton;
+    private WindowManager.LayoutParams tickParams;
+    private Ticker ticker;
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void showTickButton() {
+        ticker = new Ticker(this, (summary, log) -> {
+            try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
+                out.write(log.getBytes());
+            } catch (java.io.IOException ignored) {
+            }
+            tickButton.setText("☑\nTick");
+            showCard(summary);
+        });
+        tickButton = new TextView(this);
+        tickButton.setText("☑\nTick");
+        tickButton.setTextColor(Color.WHITE);
+        tickButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tickButton.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(0xEE6A2C91);
+        bg.setStroke(dp(2), 0x66FFFFFF);
+        tickButton.setBackground(bg);
+        tickButton.setElevation(dp(4));
+        tickParams = new WindowManager.LayoutParams(dp(56), dp(56),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        tickParams.gravity = Gravity.TOP | Gravity.START;
+        tickParams.x = dp(12);
+        tickParams.y = dp(226);
+        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+        float[] down = new float[2];
+        int[] start = new int[2];
+        boolean[] dragged = {false};
+        tickButton.setOnTouchListener((v, e) -> {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    down[0] = e.getRawX();
+                    down[1] = e.getRawY();
+                    start[0] = tickParams.x;
+                    start[1] = tickParams.y;
+                    dragged[0] = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
+                    if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
+                    if (dragged[0]) {
+                        tickParams.x = start[0] + (int) dx;
+                        tickParams.y = start[1] + (int) dy;
+                        windowManager.updateViewLayout(tickButton, tickParams);
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!dragged[0]) {
+                        closeCard();
+                        if (ticker.isRunning()) {
+                            ticker.stop("Stopped");
+                        } else {
+                            tickButton.setText("■\nStop");
+                            ticker.start();
+                        }
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        });
+        windowManager.addView(tickButton, tickParams);
     }
 
     // ---- scanning ---------------------------------------------------------------
