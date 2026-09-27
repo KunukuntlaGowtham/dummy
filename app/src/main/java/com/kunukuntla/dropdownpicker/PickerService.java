@@ -1341,13 +1341,13 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         for (TextNode t : texts(false)) tree.add(new Line(t.bounds, t.text));
         Line button = newConfirm(tree, confirmsBefore);
         if (button != null) {
-            confirmTapped(target, before, button);
+            confirmTapped(target, before, confirmsBefore, button, MAX_POPUPS);
             return;
         }
         readScreen(seen -> {
             Line b = newConfirm(seen.lines, confirmsBefore);
             if (b != null) {
-                confirmTapped(target, before, b);
+                confirmTapped(target, before, confirmsBefore, b, MAX_POPUPS);
             } else if (gone(before, seen)) {
                 dlog("row " + target + ": no confirm box, card already gone");
                 rowDeleted(target, seen); // deleted straight away, no dialog
@@ -1360,11 +1360,50 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         }, true);
     }
 
-    private void confirmTapped(int target, Set<String> before, Line button) {
-        dlog("row " + target + ": confirm box - tapping \"" + button.text + "\"");
+    /** Pop-ups one delete may bring, one after another (like "Yes", then "OK"). */
+    private static final int MAX_POPUPS = 3;
+
+    /**
+     * Taps a pop-up's button, then looks for the next pop-up (a delete can bring two: "Delete?
+     * Yes", then "Deleted - OK") and taps that too, up to {@code popupsLeft}; with no further
+     * pop-up, checks the card went.
+     */
+    private void confirmTapped(int target, Set<String> before, List<Line> confirmsBefore,
+                               Line button, int popupsLeft) {
+        dlog("row " + target + ": pop-up " + (MAX_POPUPS - popupsLeft + 1) + " - tapping \""
+                + button.text + "\"");
         tapThrough(button.box.centerX(), button.box.centerY());
-        showStatus("delete: row " + target + " - tapped " + button.text);
-        handler.postDelayed(deleteStep(() -> verify(target, before, 3)), pref("delCheckMs", 900));
+        // The button just tapped doesn't count again while its pop-up fades away.
+        List<Line> known = new ArrayList<>(confirmsBefore);
+        known.add(button);
+        if (popupsLeft <= 1) {
+            handler.postDelayed(deleteStep(() -> verify(target, before, 3)), pref("delCheckMs", 900));
+            return;
+        }
+        handler.postDelayed(deleteStep(() -> nextPopup(target, before, known, popupsLeft - 1)),
+                pref("delWaitMs", 800));
+    }
+
+    /** After a pop-up's button: another pop-up's button, or - none - check the card went. */
+    private void nextPopup(int target, Set<String> before, List<Line> known, int popupsLeft) {
+        List<Line> tree = new ArrayList<>();
+        for (TextNode t : texts(false)) tree.add(new Line(t.bounds, t.text));
+        Line button = newConfirm(tree, known);
+        if (button != null) {
+            confirmTapped(target, before, known, button, popupsLeft);
+            return;
+        }
+        readScreen(seen -> {
+            Line b = newConfirm(seen.lines, known);
+            if (b != null) {
+                confirmTapped(target, before, known, b, popupsLeft);
+            } else if (gone(before, seen)) {
+                rowDeleted(target, seen); // no more pop-ups, and this picture shows the card gone
+            } else {
+                handler.postDelayed(deleteStep(() -> verify(target, before, 3)),
+                        pref("delCheckMs", 900) / 2);
+            }
+        }, true);
     }
 
     /** A new screenshot: the card must be gone. If not, look again, then tap its bin again. */
