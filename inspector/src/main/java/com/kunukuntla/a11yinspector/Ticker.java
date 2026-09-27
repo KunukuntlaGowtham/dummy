@@ -80,6 +80,7 @@ final class Ticker {
         quietBoxes = 0;
         okSpot = lastOk = null;
         okLook = okGone = null;
+        popupShapes = pageBefore = pageWithPopup = null;
         log("Tick: clicking every empty checkbox directly, clearing pop-ups");
         later(this::next, 100);
     }
@@ -167,6 +168,7 @@ final class Ticker {
 
     private void tickBox(Box b, Set<String> before, List<Rect> oldOks) {
         popupTaps = 0;
+        pageBefore = shapes();
         log("row " + b.row + ": clicking its checkbox (box at " + b.box.centerX() + ","
                 + b.box.centerY() + ")");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
@@ -195,9 +197,9 @@ final class Ticker {
     private void whenChecked(AccessibilityNodeInfo node, long ms, java.util.function.Consumer<Boolean> then) {
         later(() -> {
             boolean on = isChecked(node);
-            if (on || ms <= 90) then.accept(on);
-            else whenChecked(node, ms - 90, then);
-        }, 90);
+            if (on || ms <= 40) then.accept(on);
+            else whenChecked(node, ms - 40, then);
+        }, 40);
     }
 
     /** How often to look for a pop-up after a tick: longer once pop-ups have been coming. */
@@ -209,7 +211,87 @@ final class Ticker {
         ticked++;
         tickedRows.add(b.row);
         log("row " + b.row + ": " + how);
-        clearPopups(before, oldOks, firstLooks(), this::next);
+        if (popupShapes != null && okSpot != null) watchPopup(before, oldOks, 0);
+        else clearPopups(before, oldOks, firstLooks(), this::next);
+    }
+
+    // ---- the fast way: the pop-up known from how the page changes -------------------
+
+    /**
+     * What the page's elements are (kind and place, not text): a pop-up adds its own ones
+     * (a cover over the page, its box), even when it doesn't report its words or buttons.
+     */
+    private Set<String> shapes() {
+        Set<String> out = new HashSet<>();
+        for (Node n : all()) {
+            Rect r = new Rect();
+            n.node.getBoundsInScreen(r);
+            String role = "";
+            try {
+                CharSequence c = n.node.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole");
+                if (c != null) role = c.toString();
+            } catch (RuntimeException ignored) {
+            }
+            out.add(n.node.getClassName() + "|" + role + "|" + r.toShortString());
+        }
+        return out;
+    }
+
+    /** The page before this box was ticked; while learning, the page with the pop-up up. */
+    private Set<String> pageBefore, pageWithPopup;
+    /** The elements the pop-up adds to the page (learned from the first pop-up), or null. */
+    private Set<String> popupShapes;
+
+    private boolean popupUp() {
+        for (String k : shapes()) {
+            if (popupShapes.contains(k) && (pageBefore == null || !pageBefore.contains(k))) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Watches the page (every 40 ms, no screenshots) for the known pop-up, presses its OK
+     * the moment it shows, and goes on as soon as it has gone. If it doesn't show within
+     * 1.2 s, one screenshot look makes sure nothing was missed.
+     */
+    private void watchPopup(Set<String> before, List<Rect> oldOks, long waited) {
+        later(() -> {
+            if (popupUp()) {
+                log("pop-up: pressing OK at " + okSpot.centerX() + "," + okSpot.centerY() + " (seen on the page)");
+                popups++;
+                popupTaps++;
+                // A moment for it to finish drawing, so the press lands on its button.
+                later(() -> {
+                    tap(okSpot.centerX(), okSpot.centerY());
+                    waitGone(before, oldOks, 0);
+                }, 60);
+            } else if (waited >= 1200) {
+                clearPopups(before, oldOks, 1, this::next);
+            } else {
+                watchPopup(before, oldOks, waited + 40);
+            }
+        }, 40);
+    }
+
+    private void waitGone(Set<String> before, List<Rect> oldOks, long waited) {
+        later(() -> {
+            if (!popupUp()) {
+                next();
+            } else if (waited >= 1000) {
+                // Still up: press again (at most 3 times), else go on.
+                if (popupTaps >= 3) {
+                    log("pop-up: still up after 3 presses - going on");
+                    next();
+                } else {
+                    log("pop-up: still up - pressing OK again");
+                    tap(okSpot.centerX(), okSpot.centerY());
+                    popupTaps++;
+                    waitGone(before, oldOks, 0);
+                }
+            } else {
+                waitGone(before, oldOks, waited + 40);
+            }
+        }, 40);
     }
 
     // ---- pop-ups ---------------------------------------------------------------
@@ -225,6 +307,7 @@ final class Ticker {
             if (lastOk != null) oldOks.add(new Rect(lastOk));
             okSpot = null;
             okLook = okGone = null;
+            popupShapes = null;
             later(then, 150);
             return;
         }
@@ -259,6 +342,7 @@ final class Ticker {
                     ok = newOk(shot.words, oldOks);
                     if (ok != null) {
                         okSpot = grow(ok);
+                        pageWithPopup = shapes();
                         okLook = shot.grid(okSpot);
                         okGone = null;
                         if (okLook == null) okSpot = null;
@@ -278,6 +362,7 @@ final class Ticker {
                             double[] g = after == null || okSpot == null ? null : after.grid(okSpot);
                             if (g != null && okLook != null && BinFinder.similarity(g, okLook) < 0.97) {
                                 okGone = g;
+                                learnPopupShapes();
                                 then.run();
                             } else {
                                 clearPopups(clickableKeys(), oldOks, 1, then); // still there, or another
@@ -297,6 +382,22 @@ final class Ticker {
                 }
             });
         }, 60);
+    }
+
+    /** What only the pop-up added: on the page with it, not before the tick, not after it went. */
+    private void learnPopupShapes() {
+        if (pageWithPopup == null || pageBefore == null) return;
+        Set<String> only = new HashSet<>(pageWithPopup);
+        only.removeAll(pageBefore);
+        only.removeAll(shapes());
+        pageWithPopup = null;
+        if (only.isEmpty()) {
+            log("pop-up: the page shows nothing of it - finding it by screenshots");
+            return;
+        }
+        popupShapes = only;
+        log("pop-up: learned it (" + only.size() + " elements it adds) - from now on it is watched"
+                + " for on the page, no screenshots");
     }
 
     /** Where the pop-up's OK was, a little bigger (its button), and how it looked. */
@@ -484,6 +585,7 @@ final class Ticker {
         }
         for (AccessibilityWindowInfo w : windows) {
             if (w.getType() == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+            if (w.getType() == AccessibilityWindowInfo.TYPE_SYSTEM) continue; // status bar
             AccessibilityNodeInfo root = w.getRoot();
             if (root == null || own.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) continue;
             List<AccessibilityNodeInfo> stack = new ArrayList<>();
