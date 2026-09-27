@@ -59,7 +59,8 @@ public class MainActivity extends Activity {
         how.setText("Turn it on in Accessibility, open any app, then tap the green 🔍 Scan "
                 + "button: it lists everything that app lets an accessibility service read and "
                 + "control on that screen. Long-press it for a deep scan (web pages). "
-                + "Nothing is tapped or changed.");
+                + "Purple ☑ Tick ticks every checkbox and clears pop-ups; red 🗑 Del asks which row "
+                + "numbers to delete and clears their two pop-ups.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));

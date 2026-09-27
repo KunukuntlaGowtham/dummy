@@ -1,0 +1,537 @@
+package com.kunukuntla.a11yinspector;
+
+import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
+import android.graphics.Path;
+import android.graphics.Rect;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+
+/**
+ * Deletes the rows you ask for: finds the row's number on the page, presses the delete (bin)
+ * button in that row, then clears the two pop-ups that follow (the "are you sure" one and the
+ * "deleted" one) by pressing their Yes / Delete / OK. Rows are done from the highest number
+ * down, so deleting one doesn't renumber the ones still to do.
+ */
+final class Deleter {
+
+    interface Listener {
+        void done(String summary, String log);
+    }
+
+    /** A pop-up's button, best first. "No" and "Cancel" are never pressed. */
+    private static final String[] POPUP_WORDS = {"yes", "yes delete", "yes remove", "delete",
+            "remove", "confirm", "ok", "okay", "done", "got it", "close"};
+    private static final int POPUPS = 2;
+
+    private final AccessibilityService service;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Listener listener;
+    private final ScreenWords words;
+    private final StringBuilder log = new StringBuilder();
+    private final List<String> todo = new ArrayList<>();
+    private final List<String> deleted = new ArrayList<>();
+    private final List<String> failed = new ArrayList<>();
+    private boolean running;
+    private int gen, popups, tries;
+    private long start;
+
+    Deleter(AccessibilityService service, Listener listener) {
+        this.service = service;
+        this.listener = listener;
+        this.words = new ScreenWords(service);
+    }
+
+    boolean isRunning() {
+        return running;
+    }
+
+    void start(List<Integer> rows) {
+        if (running) return;
+        running = true;
+        gen++;
+        start = SystemClock.uptimeMillis();
+        log.setLength(0);
+        todo.clear();
+        deleted.clear();
+        failed.clear();
+        popups = 0;
+        List<Integer> sorted = new ArrayList<>(new HashSet<>(rows));
+        Collections.sort(sorted, Collections.reverseOrder());
+        for (Integer n : sorted) todo.add(String.valueOf(n));
+        log("Delete rows " + String.join(", ", todo) + " (highest first)");
+        later(this::nextRow, 50);
+    }
+
+    void stop(String why) {
+        if (!running) return;
+        running = false;
+        gen++;
+        log("END: " + why);
+        String summary = why + "\nDeleted " + deleted.size()
+                + (deleted.isEmpty() ? "" : " (rows " + String.join(", ", deleted) + ")")
+                + "\nNot deleted " + failed.size()
+                + (failed.isEmpty() ? "" : " (rows " + String.join(", ", failed) + ")")
+                + "\nPop-ups cleared " + popups;
+        listener.done(summary, "A11y Inspector - Delete run\n===========================\n" + summary
+                + "\n\nSTEPS\n" + log);
+    }
+
+    // ---- one row after another --------------------------------------------------
+
+    private void nextRow() {
+        if (todo.isEmpty()) {
+            stop("Done");
+            return;
+        }
+        tries = 0;
+        findRow(todo.get(0));
+    }
+
+    private void findRow(String num) {
+        Target t = locate(num);
+        if (t == null) {
+            if (++tries <= 6) {
+                log("row " + num + ": not on the page yet - scrolling down");
+                scroll(true);
+                later(() -> findRow(num), 650);
+            } else {
+                fail(num, "not found on the page");
+            }
+            return;
+        }
+        Rect r = bounds(t.bin);
+        if (!onScreen(t.bin, r)) {
+            if (++tries > 6) {
+                fail(num, "its delete button never came on screen");
+                return;
+            }
+            // Bring it on screen: ask the page first, then scroll towards it.
+            if (tries == 1) {
+                log("row " + num + ": delete button off screen - bringing it on");
+                t.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+            } else {
+                boolean down = r.top >= screen().height() / 2;
+                log("row " + num + ": scrolling " + (down ? "down" : "up") + " to its delete button");
+                scroll(down);
+            }
+            later(() -> findRow(num), 600);
+            return;
+        }
+        Set<String> before = clickableKeys();
+        words.read(seen -> {
+            if (!running) return;
+            press(num, t, before, seen == null ? new ArrayList<>() : seen);
+        });
+    }
+
+    private void press(String num, Target t, Set<String> before, List<ScreenWords.Word> base) {
+        Rect r = bounds(t.bin);
+        log("row " + num + (t.name.isEmpty() ? "" : " (" + t.name + ")") + ": pressing its delete button at "
+                + r.centerX() + "," + r.centerY() + (t.binLabel.isEmpty() ? "" : " \"" + t.binLabel + "\""));
+        if (!t.bin.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
+        clearPopup(num, t, before, base, 1, 10, null);
+    }
+
+    /**
+     * Looks for pop-up {@code which} (1 or 2) up to {@code looksLeft} times and presses its
+     * Yes / Delete / OK. {@code lastTap} (text@rect) is the button just pressed: a pop-up that
+     * is still fading out isn't pressed twice.
+     */
+    private void clearPopup(String num, Target t, Set<String> before, List<ScreenWords.Word> base,
+                            int which, int looksLeft, String lastTap) {
+        later(() -> {
+            // 1) A pop-up the page reports.
+            AccessibilityNodeInfo button = popupButton(before);
+            if (button != null) {
+                Rect r = bounds(button);
+                String what = label(button);
+                log("pop-up " + which + ": pressing \"" + what + "\" at " + r.centerX() + "," + r.centerY());
+                if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
+                afterPopup(num, t, before, base, which, what + "@" + r.toShortString());
+                return;
+            }
+            // 2) A pop-up the page doesn't report: its button's word read off a screenshot.
+            words.read(seen -> {
+                if (!running) return;
+                ScreenWords.Word w = seen == null ? null : newButtonWord(seen, base, lastTap);
+                if (w != null) {
+                    log("pop-up " + which + ": pressing \"" + w.text + "\" at " + w.box.centerX() + ","
+                            + w.box.centerY());
+                    tap(w.box.centerX(), w.box.centerY());
+                    afterPopup(num, t, before, base, which, w.text + "@" + w.box.toShortString());
+                } else if (looksLeft > 1) {
+                    clearPopup(num, t, before, base, which, looksLeft - 1, lastTap);
+                } else {
+                    if (seen == null) log("pop-up " + which + ": couldn't read the screen (Android 11+ needed)");
+                    else log("pop-up " + which + ": none came");
+                    later(() -> check(num, t), 300);
+                }
+            });
+        }, which == 1 ? 250 : 400);
+    }
+
+    private void afterPopup(String num, Target t, Set<String> before, List<ScreenWords.Word> base,
+                            int which, String tapped) {
+        popups++;
+        if (which >= POPUPS) {
+            later(() -> check(num, t), 600);
+            return;
+        }
+        Set<String> seen = new HashSet<>(before);
+        seen.add(tapped);
+        clearPopup(num, t, seen, base, which + 1, 10, tapped);
+    }
+
+    /** Did the row go? Its name is no longer on the page. */
+    private void check(String num, Target t) {
+        if (t.name.isEmpty()) {
+            log("row " + num + ": done (no name to check it by)");
+            deleted.add(num);
+        } else if (nameOnPage(t.name)) {
+            log("row " + num + ": \"" + t.name + "\" is still on the page ✗");
+            failed.add(num);
+        } else {
+            log("row " + num + ": deleted ✓ (\"" + t.name + "\" is gone)");
+            deleted.add(num);
+        }
+        todo.remove(0);
+        later(this::nextRow, 250);
+    }
+
+    private void fail(String num, String why) {
+        log("row " + num + ": " + why + " ✗");
+        failed.add(num);
+        todo.remove(0);
+        later(this::nextRow, 100);
+    }
+
+    // ---- pop-up buttons ---------------------------------------------------------
+
+    private static int rank(String text) {
+        String t = text.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]", " ").replaceAll(" +", " ").trim();
+        for (int i = 0; i < POPUP_WORDS.length; i++) {
+            if (t.equals(POPUP_WORDS[i]) || t.startsWith(POPUP_WORDS[i] + " ")) return i;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private AccessibilityNodeInfo popupButton(Set<String> before) {
+        AccessibilityNodeInfo best = null;
+        int bestRank = Integer.MAX_VALUE;
+        for (Node n : all()) {
+            AccessibilityNodeInfo node = n.node;
+            if (!node.isClickable() || !node.isEnabled() || !node.isVisibleToUser()) continue;
+            Rect r = bounds(node);
+            if (r.width() <= 0 || r.height() <= 0) continue;
+            if (before.contains(key(node, r))) continue;
+            String t = label(node).toLowerCase(Locale.ROOT);
+            if (t.equals("no") || t.startsWith("cancel") || t.startsWith("no ")) continue;
+            int rank = rank(label(node));
+            if (rank == Integer.MAX_VALUE && n.inDialog) rank = 100;
+            if (rank < bestRank) {
+                best = node;
+                bestRank = rank;
+            }
+        }
+        return best;
+    }
+
+    /** A Yes / Delete / OK word on screen now that wasn't there before the delete press. */
+    private ScreenWords.Word newButtonWord(List<ScreenWords.Word> now, List<ScreenWords.Word> base,
+                                           String lastTap) {
+        int near = dp(12);
+        ScreenWords.Word best = null;
+        int bestRank = Integer.MAX_VALUE;
+        for (ScreenWords.Word w : now) {
+            int rank = rank(w.text);
+            if (rank == Integer.MAX_VALUE) continue;
+            if (!w.whole) rank += 50; // a word out of a sentence: only if no button-like line
+            boolean old = false;
+            for (ScreenWords.Word b : base) {
+                if (b.text.equalsIgnoreCase(w.text) && Math.abs(b.box.centerX() - w.box.centerX()) <= near
+                        && Math.abs(b.box.centerY() - w.box.centerY()) <= near) {
+                    old = true;
+                    break;
+                }
+            }
+            if (old) continue;
+            if (lastTap != null && lastTap.startsWith(w.text + "@")) {
+                Rect was = Rect.unflattenFromString(lastTap.substring(w.text.length() + 1)
+                        .replace("[", "").replace("]", " ").replace(",", " ").trim());
+                if (was != null && Math.abs(was.centerX() - w.box.centerX()) <= near
+                        && Math.abs(was.centerY() - w.box.centerY()) <= near) continue;
+            }
+            if (rank < bestRank) {
+                best = w;
+                bestRank = rank;
+            }
+        }
+        return best;
+    }
+
+    // ---- finding the row --------------------------------------------------------
+
+    private static final class Target {
+        final AccessibilityNodeInfo bin;
+        final String name;
+        final String binLabel;
+
+        Target(AccessibilityNodeInfo bin, String name) {
+            this.bin = bin;
+            this.name = name;
+            this.binLabel = label(bin);
+        }
+    }
+
+    /** The row numbered {@code num}: its delete button and the name on it, or null. */
+    private Target locate(String num) {
+        List<Node> nodes = all();
+        Target geometric = null;
+        for (Node n : nodes) {
+            AccessibilityNodeInfo node = n.node;
+            if (node.isClickable() || node.isEditable()) continue;
+            if (!label(node).matches("\\(?" + num + "[.)]?")) continue;
+            // 1) The row is its own box (the number, Edit, the bin, the name): look inside it.
+            AccessibilityNodeInfo row = node.getParent();
+            if (row != null && isRow(row)) {
+                List<AccessibilityNodeInfo> inside = subtree(row);
+                AccessibilityNodeInfo bin = binIn(inside, node);
+                if (bin != null) return new Target(bin, nameIn(inside, num));
+            }
+            // 2) Otherwise: the bin on the same line as the number, right of it.
+            if (geometric == null) geometric = sameLine(node, nodes);
+        }
+        return geometric;
+    }
+
+    /** A row: one row number in it and not the whole page. */
+    private static boolean isRow(AccessibilityNodeInfo p) {
+        List<AccessibilityNodeInfo> inside = subtree(p);
+        if (inside.size() > 40) return false;
+        int numbers = 0;
+        for (AccessibilityNodeInfo n : inside) if (label(n).matches("\\(?\\d{1,4}[.)]?")) numbers++;
+        return numbers == 1;
+    }
+
+    /** The row's delete button: one saying delete / bin, else the right-most unnamed button. */
+    private static AccessibilityNodeInfo binIn(List<AccessibilityNodeInfo> inside, AccessibilityNodeInfo number) {
+        AccessibilityNodeInfo named = null, unnamed = null;
+        int unnamedLeft = Integer.MIN_VALUE;
+        for (AccessibilityNodeInfo n : inside) {
+            if (n.equals(number) || !n.isClickable()) continue;
+            String l = label(n).toLowerCase(Locale.ROOT);
+            if (l.contains("delete") || l.contains("bin") || l.contains("trash") || l.contains("remove")) {
+                named = n;
+            } else if (!l.contains("edit")) {
+                Rect r = new Rect();
+                n.getBoundsInScreen(r);
+                if (r.left >= unnamedLeft) {
+                    unnamed = n;
+                    unnamedLeft = r.left;
+                }
+            }
+        }
+        return named != null ? named : unnamed;
+    }
+
+    /** The first name-like text in the row (letters, not the number). */
+    private static String nameIn(List<AccessibilityNodeInfo> inside, String num) {
+        for (AccessibilityNodeInfo n : inside) {
+            if (n.isClickable()) continue;
+            String l = label(n);
+            if (l.equals(num) || !l.matches(".*[A-Za-z]{2,}.*")) continue;
+            String low = l.toLowerCase(Locale.ROOT);
+            if (low.equals("male") || low.equals("female") || low.startsWith("dob") || low.contains("edit")) continue;
+            return l;
+        }
+        return "";
+    }
+
+    private Target sameLine(AccessibilityNodeInfo number, List<Node> nodes) {
+        Rect nr = bounds(number);
+        if (nr.height() <= 0) return null;
+        AccessibilityNodeInfo bin = null;
+        int binLeft = Integer.MIN_VALUE;
+        String name = "";
+        int nameTop = Integer.MAX_VALUE;
+        for (Node n : nodes) {
+            Rect r = bounds(n.node);
+            if (r.height() <= 0) continue;
+            String l = label(n.node);
+            if (n.node.isClickable()) {
+                if (Math.abs(r.centerY() - nr.centerY()) > Math.max(nr.height(), r.height()) / 2 + 4) continue;
+                if (r.left < nr.right || r.width() > screen().width() / 3) continue;
+                if (l.toLowerCase(Locale.ROOT).contains("edit")) continue;
+                if (r.left > binLeft) {
+                    bin = n.node;
+                    binLeft = r.left;
+                }
+            } else if (r.top >= nr.bottom && r.top - nr.bottom < dp(60) && Math.abs(r.left - nr.left) < dp(20)
+                    && l.matches(".*[A-Za-z]{2,}.*") && r.top < nameTop) {
+                name = l;
+                nameTop = r.top;
+            }
+        }
+        return bin == null ? null : new Target(bin, name);
+    }
+
+    private boolean nameOnPage(String name) {
+        for (Node n : all()) if (label(n.node).equals(name)) return true;
+        return false;
+    }
+
+    private static List<AccessibilityNodeInfo> subtree(AccessibilityNodeInfo root) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        List<AccessibilityNodeInfo> stack = new ArrayList<>();
+        stack.add(root);
+        while (!stack.isEmpty() && out.size() <= 60) {
+            AccessibilityNodeInfo n = stack.remove(0);
+            if (n == null) continue;
+            out.add(n);
+            for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
+        }
+        return out;
+    }
+
+    // ---- reading the page (same as Ticker) ---------------------------------------
+
+    private static final class Node {
+        final AccessibilityNodeInfo node;
+        final boolean inDialog;
+
+        Node(AccessibilityNodeInfo node, boolean inDialog) {
+            this.node = node;
+            this.inDialog = inDialog;
+        }
+    }
+
+    private List<Node> all() {
+        List<Node> out = new ArrayList<>();
+        String own = service.getPackageName();
+        List<AccessibilityWindowInfo> windows;
+        try {
+            windows = service.getWindows();
+        } catch (RuntimeException e) {
+            windows = new ArrayList<>();
+        }
+        for (AccessibilityWindowInfo w : windows) {
+            if (w.getType() == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+            if (w.getType() == AccessibilityWindowInfo.TYPE_SYSTEM) continue;
+            AccessibilityNodeInfo root = w.getRoot();
+            if (root == null || own.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) continue;
+            List<AccessibilityNodeInfo> stack = new ArrayList<>();
+            List<Boolean> dialog = new ArrayList<>();
+            stack.add(root);
+            dialog.add(false);
+            while (!stack.isEmpty() && out.size() < 6000) {
+                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+                boolean inDialog = dialog.remove(dialog.size() - 1);
+                if (n == null) continue;
+                String role = "";
+                try {
+                    CharSequence r = n.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole");
+                    if (r != null) role = r.toString().toLowerCase(Locale.ROOT);
+                } catch (RuntimeException ignored) {
+                }
+                boolean d = inDialog || role.contains("dialog") || role.contains("alertdialog");
+                out.add(new Node(n, d));
+                // Children in page order (the stack pops the last one first).
+                for (int i = n.getChildCount() - 1; i >= 0; i--) {
+                    stack.add(n.getChild(i));
+                    dialog.add(d);
+                }
+            }
+        }
+        return out;
+    }
+
+    private Set<String> clickableKeys() {
+        Set<String> out = new HashSet<>();
+        for (Node n : all()) {
+            if (!n.node.isClickable()) continue;
+            out.add(key(n.node, bounds(n.node)));
+        }
+        return out;
+    }
+
+    private static String key(AccessibilityNodeInfo n, Rect r) {
+        return label(n) + "@" + r.toShortString();
+    }
+
+    private static String label(AccessibilityNodeInfo n) {
+        CharSequence t = n.getText();
+        if (t == null || t.length() == 0) t = n.getContentDescription();
+        return t == null ? "" : t.toString().replace('\n', ' ').trim();
+    }
+
+    private static Rect bounds(AccessibilityNodeInfo n) {
+        Rect r = new Rect();
+        try {
+            n.refresh();
+        } catch (RuntimeException ignored) {
+        }
+        n.getBoundsInScreen(r);
+        return r;
+    }
+
+    private boolean onScreen(AccessibilityNodeInfo n, Rect r) {
+        Rect s = screen();
+        return n.isVisibleToUser() && r.width() > 4 && r.height() > 4 && r.top >= 0 && r.bottom <= s.height();
+    }
+
+    // ---- gestures and helpers -----------------------------------------------------
+
+    private void tap(int x, int y) {
+        Path p = new Path();
+        p.moveTo(Math.max(0, x), Math.max(0, y));
+        service.dispatchGesture(new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(p, 0, 60)).build(), null, null);
+    }
+
+    /** A steady drag of about a third of the screen; {@code down}: show what is further down. */
+    private void scroll(boolean down) {
+        Rect s = screen();
+        float a = s.height() * 2 / 3f, b = s.height() / 3f;
+        Path p = new Path();
+        p.moveTo(s.centerX(), down ? a : b);
+        p.lineTo(s.centerX(), down ? b : a);
+        service.dispatchGesture(new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(p, 0, 400)).build(), null, null);
+    }
+
+    private Rect screen() {
+        android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
+        return new Rect(0, 0, dm.widthPixels, dm.heightPixels);
+    }
+
+    private int dp(int v) {
+        return Math.round(v * service.getResources().getDisplayMetrics().density);
+    }
+
+    private void later(Runnable r, long ms) {
+        int g = gen;
+        handler.postDelayed(() -> {
+            if (!running || g != gen) return;
+            try {
+                r.run();
+            } catch (RuntimeException e) {
+                stop("Error: " + e);
+            }
+        }, ms);
+    }
+
+    private void log(String line) {
+        log.append(SystemClock.uptimeMillis() - start).append(" ms  ").append(line).append('\n');
+    }
+}

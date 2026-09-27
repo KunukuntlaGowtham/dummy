@@ -58,7 +58,15 @@ public class InspectorService extends AccessibilityService {
     @Override
     public void onDestroy() {
         closeCard();
+        closeAsk();
         if (ticker != null) ticker.stop("Stopped");
+        if (deleter != null) deleter.stop("Stopped");
+        if (delButton != null) {
+            try {
+                windowManager.removeView(delButton);
+            } catch (RuntimeException ignored) {
+            }
+        }
         if (tickButton != null) {
             try {
                 windowManager.removeView(tickButton);
@@ -219,6 +227,181 @@ public class InspectorService extends AccessibilityService {
             }
         });
         windowManager.addView(tickButton, tickParams);
+        showDeleteButton();
+    }
+
+    // ---- the Del button: delete the rows you type, clearing the two pop-ups ---------
+
+    private TextView delButton;
+    private WindowManager.LayoutParams delParams;
+    private Deleter deleter;
+    private View ask;
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void showDeleteButton() {
+        deleter = new Deleter(this, (summary, log) -> {
+            try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
+                out.write(log.getBytes());
+            } catch (java.io.IOException ignored) {
+            }
+            delButton.setText("🗑\nDel");
+            showCard(summary);
+        });
+        delButton = new TextView(this);
+        delButton.setText("🗑\nDel");
+        delButton.setTextColor(Color.WHITE);
+        delButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        delButton.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(0xEEC62828);
+        bg.setStroke(dp(2), 0x66FFFFFF);
+        delButton.setBackground(bg);
+        delButton.setElevation(dp(4));
+        delParams = new WindowManager.LayoutParams(dp(56), dp(56),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        delParams.gravity = Gravity.TOP | Gravity.START;
+        delParams.x = dp(12);
+        delParams.y = dp(292);
+        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+        float[] down = new float[2];
+        int[] start = new int[2];
+        boolean[] dragged = {false};
+        delButton.setOnTouchListener((v, e) -> {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    down[0] = e.getRawX();
+                    down[1] = e.getRawY();
+                    start[0] = delParams.x;
+                    start[1] = delParams.y;
+                    dragged[0] = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
+                    if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
+                    if (dragged[0]) {
+                        delParams.x = start[0] + (int) dx;
+                        delParams.y = start[1] + (int) dy;
+                        windowManager.updateViewLayout(delButton, delParams);
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!dragged[0]) {
+                        closeCard();
+                        if (deleter.isRunning()) deleter.stop("Stopped");
+                        else askRows();
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        });
+        windowManager.addView(delButton, delParams);
+    }
+
+    /** Asks which row numbers to delete, then starts. */
+    private void askRows() {
+        closeAsk();
+        android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(16), dp(18), dp(10));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF81B1D22);
+        bg.setCornerRadius(dp(16));
+        box.setBackground(bg);
+
+        TextView title = new TextView(this);
+        title.setText("Which numbers to delete?");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        box.addView(title);
+        TextView hint = new TextView(this);
+        hint.setText("Row numbers on the page, e.g. 2, 4 or 3-5. Each row's delete button is "
+                + "pressed and its two pop-ups cleared.");
+        hint.setTextColor(0xCCFFFFFF);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        hint.setPadding(0, dp(4), 0, dp(10));
+        box.addView(hint);
+
+        android.widget.EditText input = new android.widget.EditText(this);
+        input.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        input.setText(prefs.getString("delete_rows", ""));
+        input.setSelectAllOnFocus(true);
+        input.setTextColor(Color.WHITE);
+        input.setHintTextColor(0x88FFFFFF);
+        input.setHint("2, 4");
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        box.addView(input, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.END);
+        row.addView(cardButton("Cancel", v -> closeAsk()));
+        row.addView(cardButton("Delete", v -> {
+            String text = input.getText().toString();
+            List<Integer> rows = parseRows(text);
+            if (rows.isEmpty()) {
+                Toast.makeText(this, "Type the row numbers, e.g. 2, 4", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            prefs.edit().putString("delete_rows", text).apply();
+            closeAsk();
+            delButton.setText("■\nStop");
+            // Let the keyboard go down before the page is read.
+            handler.postDelayed(() -> deleter.start(rows), 400);
+        }));
+        box.addView(row);
+
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                getResources().getDisplayMetrics().widthPixels * 88 / 100,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        lp.y = dp(120);
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
+        try {
+            windowManager.addView(box, lp);
+            ask = box;
+            input.requestFocus();
+            handler.postDelayed(() -> {
+                android.view.inputmethod.InputMethodManager im =
+                        getSystemService(android.view.inputmethod.InputMethodManager.class);
+                if (im != null) im.showSoftInput(input, 0);
+            }, 200);
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "Couldn't show the question: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** "2, 4 6-8" -> [2, 4, 6, 7, 8]. */
+    static List<Integer> parseRows(String text) {
+        List<Integer> out = new ArrayList<>();
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)(?:\\s*-\\s*(\\d+))?").matcher(text);
+        while (m.find()) {
+            try {
+                int a = Integer.parseInt(m.group(1));
+                int b = m.group(2) == null ? a : Integer.parseInt(m.group(2));
+                for (int i = Math.min(a, b); i <= Math.max(a, b) && out.size() < 200; i++) out.add(i);
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        return out;
+    }
+
+    private void closeAsk() {
+        if (ask == null) return;
+        try {
+            windowManager.removeView(ask);
+        } catch (RuntimeException ignored) {
+        }
+        ask = null;
     }
 
     // ---- scanning ---------------------------------------------------------------

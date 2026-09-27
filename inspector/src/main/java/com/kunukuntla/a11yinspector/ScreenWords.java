@@ -32,10 +32,13 @@ final class ScreenWords {
     static final class Word {
         final String text;
         final Rect box;
+        /** A whole line by itself (a button's label), not one word out of a sentence. */
+        final boolean whole;
 
-        Word(String text, Rect box) {
+        Word(String text, Rect box, boolean whole) {
             this.text = text;
             this.box = box;
+            this.whole = whole;
         }
     }
 
@@ -99,10 +102,10 @@ final class ScreenWords {
                     for (Text.TextBlock block : text.getTextBlocks()) {
                         for (Text.Line line : block.getLines()) {
                             Rect lb = line.getBoundingBox();
-                            if (lb != null) out.add(new Word(line.getText(), lb));
+                            if (lb != null) out.add(new Word(line.getText(), lb, true));
                             for (Text.Element e : line.getElements()) {
                                 Rect b = e.getBoundingBox();
-                                if (b != null && line.getElements().size() > 1) out.add(new Word(e.getText(), b));
+                                if (b != null && line.getElements().size() > 1) out.add(new Word(e.getText(), b, false));
                             }
                         }
                     }

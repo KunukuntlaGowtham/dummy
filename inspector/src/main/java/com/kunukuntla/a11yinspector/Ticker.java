@@ -46,6 +46,10 @@ final class Ticker {
     private final List<String> failedRows = new ArrayList<>();
     private String lastScreen = "";
     private final ScreenWords words;
+    /** Where the page shows "OK" by itself (read once per screen): not a pop-up's. */
+    private List<Rect> pageOks;
+    /** A pop-up came after an earlier tick this run: wait a little longer for the next one. */
+    private boolean popupsSeen;
 
     Ticker(AccessibilityService service, Listener listener) {
         this.service = service;
@@ -68,6 +72,8 @@ final class Ticker {
         failedRows.clear();
         ticked = notTicked = popups = stillScreens = 0;
         lastScreen = "";
+        pageOks = null;
+        popupsSeen = false;
         log("Tick: clicking every empty checkbox directly, clearing pop-ups");
         later(this::next, 100);
     }
@@ -100,15 +106,21 @@ final class Ticker {
             lastScreen = screen;
             log("no empty checkbox on this screen - scrolling on");
             scroll();
-            later(this::next, 900);
+            pageOks = null; // a new screen: read its words again
+            later(this::next, 600);
             return;
         }
         tried.add(b.node);
         Set<String> before = clickableKeys();
-        // Any OK already on the page before the tick is not a pop-up's.
+        // Any OK already on the page before the tick is not a pop-up's (read once a screen).
+        if (pageOks != null) {
+            tickBox(b, before, pageOks);
+            return;
+        }
         words.read(seen -> {
             if (!running) return;
-            tickBox(b, before, okWords(seen));
+            pageOks = okWords(seen);
+            tickBox(b, before, pageOks);
         });
     }
 
@@ -120,32 +132,46 @@ final class Ticker {
         log("row " + b.row + ": clicking its checkbox (box at " + b.box.centerX() + ","
                 + b.box.centerY() + ")");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-        later(() -> {
-            if (isChecked(b.node)) {
+        whenChecked(b.node, 450, checked -> {
+            if (checked) {
                 done(b, "ticked ✓ by a direct click", before, oldOks);
             } else {
                 // The click didn't take (or was refused): a real tap on the box you see.
                 log("row " + b.row + ": " + (sent ? "click didn't tick it" : "click refused")
                         + " - tapping the box at " + b.box.centerX() + "," + b.box.centerY());
                 tap(b.box.centerX(), b.box.centerY());
-                later(() -> {
-                    if (isChecked(b.node)) done(b, "ticked ✓ by a tap", before, oldOks);
+                whenChecked(b.node, 500, ok -> {
+                    if (ok) done(b, "ticked ✓ by a tap", before, oldOks);
                     else {
                         notTicked++;
                         failedRows.add(b.row);
                         log("row " + b.row + ": still empty ✗");
-                        clearPopups(before, oldOks, 3, this::next);
+                        clearPopups(before, oldOks, firstLooks(), this::next);
                     }
-                }, 500);
+                });
             }
-        }, 450);
+        });
+    }
+
+    /** Checks every 90 ms (up to {@code ms}) whether the box turned ☑. */
+    private void whenChecked(AccessibilityNodeInfo node, long ms, java.util.function.Consumer<Boolean> then) {
+        later(() -> {
+            boolean on = isChecked(node);
+            if (on || ms <= 90) then.accept(on);
+            else whenChecked(node, ms - 90, then);
+        }, 90);
+    }
+
+    /** How often to look for a pop-up after a tick: longer once pop-ups have been coming. */
+    private int firstLooks() {
+        return popupsSeen ? 4 : 2;
     }
 
     private void done(Box b, String how, Set<String> before, List<Rect> oldOks) {
         ticked++;
         tickedRows.add(b.row);
         log("row " + b.row + ": " + how);
-        clearPopups(before, oldOks, 3, this::next);
+        clearPopups(before, oldOks, firstLooks(), this::next);
     }
 
     // ---- pop-ups ---------------------------------------------------------------
@@ -158,7 +184,7 @@ final class Ticker {
     private void clearPopups(Set<String> before, List<Rect> oldOks, int looksLeft, Runnable then) {
         if (popupTaps >= 3) {
             log("pop-up: 3 taps after this box already - going on");
-            later(then, 300);
+            later(then, 150);
             return;
         }
         later(() -> {
@@ -172,7 +198,8 @@ final class Ticker {
                 if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
                 popups++;
                 popupTaps++;
-                clearPopups(clickableKeys(), oldOks, 3, then); // a second pop-up may follow
+                popupsSeen = true;
+                clearPopups(clickableKeys(), oldOks, 1, then); // a second pop-up may follow
                 return;
             }
             // 2) A pop-up drawn but not reported: a new "OK" read off a screenshot.
@@ -184,7 +211,8 @@ final class Ticker {
                     tap(ok.centerX(), ok.centerY());
                     popups++;
                     popupTaps++;
-                    clearPopups(clickableKeys(), oldOks, 3, then); // a second pop-up may follow
+                    popupsSeen = true;
+                    clearPopups(clickableKeys(), oldOks, 1, then); // a second pop-up may follow
                 } else if (looksLeft > 1) {
                     clearPopups(before, oldOks, looksLeft - 1, then);
                 } else {
@@ -193,7 +221,7 @@ final class Ticker {
                     then.run();
                 }
             });
-        }, 300);
+        }, 120);
     }
 
     /** Where the screen shows "OK" (or "Okay"), each as screen pixels. */
