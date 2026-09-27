@@ -122,7 +122,7 @@ public class CheckService extends AccessibilityService {
             lp.gravity = Gravity.TOP | Gravity.START;
             wm.addView(marks, lp);
         }
-        marks.bar = "👁 Watching - tick the boxes yourself";
+        marks.bar = "👁 Watching…\ntick the boxes yourself; the rows not ticked show here";
         marks.invalidate();
         look(gen);
     }
@@ -143,11 +143,9 @@ public class CheckService extends AccessibilityService {
     /** One look: our marks out of the picture, a screenshot, the marks back with what it found. */
     private void look(int g) {
         if (!watching || g != gen) return;
-        if (marks != null) marks.setVisibility(View.INVISIBLE);
         main.postDelayed(() -> {
             if (!watching || g != gen) return;
             snap.take(dp(14), dp(48), result -> {
-                if (marks != null) marks.setVisibility(View.VISIBLE);
                 if (!watching || g != gen) {
                     result.drop();
                     return;
@@ -166,13 +164,12 @@ public class CheckService extends AccessibilityService {
                 });
             }, why -> {
                 if (marks != null) {
-                    marks.setVisibility(View.VISIBLE);
                     marks.bar = "No screenshot: " + why;
                     marks.invalidate();
                 }
                 main.postDelayed(() -> look(g), 800);
             });
-        }, 40);
+        }, 0);
     }
 
     /**
@@ -185,6 +182,8 @@ public class CheckService extends AccessibilityService {
             numbers.addAll(Rows.numbersOnScreen(this));
         } catch (RuntimeException ignored) {
         }
+        int top = statusBar() + panelHeight();
+        numbers.removeIf(w -> w.box.top < top);
         boolean missing = numbers.isEmpty();
         for (Rect b : r.emptyBoxes) if (numberBeside(b, numbers) == null) missing = true;
         if (!missing) {
@@ -193,14 +192,16 @@ public class CheckService extends AccessibilityService {
             return;
         }
         snap.readWords(r, read -> {
-            for (Snap.Word w : read.words) if (ROW_NUMBER.matcher(w.text.trim()).matches()) numbers.add(w);
+            for (Snap.Word w : read.words) {
+                if (w.box.top >= top && ONLY_NUMBER.matcher(w.text.trim()).matches()) numbers.add(w);
+            }
             done.accept(numbers);
         });
     }
 
     private void process(Snap.Result snapped, List<Snap.Word> numbers) {
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        int top = statusBar() + dp(4), bottom = dm.heightPixels - dp(40);
+        int top = statusBar() + panelHeight(), bottom = dm.heightPixels - dp(40);
         List<Mark> shown = new ArrayList<>();
         Set<String> emptyHere = new LinkedHashSet<>();
         List<Integer> dxs = new ArrayList<>(), numXs = new ArrayList<>(), sizes = new ArrayList<>();
@@ -270,8 +271,9 @@ public class CheckService extends AccessibilityService {
         List<String> not = notTicked();
         int ticked = 0;
         for (boolean t : state.values()) if (t) ticked++;
-        return "👁 " + (not.isEmpty() ? "No row left unticked" : "Not ticked: " + String.join(", ", not))
-                + "  ·  ☑ " + ticked + " of " + state.size() + "  ·  here ☐" + emptyNow + " ☑" + tickedNow;
+        return (not.isEmpty() ? "✅ None left unticked" : "☐ " + String.join(", ", not))
+                + "\n" + "not ticked · ☑ " + ticked + " of " + state.size() + " rows seen · on screen now: ☐"
+                + emptyNow + " ☑" + tickedNow;
     }
 
     /** The nearest number on the same line as the box (left or right of it), like the main app. */
@@ -401,30 +403,35 @@ public class CheckService extends AccessibilityService {
 
         @Override
         protected void onDraw(Canvas canvas) {
+            // Only the live numbers (no frames on the page): a panel under the status bar.
+            if (bar.isEmpty()) return;
             int[] at = new int[2];
             getLocationOnScreen(at);
             canvas.translate(-at[0], -at[1]);
-            for (Mark m : marks) {
-                int colour = m.ticked ? 0xFF2E7D32 : 0xFFD32F2F;
-                line.setColor(colour);
-                RectF r = new RectF(m.box.left - dp(3), m.box.top - dp(3), m.box.right + dp(3), m.box.bottom + dp(3));
-                canvas.drawRoundRect(r, dp(4), dp(4), line);
-                String label = m.number + (m.ticked ? " ✓" : "");
-                float tw = text.measureText(label);
-                float lx = r.right + dp(4), ly = r.centerY() - dp(10);
-                fill.setColor(colour);
-                canvas.drawRoundRect(new RectF(lx, ly, lx + tw + dp(10), ly + dp(20)), dp(6), dp(6), fill);
-                canvas.drawText(label, lx + dp(5), ly + dp(15), text);
+            float y = statusBar();
+            float width = getResources().getDisplayMetrics().widthPixels;
+            fill.setColor(0xF01B1D22);
+            canvas.drawRect(0, y, width, y + panelHeight(), fill);
+            text.setTextSize(dp(20));
+            text.setColor(bar.startsWith("✅") ? 0xFF9AE6A1 : 0xFFFF8A80);
+            String main = bar, sub = "";
+            int nl = bar.indexOf('\n');
+            if (nl >= 0) {
+                main = bar.substring(0, nl);
+                sub = bar.substring(nl + 1);
             }
-            if (!bar.isEmpty()) {
-                float y = statusBar() + dp(2);
-                fill.setColor(0xE61B1D22);
-                canvas.drawRect(0, y, getResources().getDisplayMetrics().widthPixels, y + dp(26), fill);
-                text.setTextSize(dp(12));
-                canvas.drawText(bar, dp(8), y + dp(18), text);
-                text.setTextSize(dp(13));
-            }
+            // Shrink a long list to fit the width.
+            float tw = text.measureText(main);
+            if (tw > width - dp(16)) text.setTextSize(dp(20) * (width - dp(16)) / tw);
+            canvas.drawText(main, dp(8), y + dp(26), text);
+            text.setTextSize(dp(12));
+            text.setColor(0xCCFFFFFF);
+            canvas.drawText(sub, dp(8), y + dp(44), text);
         }
+    }
+
+    private int panelHeight() {
+        return dp(52);
     }
 
     // ---- buttons and the card -------------------------------------------------------------

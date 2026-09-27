@@ -54,6 +54,13 @@ final class Rows {
         for (AccessibilityNodeInfo n : nodes(service)) {
             String l = label(n);
             if (!l.matches(ROW_NUMBER)) continue;
+            // Fresh position: after a scroll a remembered one is off by the scroll, and the
+            // box would get the number of another row.
+            try {
+                if (!n.refresh()) continue;
+            } catch (RuntimeException e) {
+                continue;
+            }
             Rect r = new Rect();
             n.getBoundsInScreen(r);
             if (r.width() <= 0 || r.height() <= 0 || !n.isVisibleToUser()) continue;
