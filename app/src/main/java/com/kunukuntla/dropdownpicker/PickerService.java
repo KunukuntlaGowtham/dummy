@@ -249,13 +249,15 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         backDeleteButton = roundButton(DELETE_LABEL, 0xDDAD1457, dp(52));
         backDeleteButton.setContentDescription("Back twice, then delete the not-ticked rows");
         backDeleteButton.setOnTouchListener(new DragOrTap(() -> {
+            // Tap: delete right here, on the page you are on - no Back.
+            if (deleteRunning) endDelete("Stopped");
+            else if (backRunning) endBack("Stopped");
+            else startDelete(null);
+        }, () -> {
+            // Long press: Back twice first, then delete.
             if (deleteRunning) endDelete("Stopped");
             else if (backRunning) endBack("Stopped");
             else backScrollBack(true);
-        }, () -> {
-            // Long press: Delete right here, without going Back first (for testing).
-            if (deleteRunning) endDelete("Stopped");
-            else if (!backRunning) startDelete(null);
         }));
         LinearLayout.LayoutParams backDeleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
         backDeleteLp.topMargin = dp(6);
@@ -764,7 +766,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     // ---- Delete the not-ticked rows -------------------------------------------
 
-    private static final String DELETE_LABEL = "↩🗑\nB+Del";
+    private static final String DELETE_LABEL = "🗑\nDel";
     /** Looks (and scrolls) allowed to bring one row onto the screen. */
     private static final int DELETE_STEPS = 40;
     /** A card's number on its own: "2", "12.", "(3)", "#4" (OCR may read 1 as l, I or |, 0 as O). */

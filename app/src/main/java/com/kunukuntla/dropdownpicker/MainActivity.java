@@ -198,8 +198,9 @@ public class MainActivity extends Activity {
         del.addView(toggle("Dummy delete: find each row's dustbin and mark it red - no tap",
                 tp.getBoolean("dummyDelete", false),
                 on -> tickPrefs(e -> e.putBoolean("dummyDelete", on))));
-        TextView delNote = label("Long-press B+Del to delete (or dummy-delete) on the page you "
-                + "are on, without going Back first.");
+        TextView delNote = label("Del button: tap to delete (or dummy-delete) on the page you "
+                + "are on. Long-press to go Back twice first. After Tick (Tick → B+Del) it "
+                + "always goes Back twice.");
         delNote.setTextSize(12);
         del.addView(delNote);
 
