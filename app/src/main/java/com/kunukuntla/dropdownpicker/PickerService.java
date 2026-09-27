@@ -1946,9 +1946,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
             bmp.recycle();
             log("Day colours: " + seen.toString().trim());
-            TextNode want = days[date.getDayOfMonth()];
-            log("Day " + date.getDayOfMonth() + " is at " + want.bounds.toShortString() + " \""
-                    + want.text.replace('\n', ' ') + "\"");
+            TextNode dayCell = days[date.getDayOfMonth()];
+            log("Day " + date.getDayOfMonth() + " is at " + dayCell.bounds.toShortString() + " \""
+                    + dayCell.text.replace('\n', ' ') + "\"");
             chooseDay(date.getDayOfMonth(), mode, days, colours);
         })), 60);
     }
