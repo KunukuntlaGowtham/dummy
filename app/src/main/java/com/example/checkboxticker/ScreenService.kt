@@ -257,8 +257,6 @@ class ScreenService : Service(), Eyes {
     @Volatile
     private var lastFrame: Frame? = null
 
-    override fun lastPixels(): Triple<IntArray, Int, Int>? = lastFrame?.let { Triple(it.rgb, it.w, it.h) }
-
     /**
      * The screen at [n] x [n] points (0xRRGGBB), to tell whether it is still changing. Null if
      * nothing has been captured. Call off the main thread (it may wait a moment for a frame).

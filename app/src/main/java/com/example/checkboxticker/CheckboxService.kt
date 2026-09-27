@@ -210,10 +210,6 @@ open class CheckboxService : AccessibilityService() {
         // Every Tick run starts its own not-ticked list: nothing left over from an earlier one.
         saveFailedRows(emptySet())
         pageNumbersSeen.clear()
-        doneRows.clear()
-        givenUpRows.clear()
-        notBoxes = 0
-        retryPass = false
         showNumbers()
         onScreen.clear()
         oldLooks.clear()
@@ -232,8 +228,7 @@ open class CheckboxService : AccessibilityService() {
         running = false
         lastBox = null
         updateBubble()
-        status("$why - numbered $attempts, ticked ${attempts - failed.size}" +
-            if (notBoxes > 0) ", $notBoxes non-box square(s) skipped" else "")
+        status("$why - numbered $attempts, ticked ${attempts - failed.size}")
         toast("$why after $attempts boxes")
         onLoopStopped(why)
     }
@@ -313,16 +308,13 @@ open class CheckboxService : AccessibilityService() {
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
-            val pixels = screen.lastPixels()
             val candidates = ArrayList<Pair<Rect, BoxLook.Look?>>()
             for (box in found) {
-                // Only a square shaped like the page's empty box: not text, icons or blanks.
-                val like = shapeOf(pixels, box)
-                if (like != null && like < BoxShape.MATCH) {
-                    notBoxes++
-                    continue
-                }
-                candidates.add(Pair(Rect(box), sketch?.let { lookOf(it, box) }))
+                val look = sketch?.let { lookOf(it, box) }
+                // A box that did not tick stays empty, and may still be on screen after the
+                // scroll: it is known by what is written beside it, and not numbered again.
+                if (look != null && oldLooks.any { BoxLook.same(it, look) }) continue
+                candidates.add(Pair(Rect(box), look))
             }
             if (pageNumbering && candidates.isNotEmpty()) {
                 status("reading the numbers beside the boxes")
@@ -342,14 +334,8 @@ open class CheckboxService : AccessibilityService() {
         for ((k, c) in candidates.withIndex()) {
             if (attempts >= limit) break
             val label = labels.getOrNull(k)
-            if (label != null) {
-                // Known by its number: skip only one already ticked or already given up on.
-                if (label in doneRows || label in givenUpRows) continue
-            } else {
-                // No number: a box that did not tick is known by what is written beside it.
-                val look = c.second
-                if (look != null && oldLooks.any { BoxLook.same(it, look) }) continue
-            }
+            // Already handled under this number (seen again after a scroll): skip it.
+            if (label != null && !pageNumbersSeen.add(label)) continue
             attempts++
             // Order count: the count. By the page's number: 0 ("?") when none was read on its
             // line, never a count that looks like a row number.
@@ -366,8 +352,6 @@ open class CheckboxService : AccessibilityService() {
                 return
             }
             emptySnaps = 0
-            snapLowest = onScreen.maxOf { it.box.bottom }
-            retryPass = false
             status("boxes ${name(onScreen.first())} to ${name(onScreen.last())} on this screen")
             tickNext(0)
         }
@@ -412,28 +396,8 @@ open class CheckboxService : AccessibilityService() {
         status("checking")
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
-            // Still empty: an empty square is still found there, and it still has the empty
-            // box's shape (a ticked box never does, so it is never tapped - and unticked - again).
-            val pixels = screen.lastPixels()
-            val stillEmpty = onScreen.filter { item ->
-                boxes.any { Rect.intersects(it, item.box) } &&
-                    (shapeOf(pixels, item.box)?.let { it >= BoxShape.MATCH } ?: true)
-            }
             for (item in onScreen) {
-                if (item !in stillEmpty && item.page) doneRows.add(item.number)
-            }
-            if (stillEmpty.isNotEmpty() && !retryPass) {
-                // One more tap for each box that is still empty (a pop-up still closing, a tap
-                // that didn't register) before calling it not ticked.
-                retryPass = true
-                status("tapping ${stillEmpty.size} box(es) again")
-                onScreen.retainAll(stillEmpty.toSet())
-                tickNext(0)
-                return@findBoxes
-            }
-            for (item in onScreen) {
-                if (item in stillEmpty) {
-                    if (item.page) givenUpRows.add(item.number)
+                if (boxes.any { Rect.intersects(it, item.box) }) {
                     noteNotTicked(item.number, item.page)
                     item.look?.let {
                         oldLooks.add(it)
@@ -455,43 +419,7 @@ open class CheckboxService : AccessibilityService() {
     }
 
     /** A run numbers at most this many boxes, then stops. */
-    private fun maxBoxes() = prefs().getInt("maxBoxes", 500).coerceAtLeast(1)
-
-    /** Row numbers ticked this run, and ones given up on after the second tap. */
-    private val doneRows = HashSet<Int>()
-    private val givenUpRows = HashSet<Int>()
-    private var retryPass = false
-    private var snapLowest = 0
-    private var notBoxes = 0                            // squares not shaped like a box
-
-    /** The page's empty box as a grey grid (assets/box_empty.png), or null if not readable. */
-    private val boxTemplate: DoubleArray? by lazy {
-        try {
-            assets.open("box_empty.png").use { input ->
-                val b = android.graphics.BitmapFactory.decodeStream(input) ?: return@use null
-                val px = IntArray(b.width * b.height)
-                b.getPixels(px, 0, b.width, 0, 0, b.width, b.height)
-                val grid = BoxShape.gray(px, b.width, 0, 0, b.width, b.height)
-                b.recycle()
-                grid
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /** How alike a square (screen pixels) is to the page's empty box, or null if unknown. */
-    private fun shapeOf(pixels: Triple<IntArray, Int, Int>?, box: Rect): Double? {
-        val t = boxTemplate ?: return null
-        val (rgb, w, h) = pixels ?: return null
-        val s = ScreenService.SCALE
-        val l = (box.left / s).coerceIn(0, w)
-        val r = (box.right / s).coerceIn(0, w)
-        val top = (box.top / s).coerceIn(0, h)
-        val b = (box.bottom / s).coerceIn(0, h)
-        if (r - l < 3 || b - top < 3) return null
-        return BoxShape.ncc(BoxShape.gray(rgb, w, l, top, r, b), t)
-    }
+    private fun maxBoxes() = prefs().getInt("maxBoxes", 15).coerceAtLeast(1)
 
     /**
      * The failed boxes as they are shown: each number less the failures before it - boxes 4,
@@ -526,11 +454,9 @@ open class CheckboxService : AccessibilityService() {
     /** Step 4: bring the boxes below this snap's last one up to the top of the screen. */
     private fun scrollOn() {
         if (!looping) return
-        val lowest = maxOf(snapLowest, onScreen.maxOfOrNull { it.box.bottom } ?: 0)
+        val lowest = onScreen.maxOf { it.box.bottom }
         val h = resources.displayMetrics.heightPixels
-        // At most half a screen: every box is on at least two pictures, so one the finder
-        // missed once gets a second chance instead of scrolling away unseen.
-        val distance = (lowest + dp(16) - dp(72)).coerceIn(dp(48), h / 2)
+        val distance = (lowest + dp(16) - dp(72)).coerceIn(dp(48), h * 7 / 10)
         scrollBy(distance)
     }
 
