@@ -28,7 +28,7 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon assembleDebug -PversionCode=${{ github.run_number }}
+          ./gradlew --no-daemon :app:assembleDebug -PversionCode=${{ github.run_number }}
           cp app/build/outputs/apk/debug/app-debug.apk DropdownPicker.apk
           ls -l DropdownPicker.apk
 

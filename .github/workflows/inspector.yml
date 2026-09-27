@@ -1,0 +1,52 @@
+name: Build A11y Inspector APK
+
+on:
+  push:
+    branches: ["main"]
+    paths: ["inspector/**", ".github/workflows/inspector.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: inspector-apk
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :inspector:assembleDebug -PversionCode=${{ github.run_number }}
+          cp inspector/build/outputs/apk/debug/inspector-debug.apk A11yInspector.apk
+          ls -l A11yInspector.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: A11yInspector-apk
+          path: A11yInspector.apk
+
+      # Its own releases (inspector-N), never marked latest: the latest link stays the main app.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: inspector-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: A11y Inspector build ${{ github.run_number }}
+          body: |
+            A11y Inspector (separate app) built from ${{ github.sha }}.
+            Download: https://github.com/${{ github.repository }}/releases/download/inspector-${{ github.run_number }}/A11yInspector.apk
+          files: A11yInspector.apk
+          make_latest: "false"
