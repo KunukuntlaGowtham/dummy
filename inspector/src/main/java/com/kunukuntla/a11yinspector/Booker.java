@@ -232,14 +232,28 @@ final class Booker {
             stop("✗ " + dateText() + " isn't shown and there's no " + (forward ? "next" : "previous") + " month arrow");
             return;
         }
-        log("date: " + monthText(shown) + " shown - going " + (forward ? "forward" : "back") + " a month");
-        click(arrow);
-        waitFor(() -> shownMonth(dayCells()) != shown, 2000, moved -> {
-            if (!moved) {
-                stop("✗ The calendar didn't move past " + monthText(shown) + " (no later dates open?)");
-                return;
-            }
-            pickDate(moves + 1, 0);
+        // A real tap on the arrow, like on the days (this calendar ignores a plain click);
+        // if the month doesn't change, a click is tried too.
+        inView(arrow, 0, r -> {
+            log("date: " + monthText(shown) + " shown - tapping the " + (forward ? "next" : "previous")
+                    + " month arrow at " + r.centerX() + "," + r.centerY());
+            tap(r.centerX(), r.centerY());
+            waitFor(() -> shownMonth(dayCells()) != shown, 1500, moved -> {
+                if (moved) {
+                    pickDate(moves + 1, 0);
+                    return;
+                }
+                log("date: the month didn't change - clicking the arrow instead");
+                arrow.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                waitFor(() -> shownMonth(dayCells()) != shown, 1500, moved2 -> {
+                    if (!moved2) {
+                        stop("✗ The calendar didn't move past " + monthText(shown)
+                                + " (no " + (forward ? "later" : "earlier") + " months open?)");
+                        return;
+                    }
+                    pickDate(moves + 1, 0);
+                });
+            });
         });
     }
 
@@ -486,6 +500,53 @@ final class Booker {
             done.append("✓ Continue pressed\n");
             later(() -> stop("Done"), 300);
         }, 200);
+    }
+
+    // ---- the dropdown's options, for the form ---------------------------------------------
+
+    /**
+     * Every option in the page's dropdown (opening it if it is closed), for you to choose
+     * from. Empty when the page has no dropdown.
+     */
+    static void options(AccessibilityService service, Handler handler, Consumer<java.util.List<String>> done) {
+        java.util.List<String> now = optionTexts(service);
+        if (!now.isEmpty()) {
+            done.accept(now);
+            return;
+        }
+        AccessibilityNodeInfo field = null;
+        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+            String cls = String.valueOf(n.getClassName());
+            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+            if (cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield")) {
+                field = n;
+                break;
+            }
+        }
+        if (field == null) {
+            done.accept(now);
+            return;
+        }
+        field.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        long until = SystemClock.uptimeMillis() + 1500;
+        Runnable[] poll = new Runnable[1];
+        poll[0] = () -> {
+            java.util.List<String> got = optionTexts(service);
+            if (!got.isEmpty() || SystemClock.uptimeMillis() > until) done.accept(got);
+            else handler.postDelayed(poll[0], 100);
+        };
+        handler.postDelayed(poll[0], 150);
+    }
+
+    private static java.util.List<String> optionTexts(AccessibilityService service) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+            if (!role.contains("listitem") && !role.contains("option") && !role.contains("menuitem")) continue;
+            String t = Taught.label(n);
+            if (!t.isEmpty() && !out.contains(t)) out.add(t);
+        }
+        return out;
     }
 
     // ---- helpers ----------------------------------------------------------------------

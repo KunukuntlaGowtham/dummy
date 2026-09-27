@@ -388,13 +388,16 @@ public class InspectorService extends AccessibilityService {
         bookButton.setOnClickListener(v -> {
             closeCard();
             if (booker.isRunning()) booker.stop("Stopped");
-            else askBooking();
+            else {
+                Toast.makeText(this, "Reading the dropdown's options…", Toast.LENGTH_SHORT).show();
+                Booker.options(this, handler, this::askBooking);
+            }
         });
         windowManager.addView(bookButton, lp);
     }
 
     /** Asks for the dropdown option, the date and the radio button, then fills the page. */
-    private void askBooking() {
+    private void askBooking(List<String> choices) {
         closeAsk();
         android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
         LinearLayout box = new LinearLayout(this);
@@ -417,8 +420,51 @@ public class InspectorService extends AccessibilityService {
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hint.setPadding(0, dp(4), 0, dp(6));
         box.addView(hint);
-        android.widget.EditText option = field(box, "Dropdown option (a few of its words)",
+        android.widget.EditText option = field(box, choices.isEmpty() ? "Dropdown option (a few of its words)"
+                        : "Dropdown option - pick one below (or type a few of its words)",
                 "e.g. Tirumala Male Only", prefs.getString("book_option", ""), android.text.InputType.TYPE_CLASS_TEXT);
+        if (!choices.isEmpty()) {
+            // The page's own options: tap one to choose it.
+            LinearLayout list = new LinearLayout(this);
+            list.setOrientation(LinearLayout.VERTICAL);
+            List<TextView> rows = new ArrayList<>();
+            String saved = option.getText().toString();
+            for (String c : choices) {
+                TextView t = new TextView(this);
+                t.setText(c);
+                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                t.setPadding(dp(10), dp(8), dp(10), dp(8));
+                rows.add(t);
+                list.addView(t);
+            }
+            Runnable paint = () -> {
+                String cur = option.getText().toString();
+                for (TextView t : rows) {
+                    boolean on = t.getText().toString().equals(cur);
+                    t.setTextColor(on ? Color.WHITE : 0xDDFFFFFF);
+                    t.setBackgroundColor(on ? 0xFF1565C0 : 0x00000000);
+                }
+            };
+            for (TextView t : rows) {
+                t.setOnClickListener(v -> {
+                    option.setText(t.getText());
+                    paint.run();
+                });
+            }
+            paint.run();
+            ScrollView sc = new ScrollView(this);
+            sc.addView(list);
+            GradientDrawable lbg = new GradientDrawable();
+            lbg.setColor(0x33FFFFFF);
+            lbg.setCornerRadius(dp(8));
+            sc.setBackground(lbg);
+            box.addView(sc, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                    Math.min(dp(220), dp(36) * choices.size() + dp(8))));
+            // Scroll to the chosen one.
+            for (TextView t : rows) {
+                if (t.getText().toString().equals(saved)) sc.post(() -> sc.scrollTo(0, t.getTop()));
+            }
+        }
         android.widget.EditText date = field(box, "Date", "e.g. 15/10/2026",
                 prefs.getString("book_date", ""), android.text.InputType.TYPE_CLASS_DATETIME
                         | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
@@ -453,11 +499,12 @@ public class InspectorService extends AccessibilityService {
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
         lp.y = dp(90);
-        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
+        lp.softInputMode = choices.isEmpty() ? WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
+                : WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN;
         try {
             windowManager.addView(box, lp);
             ask = box;
-            option.requestFocus();
+            if (choices.isEmpty()) option.requestFocus();
         } catch (RuntimeException e) {
             Toast.makeText(this, "Couldn't show the form: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
