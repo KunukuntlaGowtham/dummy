@@ -48,7 +48,7 @@ public class MainActivity extends Activity {
                 + "pop-ups yourself, scrolling down the page. The panel at the top shows, live, the rows "
                 + "not ticked - each one less for every not-ticked row before it (6, 8, 10 shows 6, 7, 8).\n"
                 + "3. Tap 👁 again to stop (the numbers stay). Hold 👁 to start a new list.\n\n"
-                + "It takes screenshots (Android 11 or newer); nothing is tapped or changed."); nothing is tapped or changed.");
+                + "It takes screenshots (Android 11 or newer); nothing is tapped or changed.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));
