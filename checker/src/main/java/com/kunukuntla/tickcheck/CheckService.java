@@ -28,8 +28,9 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * A floating Check button. You tick the boxes and close the pop-ups yourself; tap Check and
- * it lists, in page order, the rows still not ticked. Only reads the page.
+ * Two floating buttons. You tick the boxes and close the pop-ups yourself; after every 3-4
+ * ticks tap Save (it notes every row and whether it is ticked); at the end tap List for the
+ * rows never ticked. Only reads the page.
  */
 public class CheckService extends AccessibilityService {
 
@@ -37,7 +38,6 @@ public class CheckService extends AccessibilityService {
 
     private WindowManager wm;
     private TextView button;
-    private WindowManager.LayoutParams params;
     private View card;
 
     @Override
@@ -57,107 +57,211 @@ public class CheckService extends AccessibilityService {
     @Override
     public void onDestroy() {
         closeCard();
-        if (button != null) {
+        for (View b : new View[] {button, listButton}) {
+            if (b == null) continue;
             try {
-                wm.removeView(button);
+                wm.removeView(b);
             } catch (RuntimeException ignored) {
             }
         }
         super.onDestroy();
     }
 
-    @SuppressLint("ClickableViewAccessibility")
+    // ---- the two buttons: Save (after every few ticks) and List (at the end) ------------
+
+    private TextView listButton;
+
     private void showButton() {
-        button = new TextView(this);
-        button.setText("☐?\nCheck");
-        button.setTextColor(Color.WHITE);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        button.setGravity(Gravity.CENTER);
+        button = floating("☑+\nSave #" + (captures() + 1), 0xEE6A2C91, dp(200), v -> capture());
+        listButton = floating("📋\nList", 0xEE2E7D32, dp(272), v -> {
+            if (card != null) closeCard();
+            else showList();
+        });
+    }
+
+    /** A round button on the right edge; drag it to move it. */
+    @SuppressLint("ClickableViewAccessibility")
+    private TextView floating(String text, int colour, int y, View.OnClickListener onTap) {
+        TextView b = new TextView(this);
+        b.setText(text);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        b.setGravity(Gravity.CENTER);
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xEE6A2C91);
+        bg.setColor(colour);
         bg.setStroke(dp(2), 0x66FFFFFF);
-        button.setBackground(bg);
-        button.setElevation(dp(4));
-        params = new WindowManager.LayoutParams(dp(60), dp(60),
+        b.setBackground(bg);
+        b.setElevation(dp(4));
+        WindowManager.LayoutParams p = new WindowManager.LayoutParams(dp(60), dp(60),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
                 PixelFormat.TRANSLUCENT);
-        params.gravity = Gravity.TOP | Gravity.END;
-        params.x = dp(8);
-        params.y = dp(200);
+        p.gravity = Gravity.TOP | Gravity.END;
+        p.x = dp(8);
+        p.y = y;
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
         float[] down = new float[2];
         int[] start = new int[2];
         boolean[] dragged = {false};
-        button.setOnTouchListener((v, e) -> {
+        b.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     down[0] = e.getRawX();
                     down[1] = e.getRawY();
-                    start[0] = params.x;
-                    start[1] = params.y;
+                    start[0] = p.x;
+                    start[1] = p.y;
                     dragged[0] = false;
                     return true;
                 case MotionEvent.ACTION_MOVE:
                     float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
                     if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
                     if (dragged[0]) {
-                        params.x = start[0] - (int) dx; // anchored on the right
-                        params.y = start[1] + (int) dy;
-                        wm.updateViewLayout(button, params);
+                        p.x = start[0] - (int) dx; // anchored on the right
+                        p.y = start[1] + (int) dy;
+                        wm.updateViewLayout(b, p);
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
-                    if (!dragged[0]) {
-                        if (card != null) closeCard();
-                        else check();
-                    }
+                    if (!dragged[0]) onTap.onClick(b);
                     return true;
                 default:
                     return true;
             }
         });
-        wm.addView(button, params);
+        wm.addView(b, p);
+        return b;
     }
 
-    private void check() {
+    // ---- the list kept across the Saves --------------------------------------------------
+
+    /**
+     * Every row seen in any Save, in the order first seen: number -> "1" ticked / "0" not,
+     * plus its name. A later Save updates a row (you may have ticked it since).
+     */
+    private final java.util.LinkedHashMap<String, Boolean> state = new java.util.LinkedHashMap<>();
+    private final java.util.Map<String, String> names = new java.util.HashMap<>();
+
+    private android.content.SharedPreferences prefs() {
+        return getSharedPreferences("list", MODE_PRIVATE);
+    }
+
+    private int captures() {
+        return prefs().getInt("captures", 0);
+    }
+
+    private void load() {
+        state.clear();
+        names.clear();
+        String saved = prefs().getString("rows", "");
+        for (String line : saved.split("\n")) {
+            String[] f = line.split("\t", -1);
+            if (f.length < 3) continue;
+            state.put(f[0], f[1].equals("1"));
+            if (!f[2].isEmpty()) names.put(f[0], f[2]);
+        }
+    }
+
+    private void save(int captures) {
+        StringBuilder sb = new StringBuilder();
+        for (java.util.Map.Entry<String, Boolean> e : state.entrySet()) {
+            String name = names.get(e.getKey());
+            sb.append(e.getKey()).append('\t').append(e.getValue() ? "1" : "0").append('\t')
+                    .append(name == null ? "" : name.replace('\t', ' ').replace('\n', ' ')).append('\n');
+        }
+        prefs().edit().putString("rows", sb.toString()).putInt("captures", captures).apply();
+    }
+
+    /** Save: reads the page now and adds it to the list. */
+    private void capture() {
+        closeCard();
         List<Rows.Row> rows;
         try {
             rows = Rows.read(this);
         } catch (RuntimeException e) {
-            showCard("Couldn't read the page: " + e.getMessage(), "");
+            Toast.makeText(this, "Couldn't read the page: " + e.getMessage(), Toast.LENGTH_LONG).show();
             return;
         }
         if (rows.isEmpty()) {
-            showCard("No checkboxes on this page.", "");
+            Toast.makeText(this, "No checkboxes on this screen - nothing saved", Toast.LENGTH_SHORT).show();
             return;
         }
+        load();
+        int added = 0, nowTicked = 0, unnumbered = 0;
+        for (Rows.Row r : rows) {
+            String key = r.number.isEmpty() ? (r.name.isEmpty() ? null : "? " + r.name) : r.number;
+            if (key == null) {
+                unnumbered++;
+                continue;
+            }
+            Boolean was = state.get(key);
+            if (was == null) added++;
+            else if (!was && r.ticked) nowTicked++;
+            state.put(key, r.ticked);
+            if (!r.name.isEmpty()) names.put(key, r.name);
+        }
+        int n = captures() + 1;
+        save(n);
+        int ticked = 0;
+        for (boolean t : state.values()) if (t) ticked++;
+        button.setText("☑+\nSave #" + (n + 1));
+        Toast.makeText(this, "Save #" + n + ": " + state.size() + " rows so far (" + added + " new"
+                + (nowTicked > 0 ? ", " + nowTicked + " ticked since" : "") + "), " + ticked + " ticked, "
+                + (state.size() - ticked) + " not" + (unnumbered > 0 ? " · " + unnumbered + " without a number" : ""),
+                Toast.LENGTH_SHORT).show();
+    }
+
+    /** List: the rows never ticked in any Save, in number order. */
+    private void showList() {
+        load();
+        if (state.isEmpty()) {
+            showCard("Nothing saved yet.\n\nTick 3-4 boxes, tap ☑+ Save, and again after every few. "
+                    + "Then tap 📋 List.", "");
+            return;
+        }
+        List<String> keys = new ArrayList<>(state.keySet());
+        keys.sort((a, b) -> {
+            boolean na = a.matches("\\d+"), nb = b.matches("\\d+");
+            if (na && nb) return Integer.compare(Integer.parseInt(a), Integer.parseInt(b));
+            return na ? -1 : nb ? 1 : 0;
+        });
         List<String> not = new ArrayList<>(), yes = new ArrayList<>();
-        for (Rows.Row r : rows) (r.ticked ? yes : not).add(r.show());
+        StringBuilder rowsText = new StringBuilder();
+        for (String k : keys) {
+            if (state.get(k)) {
+                yes.add(k);
+            } else {
+                not.add(k);
+                String name = names.get(k);
+                rowsText.append("   ").append(k).append(name == null || k.startsWith("?") ? "" : "  " + name).append('\n');
+            }
+        }
         StringBuilder text = new StringBuilder();
+        text.append("From ").append(captures()).append(" save(s), ").append(state.size()).append(" rows\n\n");
         if (not.isEmpty()) {
-            text.append("✅ All ").append(rows.size()).append(" ticked\n");
+            text.append("✅ All ticked\n");
         } else {
-            text.append("☐ NOT ticked (").append(not.size()).append(" of ").append(rows.size())
-                    .append("), in order:\n");
-            for (String s : not) text.append("   ").append(s).append('\n');
+            text.append("☐ NOT ticked (").append(not.size()).append("):\n").append(String.join(", ", not))
+                    .append("\n\n").append(rowsText);
         }
-        if (!yes.isEmpty()) {
-            text.append("\n☑ Ticked (").append(yes.size()).append("): ");
-            List<String> nums = new ArrayList<>();
-            for (Rows.Row r : rows) if (r.ticked) nums.add(r.number.isEmpty() ? "?" : r.number);
-            text.append(String.join(", ", nums)).append('\n');
-        }
-        List<String> notNums = new ArrayList<>();
-        for (Rows.Row r : rows) if (!r.ticked) notNums.add(r.number.isEmpty() ? "?" : r.number);
-        String copy = String.join(", ", notNums);
+        if (!yes.isEmpty()) text.append("\n☑ Ticked (").append(yes.size()).append("): ").append(String.join(", ", yes)).append('\n');
         String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date());
         try (FileOutputStream out = openFileOutput(RESULT_FILE, MODE_PRIVATE)) {
             out.write(("Tick Check - " + stamp + "\n\n" + text).getBytes());
         } catch (java.io.IOException ignored) {
         }
-        showCard(text.toString().trim(), copy);
+        List<String> numbers = new ArrayList<>();
+        for (String k : not) if (k.matches("\\d+")) numbers.add(k);
+        showCard(text.toString().trim(), String.join(", ", numbers));
+    }
+
+    private void newList() {
+        prefs().edit().clear().apply();
+        state.clear();
+        names.clear();
+        button.setText("☑+\nSave #1");
+        closeCard();
+        Toast.makeText(this, "New list - tap ☑+ Save after every few ticks", Toast.LENGTH_SHORT).show();
     }
 
     private void showCard(String text, String copy) {
@@ -186,7 +290,7 @@ public class CheckService extends AccessibilityService {
                 Toast.makeText(this, "Copied: " + copy, Toast.LENGTH_SHORT).show();
             }));
         }
-        row.addView(cardButton("Check again", v -> check()));
+        row.addView(cardButton("New list", v -> newList()));
         row.addView(cardButton("Close", v -> closeCard()));
         box.addView(row);
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
