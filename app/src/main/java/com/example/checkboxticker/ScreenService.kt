@@ -257,6 +257,19 @@ class ScreenService : Service(), Eyes {
     @Volatile
     private var lastFrame: Frame? = null
 
+    /**
+     * The screen at [n] x [n] points (0xRRGGBB), to tell whether it is still changing. Null if
+     * nothing has been captured. Call off the main thread (it may wait a moment for a frame).
+     */
+    fun sample(n: Int): IntArray? {
+        val f = try { grab() } catch (t: Throwable) { null } ?: return null
+        return IntArray(n * n) { i ->
+            val y = (i / n) * f.h / n
+            val x = (i % n) * f.w / n
+            f.rgb[y * f.w + x]
+        }
+    }
+
     /** One frame of the screen as plain colours. */
     private fun grab(): Frame? {
         val imageReader = reader ?: return null

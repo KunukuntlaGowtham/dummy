@@ -117,9 +117,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         // Only a run that finished normally (end of the page, or the box limit) goes on - not
         // Stop, and not one that broke off because the screen couldn't be read.
         boolean finished = why.startsWith("Reached the end") || why.startsWith("Stopped after");
-        if (!finished || !Keywords.loadChain(this, Keywords.CHAIN_TICK_BDEL)) return;
+        if (!finished || !Keywords.loadChain(this, Keywords.CHAIN_TICK_BACK2)) return;
         handler.postDelayed(() -> {
-            if (!running && !busy && !isLooping()) backScrollBack(true);
+            if (!running && !busy && !isLooping()) {
+                backScrollBack(Keywords.loadChain(this, Keywords.CHAIN_BACK_DEL));
+            }
         }, 1000);
     }
 
@@ -245,20 +247,25 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             stepButtons[i].setOnTouchListener(new DragOrTap(() -> run(step), null));
         }
         controls.addView(tickButton, new LinearLayout.LayoutParams(dp(52), dp(52)));
-        // Back twice, then delete the not-ticked rows by the dustbin on their line.
+        // Back twice (then Delete, when linked).
+        backButton = roundButton("↩↩\nBack", 0xFF8D6E63, dp(52));
+        backButton.setContentDescription("Back twice");
+        backButton.setOnTouchListener(new DragOrTap(() -> {
+            if (backRunning) endBack("Stopped");
+            else if (!deleteRunning) {
+                backScrollBack(Keywords.loadChain(this, Keywords.CHAIN_BACK_DEL));
+            }
+        }, null));
+        LinearLayout.LayoutParams backLp = new LinearLayout.LayoutParams(dp(52), dp(52));
+        backLp.topMargin = dp(6);
+        controls.addView(backButton, backLp);
+        // Delete the not-ticked rows on the page you are on, by the dustbin on their line.
         backDeleteButton = roundButton(DELETE_LABEL, 0xDDAD1457, dp(52));
-        backDeleteButton.setContentDescription("Back twice, then delete the not-ticked rows");
+        backDeleteButton.setContentDescription("Delete the not-ticked rows");
         backDeleteButton.setOnTouchListener(new DragOrTap(() -> {
-            // Tap: delete right here, on the page you are on - no Back.
             if (deleteRunning) endDelete("Stopped");
-            else if (backRunning) endBack("Stopped");
-            else startDelete(null);
-        }, () -> {
-            // Long press: Back twice first, then delete.
-            if (deleteRunning) endDelete("Stopped");
-            else if (backRunning) endBack("Stopped");
-            else backScrollBack(true);
-        }));
+            else if (!backRunning) startDelete(null);
+        }, null));
         LinearLayout.LayoutParams backDeleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
         backDeleteLp.topMargin = dp(6);
         controls.addView(backDeleteButton, backDeleteLp);
@@ -616,7 +623,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private void backScrollBack(boolean thenDelete) {
         if (running || busy || backRunning || deleteRunning) return;
         backRunning = true;
-        backDeleteButton.setAlpha(0.5f);
+        backButton.setAlpha(0.5f);
         showStatus("back: 1st Back");
         backStep(() -> pressPageBack(() -> {
             int scrollMm = Keywords.loadBackScroll(this);
@@ -728,7 +735,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private void endBack(String problem) {
         backRunning = false;
         backGen++;
-        backDeleteButton.setAlpha(1f);
+        backButton.setAlpha(1f);
         if (problem != null) Toast.makeText(this, problem, Toast.LENGTH_SHORT).show();
     }
 
@@ -776,6 +783,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     private static final List<String> CONFIRM_WORDS = java.util.Arrays.asList(
             "delete", "yes", "yes delete", "remove", "confirm", "ok");
     private TextView backDeleteButton;
+    private TextView backButton;
     private boolean deleteRunning;
     /** Bumped on every start, so callbacks from a stopped run do nothing. */
     private int deleteGen;
@@ -829,10 +837,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         deleteGen++;
         deleted = 0;
         deleteQueue.clear();
-        dummy = tickPrefs().getBoolean("dummyDelete", false);
-        // Dummy: nothing gets deleted, so nothing moves up - look for the rows as they are.
-        for (int i = 0; i < rows.size(); i++) deleteQueue.add(dummy ? rows.get(i) : rows.get(i) - i);
-        if (dummy) log("DUMMY run: dustbins are only marked, nothing is tapped or deleted");
+        for (int i = 0; i < rows.size(); i++) deleteQueue.add(rows.get(i) - i);
         deleteTries = 0;
         deleteSteps = 0;
         lastScreenKey = null;
@@ -945,6 +950,67 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         }).run())), 60);
     }
 
+    private static boolean sharing() {
+        return com.example.checkboxticker.ScreenService.Companion.getInstance() != null;
+    }
+
+    /**
+     * Runs {@code then} once the page has settled: with screen sharing on, as soon as the
+     * screen has changed (a pop-up came, a card went, the list moved) and then held still for
+     * two looks in a row - so no tap lands on something still sliding in; {@code maxMs} at the
+     * latest. Without screen sharing, simply after {@code maxMs}, as before.
+     */
+    private void settled(long maxMs, Runnable then) {
+        if (!sharing()) {
+            handler.postDelayed(deleteStep(then), maxMs);
+            return;
+        }
+        long start = android.os.SystemClock.uptimeMillis();
+        Runnable go = deleteStep(then);
+        shareReader.execute(() -> {
+            int[] base = null, last = null;
+            boolean changed = false;
+            int still = 0;
+            try {
+                Thread.sleep(60); // let the tap register before the first look
+                base = screenSample();
+                last = base;
+                while (android.os.SystemClock.uptimeMillis() - start < maxMs) {
+                    Thread.sleep(90);
+                    int[] now = screenSample();
+                    if (now == null || base == null) break;
+                    if (!changed && differs(base, now)) changed = true;
+                    still = differs(last, now) ? 0 : still + 1;
+                    last = now;
+                    if (changed && still >= 2
+                            && android.os.SystemClock.uptimeMillis() - start >= 250) break;
+                }
+            } catch (InterruptedException ignored) {
+            }
+            handler.post(go);
+        });
+    }
+
+    private static int[] screenSample() {
+        com.example.checkboxticker.ScreenService s =
+                com.example.checkboxticker.ScreenService.Companion.getInstance();
+        return s == null ? null : s.sample(48);
+    }
+
+    /** More than 0.5% of the points changed colour noticeably. */
+    private static boolean differs(int[] a, int[] b) {
+        if (a == null || b == null || a.length != b.length) return true;
+        int n = 0;
+        for (int i = 0; i < a.length; i++) {
+            int x = a[i], y = b[i];
+            int d = Math.abs(((x >> 16) & 255) - ((y >> 16) & 255))
+                    + Math.abs(((x >> 8) & 255) - ((y >> 8) & 255))
+                    + Math.abs((x & 255) - (y & 255));
+            if (d > 40 && ++n > a.length / 200) return true;
+        }
+        return false;
+    }
+
     private final java.util.concurrent.ExecutorService shareReader =
             java.util.concurrent.Executors.newSingleThreadExecutor();
 
@@ -1014,8 +1080,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         }
         showStatus("delete: row " + target + " - scrolling " + (dy > 0 ? "down" : "up"));
         scrollPage(dy);
-        handler.postDelayed(deleteStep(() -> readScreen(s -> findRow(target, s))),
-                pref("scrollWaitMs", 300) + 400L);
+        settled(pref("scrollWaitMs", 300) + 400, () -> readScreen(s -> findRow(target, s)));
     }
 
     /** A dustbin on screen, the number on its line (as the Tick reads it), and that number's text. */
@@ -1108,67 +1173,15 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     /** Taps the dustbin on the number's line, then deals with a confirm dialog. */
-    /** Dummy delete (setting "dummyDelete"): find and mark each dustbin, never tap. */
-    private boolean dummy;
-
     private void tapBin(int target, Bin hit, Seen seen) {
         Rect bin = hit.box;
-        if (dummy) {
-            dlog("DUMMY row " + target + ": dustbin at " + bin.centerX() + "," + bin.centerY()
-                    + " - marked, not tapped");
-            markBin(bin);
-            deleted++;
-            if (deleted >= deleteQueue.size()) {
-                handler.postDelayed(deleteStep(() -> endDelete("Dummy delete: found the dustbin of "
-                        + deleted + " of " + deleteQueue.size() + " rows")), 900);
-            } else {
-                int next = deleteQueue.get(deleted);
-                // Leave the mark up a moment, then go on with the next row on this same picture.
-                handler.postDelayed(deleteStep(() -> findRow(next, seen)), 900);
-            }
-            return;
-        }
         Set<String> before = cardText(hit.row, seen);
         List<Line> confirmsBefore = confirmLines(seen.lines);
         dlog("row " + target + ": tapping its dustbin at " + bin.centerX() + "," + bin.centerY()
                 + " (card text: " + before.size() + " lines)");
         tapThrough(bin.centerX(), bin.centerY());
         showStatus("delete: row " + target + " - bin tapped");
-        handler.postDelayed(deleteStep(() -> confirm(target, before, confirmsBefore, 3)),
-                pref("delWaitMs", 800));
-    }
-
-    /** Dummy delete: a red frame round the dustbin for a moment (touches go through it). */
-    private void markBin(Rect bin) {
-        View mark = new View(this);
-        GradientDrawable ring = new GradientDrawable();
-        ring.setColor(0x00000000);
-        ring.setStroke(dp(3), 0xFFE53935);
-        ring.setCornerRadius(dp(6));
-        mark.setBackground(ring);
-        int pad = dp(6);
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                bin.width() + 2 * pad, bin.height() + 2 * pad,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity = Gravity.TOP | Gravity.START;
-        lp.x = bin.left - pad;
-        lp.y = bin.top - pad;
-        try {
-            windowManager.addView(mark, lp);
-        } catch (RuntimeException e) {
-            return;
-        }
-        handler.postDelayed(() -> {
-            try {
-                windowManager.removeView(mark);
-            } catch (RuntimeException ignored) {
-            }
-        }, 800);
+        settled(pref("delWaitMs", 800), () -> confirm(target, before, confirmsBefore, 3));
     }
 
     /**
@@ -1377,15 +1390,15 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         List<Line> known = new ArrayList<>(confirmsBefore);
         known.add(button);
         if (popupsLeft <= 1) {
-            handler.postDelayed(deleteStep(() -> verify(target, before, 3)), pref("delCheckMs", 900));
+            settled(pref("delCheckMs", 900), () -> verify(target, before, 3));
             return;
         }
-        handler.postDelayed(deleteStep(() -> nextPopup(target, before, known, popupsLeft - 1)),
-                pref("delWaitMs", 800));
+        settled(pref("delWaitMs", 800), () -> nextPopup(target, before, known, popupsLeft - 1, 2));
     }
 
     /** After a pop-up's button: another pop-up's button, or - none - check the card went. */
-    private void nextPopup(int target, Set<String> before, List<Line> known, int popupsLeft) {
+    private void nextPopup(int target, Set<String> before, List<Line> known, int popupsLeft,
+                           int looksLeft) {
         List<Line> tree = new ArrayList<>();
         for (TextNode t : texts(false)) tree.add(new Line(t.bounds, t.text));
         Line button = newConfirm(tree, known);
@@ -1397,6 +1410,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             Line b = newConfirm(seen.lines, known);
             if (b != null) {
                 confirmTapped(target, before, known, b, popupsLeft);
+            } else if (looksLeft > 1 && sharing()) {
+                // Settled between two pop-ups perhaps: one more look before calling it done.
+                handler.postDelayed(deleteStep(() ->
+                        nextPopup(target, before, known, popupsLeft, looksLeft - 1)), 300);
             } else if (gone(before, seen)) {
                 rowDeleted(target, seen); // no more pop-ups, and this picture shows the card gone
             } else {

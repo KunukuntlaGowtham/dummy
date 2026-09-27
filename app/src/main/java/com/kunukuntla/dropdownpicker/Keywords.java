@@ -57,13 +57,16 @@ final class Keywords {
     /** Links between the buttons: each starts the next one 1 s after it finishes. */
     static final String CHAIN_DROP_CAL = "chain_drop_cal";
     static final String CHAIN_CAL_TICK = "auto_tick"; // the earlier "Tick after Continue" switch
-    /** On by default: after Tick, B+Del (Back twice, then delete the not-ticked rows). */
-    static final String CHAIN_TICK_BDEL = "chain_tick_bdel";
+    /** On by default: after Tick, Back twice. */
+    static final String CHAIN_TICK_BACK2 = "chain_tick_back2";
+    /** On by default: after Back (twice), delete the not-ticked rows. */
+    static final String CHAIN_BACK_DEL = "chain_back_del";
     static final String CHAIN_BACK_DROP = "chain_back_drop";
 
     static boolean loadChain(Context context, String link) {
         return prefs(context).getBoolean(link,
-                CHAIN_CAL_TICK.equals(link) || CHAIN_TICK_BDEL.equals(link));
+                CHAIN_CAL_TICK.equals(link) || CHAIN_TICK_BACK2.equals(link)
+                        || CHAIN_BACK_DEL.equals(link));
     }
 
     static void saveChain(Context context, String link, boolean on) {
