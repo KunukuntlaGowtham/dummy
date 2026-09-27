@@ -124,7 +124,7 @@ final class Ticker {
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         later(() -> {
             if (isChecked(b.node)) {
-                done(b, "ticked ✓ by a direct click", before);
+                done(b, "ticked ✓ by a direct click", before, base);
             } else {
                 // The click didn't take (or was refused): a real tap on the box you see.
                 log("row " + b.row + ": " + (sent ? "click didn't tick it" : "click refused")
