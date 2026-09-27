@@ -208,10 +208,14 @@ final class Booker {
                     stop("✗ " + dateText() + " can't be chosen (not open for booking)");
                     return;
                 }
-                log("date: pressing " + dateText());
-                click(cell);
-                done.append("✓ Date: ").append(dateText()).append('\n');
-                later(() -> tickBox(0), 400);
+                // A real tap on the day, like a finger (a click on the cell isn't taken as a
+                // choice by this calendar), once the day is clear of the page's header.
+                inView(cell, 0, r -> {
+                    log("date: tapping " + dateText() + " at " + r.centerX() + "," + r.centerY());
+                    tap(r.centerX(), r.centerY());
+                    done.append("✓ Date: ").append(dateText()).append('\n');
+                    later(() -> tickBox(0), 500);
+                });
                 return;
             }
         }
@@ -303,7 +307,7 @@ final class Booker {
             }
         }
         if (box == null) {
-            if (waits < 10) {
+            if (waits < 40) { // the slots load after the date: up to 8 s
                 later(() -> tickBox(waits + 1), 200);
                 return;
             }
@@ -367,6 +371,7 @@ final class Booker {
                 bestScore = score;
             }
         }
+        if (best == null) best = roundButton();
         if (best == null) {
             if (waits < 10) {
                 later(() -> pickRadio(waits + 1), 200);
@@ -382,6 +387,17 @@ final class Booker {
             log("radio: \"" + text + "\" already chosen");
             done.append("✓ Radio: ").append(text).append('\n');
             pressContinue(0);
+            return;
+        }
+        if (!isRadio(r)) {
+            // The page draws its choice as a small round button (not reported as a radio).
+            inView(r, 0, v -> {
+                log("radio: tapping the round choice button at " + v.centerX() + "," + v.centerY()
+                        + (text.isEmpty() ? "" : " (\"" + text + "\")"));
+                tap(v.centerX(), v.centerY());
+                done.append("✓ Radio (round button)").append(text.isEmpty() ? "" : ": " + text).append('\n');
+                later(() -> pressContinue(0), 400);
+            });
             return;
         }
         r.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
@@ -402,12 +418,49 @@ final class Booker {
         }, 200);
     }
 
-    /** The radio button's own words, or its label's (next to it). */
+    private static boolean isRadio(AccessibilityNodeInfo n) {
+        return String.valueOf(n.getClassName()).endsWith("RadioButton")
+                || Taught.role(n).toLowerCase(Locale.ROOT).contains("radio");
+    }
+
+    /**
+     * A choice drawn as a small round, unnamed button in a card (the slot card): the one whose
+     * card has your words, else the first. Null when there is none.
+     */
+    private AccessibilityNodeInfo roundButton() {
+        AccessibilityNodeInfo first = null;
+        int small = dp(34);
+        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+            if (!n.isClickable() || !Taught.label(n).isEmpty()) continue;
+            String cls = String.valueOf(n.getClassName());
+            if (!cls.endsWith("Button") || cls.endsWith("ImageButton")) continue;
+            Rect r = bounds(n);
+            if (r.width() < dp(10) || r.width() > small || Math.abs(r.width() - r.height()) > dp(6)) continue;
+            if (plan.radio.isEmpty()) return n;
+            if (first == null) first = n;
+            if (matchScore(radioText(n), plan.radio) > 0) return n;
+        }
+        return first; // your words not found in any card: the first one
+    }
+
+    /** The radio button's own words, or its card's words (up to 3 levels up). */
     private static String radioText(AccessibilityNodeInfo n) {
         String t = Taught.label(n);
         if (!t.isEmpty()) return t;
         AccessibilityNodeInfo p = n.getParent();
-        return p == null ? "" : Taught.label(p);
+        for (int i = 0; p != null && i < 3; i++, p = p.getParent()) {
+            StringBuilder sb = new StringBuilder();
+            collectText(p, sb, 0);
+            if (sb.length() > 0) return sb.toString().trim();
+        }
+        return "";
+    }
+
+    private static void collectText(AccessibilityNodeInfo n, StringBuilder sb, int depth) {
+        if (n == null || depth > 4 || sb.length() > 200) return;
+        String l = Taught.label(n);
+        if (!l.isEmpty()) sb.append(l).append(' ');
+        for (int i = 0; i < n.getChildCount(); i++) collectText(n.getChild(i), sb, depth + 1);
     }
 
     // ---- 5) Continue ------------------------------------------------------------------
@@ -436,6 +489,46 @@ final class Booker {
     }
 
     // ---- helpers ----------------------------------------------------------------------
+
+    /**
+     * Makes sure the element is on screen and clear of the page's header and the bottom edge
+     * (a tap there would land on something else), then hands its place to {@code then}.
+     */
+    private void inView(AccessibilityNodeInfo n, int tries, Consumer<Rect> then) {
+        try {
+            n.refresh();
+        } catch (RuntimeException ignored) {
+        }
+        Rect r = visible(n);
+        android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
+        int top = dp(150), bottom = dm.heightPixels - dp(90);
+        if (r != null && r.top >= top && r.bottom <= bottom) {
+            then.accept(r);
+            return;
+        }
+        if (tries >= 3) {
+            if (r != null) then.accept(r);
+            else stop("✗ Couldn't bring it on screen");
+            return;
+        }
+        if (tries == 0) {
+            n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+        } else {
+            // Drag the page so it comes to the middle of the screen.
+            boolean up = r != null && r.top < top;
+            Path p = new Path();
+            float cx = dm.widthPixels / 2f, a = dm.heightPixels * 0.40f, b = dm.heightPixels * 0.62f;
+            p.moveTo(cx, up ? a : b);
+            p.lineTo(cx, up ? b : a);
+            service.dispatchGesture(new GestureDescription.Builder()
+                    .addStroke(new GestureDescription.StrokeDescription(p, 0, 350)).build(), null, null);
+        }
+        later(() -> inView(n, tries + 1, then), 450);
+    }
+
+    private int dp(int v) {
+        return Math.round(v * service.getResources().getDisplayMetrics().density);
+    }
 
     private void click(AccessibilityNodeInfo n) {
         if (!n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
