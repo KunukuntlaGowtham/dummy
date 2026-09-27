@@ -321,6 +321,11 @@ open class CheckboxService : AccessibilityService() {
         pageAfterPopup = null
         screen.findBoxesWithSketch(dp(14), dp(48), ownWindows()) { boxes, sketch ->
             if (!looping) return@findBoxesWithSketch
+            if (screen.lastFailed() && lookAgain("no picture of the screen")) {
+                main.postDelayed({ snap() }, 400L)
+                return@findBoxesWithSketch
+            }
+            looksAgain = 0
             val found = boxes.filter { !hitsBubble(it) && !inGestureArea(it) }.sortedBy { it.top }
             tlog("snap: ${boxes.size} empty square(s), ${found.size} usable: " +
                 found.joinToString("; ") { rectText(it) })
@@ -440,6 +445,11 @@ open class CheckboxService : AccessibilityService() {
         status("checking")
         screen.findBoxes(dp(14), dp(48)) { boxes ->
             if (!looping) return@findBoxes
+            if (screen.lastFailed() && lookAgain("no picture to check the boxes")) {
+                main.postDelayed({ checkSnap() }, 400L)
+                return@findBoxes
+            }
+            looksAgain = 0
             for (item in onScreen) {
                 val empty = boxes.any { Rect.intersects(it, item.box) }
                 tlog("  check box ${name(item)}: " + if (empty) "still EMPTY ✗" else "ticked ✓")
@@ -919,6 +929,20 @@ open class CheckboxService : AccessibilityService() {
     /** Patches of the pop-up colour on the page just before the last tick (the page's own). */
     private var pagePatches: List<Rect> = emptyList()
 
+    /** Looks in a row that got no picture (accessibility screenshots can be refused). */
+    private var looksAgain = 0
+
+    /** A look got no picture: try again (true) up to 5 times in a row, then carry on (false). */
+    private fun lookAgain(what: String): Boolean {
+        if (looksAgain >= 5) {
+            looksAgain = 0
+            return false
+        }
+        looksAgain++
+        status("$what - looking again ($looksAgain)")
+        return true
+    }
+
     /** The page's patches from the last look that found no pop-up, reused for the next tick. */
     private var pageAfterPopup: List<Rect>? = null
 
@@ -940,6 +964,13 @@ open class CheckboxService : AccessibilityService() {
             p.getInt("colourTol", 60).coerceIn(0, 200),
             p.getInt("skipTopPct", 20).coerceIn(0, 90)
         ) { patches ->
+            // No picture: an empty list would make the page's own purple (the boxes ticked
+            // already) look like a new pop-up's button after the tap - look again instead.
+            if (screen.lastFailed() && lookAgain("no picture of the page before the tap")) {
+                main.postDelayed({ notePageColour(false, then) }, 400L)
+                return@findColourPatches
+            }
+            looksAgain = 0
             pagePatches = patches.map { it.first }
             then()
         }
@@ -998,6 +1029,11 @@ open class CheckboxService : AccessibilityService() {
 
         screen.findColourPatches(colour, tolerance, skipTop) { patches ->
             if (!looping && !running) return@findColourPatches
+            if (screen.lastFailed() && lookAgain("no picture to look for the pop-up")) {
+                main.postDelayed({ clearPopup(looksLeft, tappedOnce, next) }, 400L)
+                return@findColourPatches
+            }
+            looksAgain = 0
             // Checking it closed: only a button shape, never a (checkbox-like) square.
             val box = popupButton(patches, allowSquare = !tappedOnce)
             if (box == null) {

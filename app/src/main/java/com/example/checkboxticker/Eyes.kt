@@ -19,6 +19,9 @@ import java.util.concurrent.Executors
 
 /** How the ticker looks at the screen: screen sharing, or the accessibility screenshot. */
 interface Eyes {
+    /** The last look couldn't get a picture at all (so "nothing found" means nothing). */
+    fun lastFailed(): Boolean = false
+
     fun findBoxes(minScreenPx: Int, maxScreenPx: Int, done: (List<Rect>) -> Unit)
 
     fun findBoxesWithSketch(
@@ -108,10 +111,20 @@ class ShotEyes(
     /** Takes a screenshot (waiting out Android's limit) and hands it over on the worker thread. */
     private fun shoot(then: (Shot?) -> Unit) {
         val wait = (lastShot + MIN_GAP_MS - SystemClock.uptimeMillis()).coerceAtLeast(0L)
-        main.postDelayed({ take(then, retry = true) }, wait)
+        main.postDelayed({ take(then, TRIES) }, wait)
     }
 
-    private fun take(then: (Shot?) -> Unit, retry: Boolean) {
+    @Volatile
+    private var failed = false
+
+    override fun lastFailed() = failed
+
+    /**
+     * Takes one screenshot. Android allows about three a second across the whole app (the
+     * text reading takes some too), so "too soon" is tried again - several times, not once -
+     * as is a passing internal error; only then is it given up (and reported as failed).
+     */
+    private fun take(then: (Shot?) -> Unit, triesLeft: Int) {
         lastShot = SystemClock.uptimeMillis()
         service.takeScreenshot(Display.DEFAULT_DISPLAY, worker,
             object : AccessibilityService.TakeScreenshotCallback {
@@ -128,13 +141,17 @@ class ShotEyes(
                         buffer.close()
                     }
                     if (shot == null) main.post(onRefused)
+                    failed = shot == null
                     then(shot)
                 }
 
                 override fun onFailure(errorCode: Int) {
-                    if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && retry) {
-                        main.postDelayed({ take(then, retry = false) }, MIN_GAP_MS)
+                    val passing = errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT ||
+                        errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERNAL_ERROR
+                    if (passing && triesLeft > 0) {
+                        main.postDelayed({ take(then, triesLeft - 1) }, MIN_GAP_MS)
                     } else {
+                        failed = true
                         Log.w(ScreenService.TAG, "screenshot failed: $errorCode")
                         // A secure page blocks sharing too, so only ask for it otherwise.
                         if (errorCode != AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) {
@@ -159,6 +176,7 @@ class ShotEyes(
 
     companion object {
         private const val MIN_GAP_MS = 340L    // Android allows one every 333 ms
+        private const val TRIES = 6            // "too soon" retries before giving up
     }
 }
 
