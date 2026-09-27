@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "DropdownPicker"
 include(":app")
+include(":checker")
