@@ -61,6 +61,13 @@ public class InspectorService extends AccessibilityService {
         closeAsk();
         if (ticker != null) ticker.stop("Stopped");
         if (deleter != null) deleter.stop("Stopped");
+        if (teacher != null) teacher.cancel();
+        if (teachButton != null) {
+            try {
+                windowManager.removeView(teachButton);
+            } catch (RuntimeException ignored) {
+            }
+        }
         if (delButton != null) {
             try {
                 windowManager.removeView(delButton);
@@ -300,6 +307,109 @@ public class InspectorService extends AccessibilityService {
             }
         });
         windowManager.addView(delButton, delParams);
+        showTeachButton();
+    }
+
+    // ---- the Teach button: you tap the dustbin and pop-up buttons once, it remembers -----
+
+    private TextView teachButton;
+    private Teacher teacher;
+
+    private void showTeachButton() {
+        teacher = new Teacher(this, this::showCard);
+        teachButton = new TextView(this);
+        teachButton.setText("🎯\nTeach");
+        teachButton.setTextColor(Color.WHITE);
+        teachButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        teachButton.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(0xEEE65100);
+        bg.setStroke(dp(2), 0x66FFFFFF);
+        teachButton.setBackground(bg);
+        teachButton.setElevation(dp(4));
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(dp(56), dp(56),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.x = dp(12);
+        lp.y = dp(358);
+        teachButton.setOnClickListener(v -> {
+            closeCard();
+            if (teacher.isActive()) teacher.cancel();
+            else showTeachChoices();
+        });
+        windowManager.addView(teachButton, lp);
+    }
+
+    private void showTeachChoices() {
+        closeCard();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(14), dp(16), dp(10));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF01B1D22);
+        bg.setCornerRadius(dp(16));
+        box.setBackground(bg);
+        TextView title = new TextView(this);
+        title.setText("Teach: show me by tapping");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        box.addView(title);
+        TextView what = new TextView(this);
+        what.setText("Open the page first. You tap each thing once; every tap really happens "
+                + "(a box is ticked, a row is deleted). Then Tick and Del press them straight away.\n\n"
+                + "Taught now: " + taughtList());
+        what.setTextColor(0xCCFFFFFF);
+        what.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        what.setPadding(0, dp(4), 0, dp(8));
+        box.addView(what);
+        box.addView(choice("☑  Teach Tick: a checkbox, then its pop-up's OK", v -> {
+            closeCard();
+            teacher.teachTick();
+        }));
+        box.addView(choice("🗑  Teach Del: a dustbin, then its 2 pop-ups' buttons", v -> {
+            closeCard();
+            teacher.teachDelete();
+        }));
+        box.addView(choice("Forget what I taught", v -> {
+            Taught.forgetAll(this);
+            closeCard();
+            Toast.makeText(this, "Forgotten - Tick and Del find things themselves again", Toast.LENGTH_SHORT).show();
+        }));
+        box.addView(choice("Close", v -> closeCard()));
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                getResources().getDisplayMetrics().widthPixels * 92 / 100,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.CENTER;
+        windowManager.addView(box, lp);
+        card = box;
+    }
+
+    private String taughtList() {
+        List<String> out = new ArrayList<>();
+        if (Taught.get(this, Taught.TICK_POPUP) != null) out.add("Tick's pop-up OK");
+        if (Taught.get(this, Taught.DEL_BIN) != null) out.add("dustbin");
+        if (Taught.get(this, Taught.DEL_POPUP_1) != null) out.add("Del pop-up 1");
+        if (Taught.get(this, Taught.DEL_POPUP_2) != null) out.add("Del pop-up 2");
+        return out.isEmpty() ? "nothing" : String.join(", ", out);
+    }
+
+    private TextView choice(String label, View.OnClickListener onClick) {
+        TextView b = new TextView(this);
+        b.setText(label);
+        b.setTextColor(0xFF9AE6A1);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        b.setPadding(dp(4), dp(10), dp(4), dp(10));
+        b.setOnClickListener(onClick);
+        return b;
     }
 
     /** Asks which row numbers to delete, then starts. */

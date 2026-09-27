@@ -82,6 +82,16 @@ final class Ticker {
         okLook = okGone = null;
         popupShapes = pageBefore = pageWithPopup = null;
         log("Tick: clicking every empty checkbox directly, clearing pop-ups");
+        Taught.Button taught = Taught.get(service, Taught.TICK_POPUP);
+        if (taught != null) {
+            okSpot = new Rect(taught.spot);
+            okLook = taught.look;
+            okGone = taught.gone;
+            popupShapes = taught.shapes.isEmpty() ? null : taught.shapes;
+            popupsSeen = true;
+            log("using the pop-up OK you taught at " + okSpot.centerX() + "," + okSpot.centerY()
+                    + (popupShapes != null ? " (watched for on the page)" : " (found by its look)"));
+        }
         later(this::next, 100);
     }
 
@@ -222,19 +232,7 @@ final class Ticker {
      * (a cover over the page, its box), even when it doesn't report its words or buttons.
      */
     private Set<String> shapes() {
-        Set<String> out = new HashSet<>();
-        for (Node n : all()) {
-            Rect r = new Rect();
-            n.node.getBoundsInScreen(r);
-            String role = "";
-            try {
-                CharSequence c = n.node.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole");
-                if (c != null) role = c.toString();
-            } catch (RuntimeException ignored) {
-            }
-            out.add(n.node.getClassName() + "|" + role + "|" + r.toShortString());
-        }
-        return out;
+        return Taught.shapes(service);
     }
 
     /** The page before this box was ticked; while learning, the page with the pop-up up. */
@@ -243,10 +241,15 @@ final class Ticker {
     private Set<String> popupShapes;
 
     private boolean popupUp() {
-        for (String k : shapes()) {
-            if (popupShapes.contains(k) && (pageBefore == null || !pageBefore.contains(k))) return true;
+        Set<String> now = shapes();
+        int have = 0;
+        boolean fresh = false;
+        for (String k : popupShapes) {
+            if (!now.contains(k)) continue;
+            have++;
+            if (pageBefore == null || !pageBefore.contains(k)) fresh = true;
         }
-        return false;
+        return fresh && have * 10 >= popupShapes.size() * 8;
     }
 
     /**
@@ -386,7 +389,10 @@ final class Ticker {
 
     /** What only the pop-up added: on the page with it, not before the tick, not after it went. */
     private void learnPopupShapes() {
-        if (pageWithPopup == null || pageBefore == null) return;
+        if (pageWithPopup == null || pageBefore == null) {
+            log("pop-up: couldn't learn how the page shows it");
+            return;
+        }
         Set<String> only = new HashSet<>(pageWithPopup);
         only.removeAll(pageBefore);
         only.removeAll(shapes());

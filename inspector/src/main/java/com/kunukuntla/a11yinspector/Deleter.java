@@ -136,6 +136,13 @@ final class Deleter {
             return;
         }
         Set<String> before = clickableKeys();
+        // The dustbin you taught: found on the page straight away, no screenshot.
+        Rect taughtBin = taughtBin(num, t);
+        if (taughtBin != null) {
+            preShot = null;
+            press(num, t, taughtBin, before);
+            return;
+        }
         words.shot(false, shot -> {
             if (!running) return;
             if (shot == null) {
@@ -162,7 +169,103 @@ final class Deleter {
         log("row " + num + (t.name.isEmpty() ? "" : " (" + t.name + ")") + ": pressing its dustbin at "
                 + bin.centerX() + "," + bin.centerY());
         if (node == null || !node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(bin.centerX(), bin.centerY());
-        clearPopup(num, t, before, 1, known.isEmpty() ? 8 : 16, 150);
+        Taught.Button p1 = Taught.get(service, Taught.DEL_POPUP_1);
+        if (p1 != null) watchTaught(num, t, before, 1, p1, 0);
+        else clearPopup(num, t, before, 1, known.isEmpty() ? 8 : 16, 150);
+    }
+
+    // ---- what you taught (Teach): the dustbin and the pop-up buttons --------------------
+
+    /** The row's dustbin, found from the one you tapped when teaching; null if not taught. */
+    private Rect taughtBin(String num, Target t) {
+        Taught.Button bin = Taught.get(service, Taught.DEL_BIN);
+        if (bin == null) return null;
+        int cx = bin.spot.centerX(), near = dp(30);
+        AccessibilityNodeInfo best = null;
+        int bestGap = Integer.MAX_VALUE;
+        for (AccessibilityNodeInfo c : t.buttons) {
+            Rect r = bounds(c);
+            if (r.width() <= 4 || r.height() <= 4) continue;
+            int gap = Math.abs(r.centerX() - cx);
+            if (gap > near) continue;
+            if (!bin.label.isEmpty() && bin.label.equals(label(c))) gap -= near; // same name: first
+            if (gap < bestGap) {
+                best = c;
+                bestGap = gap;
+            }
+        }
+        if (best != null) {
+            Rect r = bounds(best);
+            log("row " + num + ": the dustbin you taught is its button at " + r.centerX() + "," + r.centerY()
+                    + (label(best).isEmpty() ? "" : " (\"" + label(best) + "\")"));
+            return r;
+        }
+        if (bin.hasDy) {
+            Rect nr = bounds(t.number);
+            int y = nr.centerY() + bin.dy;
+            log("row " + num + ": the dustbin you taught is at " + cx + "," + y);
+            return new Rect(cx - 2, y - 2, cx + 2, y + 2);
+        }
+        return null;
+    }
+
+    /**
+     * Watches for pop-up {@code which} you taught: on the page (every 40 ms) when it shows
+     * there, else by its look on screenshots. Presses its button the moment it is up, then
+     * waits for it to go. If it doesn't come within 4 s, the words are read instead.
+     */
+    private void watchTaught(String num, Target t, Set<String> before, int which, Taught.Button p, long waited) {
+        boolean byPage = !p.shapes.isEmpty();
+        Runnable look = () -> {
+            if (byPage) {
+                taughtSeen(num, t, before, which, p, waited, Taught.showing(Taught.shapes(service), p));
+                return;
+            }
+            words.shot(false, shot -> {
+                if (!running) return;
+                taughtSeen(num, t, before, which, p, waited + 340, shot != null && looksLike(shot, p));
+            });
+        };
+        later(look, byPage ? 40 : 0);
+    }
+
+    private void taughtSeen(String num, Target t, Set<String> before, int which, Taught.Button p,
+                            long waited, boolean up) {
+        if (up) {
+            int x = p.spot.centerX(), y = p.spot.centerY();
+            log("pop-up " + which + ": pressing the button you taught at " + x + "," + y);
+            popups++;
+            later(() -> {
+                tap(x, y);
+                waitTaughtGone(num, t, before, which, p, 0);
+            }, 60);
+        } else if (waited >= 4000) {
+            log("pop-up " + which + ": the one you taught didn't come - reading the screen");
+            clearPopup(num, t, before, which, 4, 0);
+        } else {
+            watchTaught(num, t, before, which, p, waited + 40);
+        }
+    }
+
+    private void waitTaughtGone(String num, Target t, Set<String> before, int which, Taught.Button p, long waited) {
+        later(() -> {
+            boolean up = !p.shapes.isEmpty() && Taught.showing(Taught.shapes(service), p);
+            if (up && waited < 1500) {
+                waitTaughtGone(num, t, before, which, p, waited + 40);
+                return;
+            }
+            Taught.Button p2 = which == 1 ? Taught.get(service, Taught.DEL_POPUP_2) : null;
+            if (p2 != null) watchTaught(num, t, before, 2, p2, 0);
+            else check(num, t, 20);
+        }, 40);
+    }
+
+    private static boolean looksLike(ScreenWords.Shot shot, Taught.Button p) {
+        double[] g = shot.grid(p.spot);
+        if (g == null || p.look == null) return false;
+        double like = BinFinder.similarity(g, p.look);
+        if (like < 0.95) return false;
+        return p.gone == null || BinFinder.similarity(g, p.gone) < like - 0.02;
     }
 
     // ---- which icon is the dustbin: compared with the two dustbin pictures ------------
