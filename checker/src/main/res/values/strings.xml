@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Tick Check</string>
-    <string name="a11y_description">Shows a Check button over any app. You tick the boxes and close the pop-ups yourself; after every few ticks tap Save; at the end, List shows the rows not ticked. Each Save takes a screenshot of the page to see which boxes are empty - nothing is tapped or changed.</string>
-</resources>
