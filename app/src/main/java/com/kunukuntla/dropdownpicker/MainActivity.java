@@ -45,17 +45,41 @@ public class MainActivity extends Activity {
     /** Opened by the service when this phone needs screen sharing: ask for it straight away. */
     static final String EXTRA_ASK_SHARE = "askShare";
 
-    // Palette
-    private static final int BG = 0xFFF3F1F8;
-    private static final int CARD = 0xFFFFFFFF;
-    private static final int INK = 0xFF1D1B26;
-    private static final int MUTED = 0xFF77738A;
-    private static final int LINE = 0xFFE4E0EE;
-    private static final int ACCENT = 0xFF6C3FD1;
-    private static final int ACCENT_2 = 0xFF9A6BFF;
-    private static final int ACCENT_SOFT = 0xFFEDE6FD;
+    // Palette: light, or dark when the phone is in dark mode (set in applyTheme).
+    private int BG = 0xFFF3F1F8;
+    private int CARD = 0xFFFFFFFF;
+    private int INK = 0xFF1D1B26;
+    private int MUTED = 0xFF77738A;
+    private int LINE = 0xFFE4E0EE;
+    private int ACCENT = 0xFF6C3FD1;
+    private int ACCENT_2 = 0xFF9A6BFF;
+    private int ACCENT_SOFT = 0xFFEDE6FD;
+    private int FIELD = 0xFFFAF9FD;      // text boxes
+    private int HINT = 0xFFB0ACBE;
+    private int SOFT = 0xFFF1EEF7;       // segmented background, chips, log
+    private int TRACK = 0xFFCFCBDA;      // switch off
+    private int LOG_INK = 0xFF4A4658;
     private static final int GOOD = 0xFF1E9E61;
     private static final int BAD = 0xFFD64545;
+
+    private void applyTheme() {
+        int night = getResources().getConfiguration().uiMode
+                & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        if (night != android.content.res.Configuration.UI_MODE_NIGHT_YES) return;
+        BG = 0xFF121118;
+        CARD = 0xFF1E1C26;
+        INK = 0xFFECEAF3;
+        MUTED = 0xFF9C98AE;
+        LINE = 0xFF34313F;
+        ACCENT = 0xFF8B63F0;
+        ACCENT_2 = 0xFFAE8BFF;
+        ACCENT_SOFT = 0xFF2C2440;
+        FIELD = 0xFF26232F;
+        HINT = 0xFF6E6A80;
+        SOFT = 0xFF26232F;
+        TRACK = 0xFF4A4658;
+        LOG_INK = 0xFFCFCBDA;
+    }
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private TextView accessibilityChip;
@@ -66,6 +90,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        applyTheme();
         getWindow().setStatusBarColor(ACCENT);
         getWindow().setNavigationBarColor(BG);
 
@@ -79,6 +104,8 @@ public class MainActivity extends Activity {
         body.setOrientation(LinearLayout.VERTICAL);
         body.setPadding(dp(16), dp(4), dp(16), dp(32));
         page.addView(body);
+
+        body.addView(setupCard());
 
         // Dropdown
         LinearLayout drop = card(body, "▼", "Dropdown", 0xFF37474F);
@@ -118,24 +145,25 @@ public class MainActivity extends Activity {
                 v -> tickPrefs(e -> e.putBoolean("rowNumbers", v == 1))));
         View clearRows = pillButton("Clear not-ticked list", false, v -> {
             tickPrefs(e -> e.remove(CheckboxService.FAILED_ROWS));
+            refreshSummary();
             Toast.makeText(this, "Not-ticked list cleared", Toast.LENGTH_SHORT).show();
         });
         LinearLayout.LayoutParams clearLp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         clearLp.topMargin = dp(10);
         tick.addView(clearRows, clearLp);
-        tick.addView(divider());
-        tick.addView(valueRow("Pop-up colour", String.format(Locale.ROOT, "#%06X",
+        LinearLayout tickAdv = advanced(tick, "tick");
+        tickAdv.addView(valueRow("Pop-up colour", String.format(Locale.ROOT, "#%06X",
                 tp.getInt("colour", CheckboxService.DEFAULT_COLOUR)), InputType.TYPE_CLASS_TEXT, s -> {
                     Integer c = parseColour(s);
                     if (c != null) tickPrefs(e -> e.putInt("colour", c));
                 }));
-        tick.addView(numberRow("Colour tolerance", tp.getInt("colourTol", 60), "colourTol", 0, 200));
-        tick.addView(numberRow("Ignore top of screen (%)", tp.getInt("skipTopPct", 20), "skipTopPct", 0, 90));
-        tick.addView(numberRow("Max boxes", tp.getInt("maxBoxes", 15), "maxBoxes", 1, 500));
-        tick.addView(numberRow("After tick (ms)", tp.getInt("tickWaitMs", 300), "tickWaitMs", 0, 10000));
-        tick.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 300), "clearWaitMs", 0, 10000));
-        tick.addView(numberRow("After scroll (ms)", tp.getInt("scrollWaitMs", 300), "scrollWaitMs", 0, 10000));
+        tickAdv.addView(numberRow("Colour tolerance", tp.getInt("colourTol", 60), "colourTol", 0, 200));
+        tickAdv.addView(numberRow("Ignore top of screen (%)", tp.getInt("skipTopPct", 20), "skipTopPct", 0, 90));
+        tickAdv.addView(numberRow("Max boxes", tp.getInt("maxBoxes", 15), "maxBoxes", 1, 500));
+        tickAdv.addView(numberRow("After tick (ms)", tp.getInt("tickWaitMs", 300), "tickWaitMs", 0, 10000));
+        tickAdv.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 300), "clearWaitMs", 0, 10000));
+        tickAdv.addView(numberRow("After scroll (ms)", tp.getInt("scrollWaitMs", 300), "scrollWaitMs", 0, 10000));
 
         // Chain: each button starts the next one 1 s after it finishes
         LinearLayout chain = card(body, "⛓", "Chain", 0xFF6C3FD1);
@@ -146,7 +174,10 @@ public class MainActivity extends Activity {
                 {Keywords.CHAIN_BACK_DROP, "Back / Delete → Drop"}};
         for (String[] link : links) {
             chain.addView(toggle(link[1], Keywords.loadChain(this, link[0]),
-                    on -> Keywords.saveChain(this, link[0], on)));
+                    on -> {
+                        Keywords.saveChain(this, link[0], on);
+                        refreshSummary();
+                    }));
         }
 
         // Back, scroll, Back
@@ -168,10 +199,10 @@ public class MainActivity extends Activity {
 
         // Delete: the not-ticked rows, each by the dustbin on its number's line
         LinearLayout del = card(body, "🗑", "Delete", 0xFFC62828);
-        del.addView(numberRow("After bin tap (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
-        del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 900), "delCheckMs", 0, 10000));
-        del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
-        del.addView(divider());
+        LinearLayout delAdv = advanced(del, "delete");
+        delAdv.addView(numberRow("After bin tap (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
+        delAdv.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 900), "delCheckMs", 0, 10000));
+        delAdv.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
         // Testing: your own not-ticked list.
         del.addView(label("Not-ticked rows to use (page numbers, e.g. 6, 8, 14)"));
         String[] typed = {tp.getString(CheckboxService.FAILED_ROWS, "").replace(",", ", ")};
@@ -189,6 +220,7 @@ public class MainActivity extends Activity {
             StringBuilder csv = new StringBuilder();
             for (int n : rows) csv.append(csv.length() == 0 ? "" : ",").append(n);
             tickPrefs(e -> e.putString(CheckboxService.FAILED_ROWS, csv.toString()));
+            refreshSummary();
             Toast.makeText(this, rows.isEmpty() ? "Not-ticked list cleared"
                     : "Not-ticked rows set: " + rows, Toast.LENGTH_SHORT).show();
         });
@@ -207,10 +239,10 @@ public class MainActivity extends Activity {
         lastRun = new TextView(this);
         lastRun.setTextSize(12);
         lastRun.setTypeface(Typeface.MONOSPACE);
-        lastRun.setTextColor(0xFF4A4658);
+        lastRun.setTextColor(LOG_INK);
         lastRun.setTextIsSelectable(true);
         lastRun.setPadding(dp(12), dp(10), dp(12), dp(10));
-        lastRun.setBackground(rounded(0xFFF6F4FA, dp(10), 0));
+        lastRun.setBackground(rounded(SOFT, dp(10), 0));
         log.addView(lastRun, matchWrap());
         View share = pillButton("Share", false, v -> {
             Intent send = new Intent(Intent.ACTION_SEND)
@@ -269,7 +301,7 @@ public class MainActivity extends Activity {
         head.addView(title);
 
         TextView sub = new TextView(this);
-        sub.setText("Drop  ·  Cal  ·  Tick");
+        sub.setText("Drop  ·  Cal  ·  Tick  ·  Back  ·  Del");
         sub.setTextSize(14);
         sub.setTextColor(0xCCFFFFFF);
         sub.setPadding(0, dp(2), 0, dp(18));
@@ -286,11 +318,104 @@ public class MainActivity extends Activity {
         chips.addView(screenChip, gap);
         head.addView(chips);
 
+        // The flow the Chain switches make (bright arrow = linked), and the not-ticked list.
+        flowLine = new TextView(this);
+        flowLine.setTextSize(14);
+        flowLine.setTextColor(Color.WHITE);
+        flowLine.setTypeface(Typeface.DEFAULT_BOLD);
+        flowLine.setPadding(0, dp(16), 0, 0);
+        head.addView(flowLine);
+        notTickedLine = new TextView(this);
+        notTickedLine.setTextSize(13);
+        notTickedLine.setTextColor(0xE6FFFFFF);
+        notTickedLine.setPadding(dp(12), dp(8), dp(12), dp(8));
+        notTickedLine.setBackground(rounded(0x26FFFFFF, dp(12), 0));
+        LinearLayout.LayoutParams ntLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        ntLp.topMargin = dp(10);
+        head.addView(notTickedLine, ntLp);
+
         LinearLayout wrap = new LinearLayout(this);
         wrap.setOrientation(LinearLayout.VERTICAL);
         wrap.addView(head, matchWrap());
         wrap.setPadding(0, 0, 0, dp(8));
         return wrap;
+    }
+
+    private TextView flowLine;
+    private TextView notTickedLine;
+    private View setup;
+
+    /** The header's flow line and not-ticked list, as they are now. */
+    private void refreshSummary() {
+        if (flowLine == null) return;
+        String[] steps = {"Drop", "Cal", "Tick", "Back", "Del"};
+        String[] links = {Keywords.CHAIN_DROP_CAL, Keywords.CHAIN_CAL_TICK,
+                Keywords.CHAIN_TICK_BACK2, Keywords.CHAIN_BACK_DEL};
+        android.text.SpannableStringBuilder sb = new android.text.SpannableStringBuilder();
+        for (int i = 0; i < steps.length; i++) {
+            sb.append(steps[i]);
+            if (i < links.length) {
+                int at = sb.length();
+                boolean on = Keywords.loadChain(this, links[i]);
+                sb.append(on ? "  →  " : "  ·  ");
+                sb.setSpan(new android.text.style.ForegroundColorSpan(on ? 0xFFFFFFFF : 0x66FFFFFF),
+                        at, sb.length(), 0);
+            }
+        }
+        flowLine.setText(sb);
+        String raw = getSharedPreferences(CheckboxService.PREFS, Context.MODE_PRIVATE)
+                .getString(CheckboxService.FAILED_ROWS, "");
+        List<Integer> rows = new ArrayList<>();
+        for (String p : raw.split(",")) {
+            try {
+                rows.add(Integer.parseInt(p.trim()));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        java.util.Collections.sort(rows);
+        StringBuilder shown = new StringBuilder();
+        for (int i = 0; i < rows.size(); i++) {
+            if (i > 0) shown.append(", ");
+            shown.append(rows.get(i) - i); // as Delete will find them, each less the ones before
+        }
+        notTickedLine.setText(rows.isEmpty() ? "Not ticked: none"
+                : "Not ticked (" + rows.size() + "): " + shown);
+    }
+
+    /** First-run guide, shown only while the app's accessibility service is off. */
+    private View setupCard() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(16), dp(14), dp(16), dp(16));
+        box.setBackground(rounded(ACCENT_SOFT, dp(18), ACCENT));
+        TextView t = new TextView(this);
+        t.setText("Get started");
+        t.setTextSize(17);
+        t.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
+        t.setTextColor(INK);
+        box.addView(t);
+        TextView steps = new TextView(this);
+        steps.setText("1.  Turn on Accessibility for Dropdown Picker (below).\n"
+                + "2.  Optional, faster: tap the Screen chip above to share the screen.\n"
+                + "3.  Open your app - the floating buttons appear on the right. "
+                + "Tap – on them to fold them away.");
+        steps.setTextSize(14);
+        steps.setTextColor(INK);
+        steps.setLineSpacing(dp(4), 1f);
+        steps.setPadding(0, dp(8), 0, 0);
+        box.addView(steps);
+        View go = pillButton("Open Accessibility settings", true,
+                v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        LinearLayout.LayoutParams goLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        goLp.topMargin = dp(12);
+        box.addView(go, goLp);
+        LinearLayout.LayoutParams lp = matchWrap();
+        lp.topMargin = dp(12);
+        box.setLayoutParams(lp);
+        setup = box;
+        return box;
     }
 
     private TextView statusChip(View.OnClickListener onClick) {
@@ -306,6 +431,10 @@ public class MainActivity extends Activity {
 
     // ---- Building blocks ---------------------------------------------------------------
 
+    /**
+     * A card with a coloured badge and a heading. Tapping the heading folds the card away (the
+     * app remembers which are open). Returns the part to put the card's rows in.
+     */
     private LinearLayout card(LinearLayout parent, String icon, String heading, int iconColour) {
         LinearLayout card = new LinearLayout(this);
         card.setOrientation(LinearLayout.VERTICAL);
@@ -331,13 +460,60 @@ public class MainActivity extends Activity {
         h.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
         h.setTextColor(INK);
         h.setPadding(dp(12), 0, 0, 0);
-        top.addView(h);
+        top.addView(h, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView chevron = new TextView(this);
+        chevron.setTextSize(15);
+        chevron.setTextColor(MUTED);
+        chevron.setPadding(dp(8), 0, dp(4), 0);
+        top.addView(chevron);
         card.addView(top);
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        card.addView(content, matchWrap());
+        SharedPreferences ui = getSharedPreferences("ui", Context.MODE_PRIVATE);
+        String key = "open_" + heading;
+        Runnable show = () -> {
+            boolean open = ui.getBoolean(key, true);
+            content.setVisibility(open ? View.VISIBLE : View.GONE);
+            chevron.setText(open ? "▾" : "▸");
+        };
+        show.run();
+        top.setOnClickListener(v -> {
+            ui.edit().putBoolean(key, !ui.getBoolean(key, true)).apply();
+            show.run();
+        });
 
         LinearLayout.LayoutParams lp = matchWrap();
         lp.topMargin = dp(12);
         parent.addView(card, lp);
-        return card;
+        return content;
+    }
+
+    /** A folded "Advanced" part inside a card for the fine-tuning numbers. */
+    private LinearLayout advanced(LinearLayout parent, String name) {
+        TextView head = new TextView(this);
+        head.setTextSize(13);
+        head.setTypeface(Typeface.DEFAULT_BOLD);
+        head.setTextColor(ACCENT);
+        head.setPadding(dp(2), dp(16), 0, dp(2));
+        parent.addView(head);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        parent.addView(content, matchWrap());
+        SharedPreferences ui = getSharedPreferences("ui", Context.MODE_PRIVATE);
+        String key = "adv_" + name;
+        Runnable show = () -> {
+            boolean open = ui.getBoolean(key, false);
+            content.setVisibility(open ? View.VISIBLE : View.GONE);
+            head.setText((open ? "▾  " : "▸  ") + "Advanced");
+        };
+        show.run();
+        head.setOnClickListener(v -> {
+            ui.edit().putBoolean(key, !ui.getBoolean(key, false)).apply();
+            show.run();
+        });
+        return content;
     }
 
     private TextView label(String text) {
@@ -353,16 +529,16 @@ public class MainActivity extends Activity {
     private EditText input(String hint, String value, int inputType, Consumer<String> onChange) {
         EditText e = new EditText(this);
         e.setHint(hint);
-        e.setHintTextColor(0xFFB0ACBE);
+        e.setHintTextColor(HINT);
         e.setText(value);
         e.setSingleLine(true);
         e.setInputType(inputType);
         e.setTextSize(15);
         e.setTextColor(INK);
         e.setPadding(dp(14), dp(12), dp(14), dp(12));
-        e.setBackground(rounded(0xFFFAF9FD, dp(12), LINE));
+        e.setBackground(rounded(FIELD, dp(12), LINE));
         e.setOnFocusChangeListener((v, focus) ->
-                v.setBackground(rounded(0xFFFAF9FD, dp(12), focus ? ACCENT : LINE)));
+                v.setBackground(rounded(FIELD, dp(12), focus ? ACCENT : LINE)));
         e.addTextChangedListener(new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
@@ -382,7 +558,7 @@ public class MainActivity extends Activity {
     private LinearLayout segmented(String[] labels, int[] values, int saved, Consumer<Integer> onChange) {
         LinearLayout group = new LinearLayout(this);
         group.setPadding(dp(4), dp(4), dp(4), dp(4));
-        group.setBackground(rounded(0xFFF1EEF7, dp(14), 0));
+        group.setBackground(rounded(SOFT, dp(14), 0));
         List<TextView> pills = new ArrayList<>();
         for (int i = 0; i < labels.length; i++) {
             TextView pill = new TextView(this);
@@ -436,7 +612,7 @@ public class MainActivity extends Activity {
                 chip.setText(s);
                 chip.setTextColor(on[0] ? ACCENT : MUTED);
                 chip.setTypeface(on[0] ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
-                chip.setBackground(rounded(on[0] ? ACCENT_SOFT : 0xFFF6F4FA, dp(18),
+                chip.setBackground(rounded(on[0] ? ACCENT_SOFT : SOFT, dp(18),
                         on[0] ? ACCENT : LINE));
             };
             style.run();
@@ -465,7 +641,7 @@ public class MainActivity extends Activity {
         s.setChecked(on);
         int[][] states = {{android.R.attr.state_checked}, {}};
         s.setThumbTintList(new ColorStateList(states, new int[] {ACCENT, 0xFFFFFFFF}));
-        s.setTrackTintList(new ColorStateList(states, new int[] {ACCENT_2, 0xFFCFCBDA}));
+        s.setTrackTintList(new ColorStateList(states, new int[] {ACCENT_2, TRACK}));
         s.setOnCheckedChangeListener((b, checked) -> onChange.accept(checked));
         row.setOnClickListener(v -> s.toggle());
         row.addView(l, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -579,6 +755,8 @@ public class MainActivity extends Activity {
 
     private void refresh() {
         boolean on = isServiceEnabled();
+        if (setup != null) setup.setVisibility(on ? View.GONE : View.VISIBLE);
+        refreshSummary();
         accessibilityChip.setText((on ? "●  " : "○  ") + "Accessibility " + (on ? "on" : "off"));
         accessibilityChip.setBackground(rounded(on ? 0x33FFFFFF : 0x55D64545, dp(20), 0));
         boolean sharing = ScreenService.Companion.getInstance() != null;

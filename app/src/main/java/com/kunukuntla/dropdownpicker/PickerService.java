@@ -230,6 +230,16 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         dock.setCornerRadius(dp(34));
         controls.setBackground(dock);
 
+        // Small fold button: "–" folds the column down to itself, "+" brings it back.
+        foldButton = roundButton("–", 0xFF5F5B6E, dp(30));
+        foldButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        foldButton.setContentDescription("Fold or unfold the buttons");
+        foldButton.setOnTouchListener(new DragOrTap(() -> setFolded(!folded), null));
+        LinearLayout.LayoutParams foldLp = new LinearLayout.LayoutParams(dp(30), dp(30));
+        foldLp.gravity = Gravity.CENTER_HORIZONTAL;
+        foldLp.bottomMargin = dp(6);
+        controls.addView(foldButton, foldLp);
+
         // One button per step, to test each on its own: Drop, Cal, Check (+ Continue), See.
         // Drop, and Cal + Check combined (date, fast 100 mm scroll, Available, checkbox, Continue).
         stepButtons = new TextView[] {
@@ -294,6 +304,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         // Every button drags the column around; a plain tap runs the button's action.
         tickButton.setOnTouchListener(new DragOrTap(this::toggleTicker, this::showWhatISee));
         windowManager.addView(controls, buttonParams);
+        setFolded(getSharedPreferences("ui", MODE_PRIVATE).getBoolean("folded", false));
     }
 
     private static int blend(int a, int b, float t) {
@@ -382,6 +393,23 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                     return false;
             }
         }
+    }
+
+    private TextView foldButton;
+    private boolean folded;
+
+    /** Folds the floating column down to the small fold button, or opens it again. */
+    private void setFolded(boolean fold) {
+        folded = fold;
+        getSharedPreferences("ui", MODE_PRIVATE).edit().putBoolean("folded", fold).apply();
+        for (int i = 0; i < controls.getChildCount(); i++) {
+            View v = controls.getChildAt(i);
+            if (v != foldButton) v.setVisibility(fold ? View.GONE : View.VISIBLE);
+        }
+        foldButton.setText(fold ? "+" : "–");
+        LinearLayout.LayoutParams lp = (LinearLayout.LayoutParams) foldButton.getLayoutParams();
+        lp.bottomMargin = fold ? 0 : dp(6);
+        foldButton.setLayoutParams(lp);
     }
 
     private void setButtonVisible(boolean visible) {
