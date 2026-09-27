@@ -116,7 +116,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         if (tickButton != null) tickButton.setText(TICK_LABEL);
         // Only a run that finished normally (end of the page, or the box limit) goes on - not
         // Stop, and not one that broke off because the screen couldn't be read.
-        boolean finished = why.startsWith("Reached the end") || why.startsWith("Stopped after");
+        boolean finished = why.startsWith("Reached the end") || why.startsWith("Stopped after")
+                || why.startsWith("Stopped at row");
         if (!finished || !Keywords.loadChain(this, Keywords.CHAIN_TICK_BACK2)) return;
         handler.postDelayed(() -> {
             if (!running && !busy && !isLooping()) {

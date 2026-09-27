@@ -214,6 +214,7 @@ open class CheckboxService : AccessibilityService() {
         givenUpRows.clear()
         notBoxes = 0
         retryPass = false
+        atLimit = false
         showNumbers()
         onScreen.clear()
         oldLooks.clear()
@@ -339,9 +340,17 @@ open class CheckboxService : AccessibilityService() {
     private fun numberSnap(candidates: List<Pair<Rect, BoxLook.Look?>>, labels: List<Int?>) {
         val limit = maxBoxes()
         onScreen.clear()
+        var pastLimit = false
         for ((k, c) in candidates.withIndex()) {
-            if (attempts >= limit) break
+            // Order count: at most "limit" boxes. By the page's number: up to row "limit".
+            if (!pageNumbering && attempts >= limit) break
+            if (pastLimit) continue // below the last row wanted
             val label = labels.getOrNull(k)
+            if (pageNumbering && label != null && label >= limit) {
+                atLimit = true
+                pastLimit = true
+                if (label > limit) continue
+            }
             if (label != null) {
                 // Known by its number: skip only one already ticked or already given up on.
                 if (label in doneRows || label in givenUpRows) continue
@@ -358,7 +367,9 @@ open class CheckboxService : AccessibilityService() {
         }
         run {
             if (onScreen.isEmpty()) {
-                if (attempts >= limit) {
+                if (atLimit) {
+                    stopLoop("Stopped at row $limit")
+                } else if (!pageNumbering && attempts >= limit) {
                     stopLoop("Stopped after $limit boxes")
                 } else {
                     nothingNew()
@@ -450,7 +461,11 @@ open class CheckboxService : AccessibilityService() {
                 }
             }
             val limit = maxBoxes()
-            if (attempts >= limit) stopLoop("Stopped after $limit boxes") else scrollOn()
+            when {
+                atLimit -> stopLoop("Stopped at row $limit")
+                !pageNumbering && attempts >= limit -> stopLoop("Stopped after $limit boxes")
+                else -> scrollOn()
+            }
         }
     }
 
@@ -461,6 +476,7 @@ open class CheckboxService : AccessibilityService() {
     private val doneRows = HashSet<Int>()
     private val givenUpRows = HashSet<Int>()
     private var retryPass = false
+    private var atLimit = false                         // the row "Max boxes" has been reached
     private var snapLowest = 0
     private var notBoxes = 0                            // squares not shaped like a box
 

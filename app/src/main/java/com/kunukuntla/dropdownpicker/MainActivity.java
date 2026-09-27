@@ -160,7 +160,7 @@ public class MainActivity extends Activity {
                 }));
         tickAdv.addView(numberRow("Colour tolerance", tp.getInt("colourTol", 60), "colourTol", 0, 200));
         tickAdv.addView(numberRow("Ignore top of screen (%)", tp.getInt("skipTopPct", 20), "skipTopPct", 0, 90));
-        tickAdv.addView(numberRow("Max boxes", tp.getInt("maxBoxes", 15), "maxBoxes", 1, 500));
+        tickAdv.addView(numberRow("Last row (or max boxes)", tp.getInt("maxBoxes", 500), "maxBoxes", 1, 500));
         tickAdv.addView(numberRow("Scroll per screen (%)", tp.getInt("scrollPct", 65), "scrollPct", 20, 90));
         tickAdv.addView(numberRow("After tick (ms)", tp.getInt("tickWaitMs", 200), "tickWaitMs", 0, 10000));
         tickAdv.addView(numberRow("After pop-up (ms)", tp.getInt("clearWaitMs", 250), "clearWaitMs", 0, 10000));
