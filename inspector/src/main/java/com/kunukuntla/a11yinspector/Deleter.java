@@ -18,8 +18,8 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
- * Deletes the rows you ask for: finds the row's number on the page, presses the delete (bin)
- * button in that row, then clears the two pop-ups that follow (the "are you sure" one and the
+ * Deletes the rows you ask for: finds the row's number on the page, presses the dustbin on
+ * that row (the icon that looks like the dustbin pictures - not Edit or the details arrow), then clears the two pop-ups that follow (the "are you sure" one and the
  * "deleted" one) by pressing their Yes / Delete / OK. Rows are done from the highest number
  * down, so deleting one doesn't renumber the ones still to do.
  */
@@ -110,37 +110,119 @@ final class Deleter {
             }
             return;
         }
-        Rect r = bounds(t.bin);
-        if (!onScreen(t.bin, r)) {
+        Rect r = bounds(t.number);
+        if (!onScreen(t.number, r)) {
             if (++tries > 6) {
-                fail(num, "its delete button never came on screen");
+                fail(num, "its row never came on screen");
                 return;
             }
             // Bring it on screen: ask the page first, then scroll towards it.
             if (tries == 1) {
-                log("row " + num + ": delete button off screen - bringing it on");
-                t.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+                log("row " + num + ": off screen - bringing it on");
+                t.number.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
             } else {
                 boolean down = r.top >= screen().height() / 2;
-                log("row " + num + ": scrolling " + (down ? "down" : "up") + " to its delete button");
+                log("row " + num + ": scrolling " + (down ? "down" : "up") + " to it");
                 scroll(down);
             }
-            later(() -> findRow(num), 600);
+            later(() -> findRow(num), 500);
             return;
         }
         Set<String> before = clickableKeys();
-        words.read(seen -> {
+        words.shot(true, shot -> {
             if (!running) return;
-            press(num, t, before, seen == null ? new ArrayList<>() : seen);
+            if (shot == null) {
+                fail(num, "couldn't take a screenshot to find its dustbin (Android 11+ needed)");
+                return;
+            }
+            Rect bin = pickBin(num, t, shot);
+            if (bin == null) {
+                fail(num, "no dustbin picture on its line - nothing pressed");
+                return;
+            }
+            press(num, t, bin, before, shot.words == null ? new ArrayList<>() : shot.words);
         });
     }
 
-    private void press(String num, Target t, Set<String> before, List<ScreenWords.Word> base) {
-        Rect r = bounds(t.bin);
-        log("row " + num + (t.name.isEmpty() ? "" : " (" + t.name + ")") + ": pressing its delete button at "
-                + r.centerX() + "," + r.centerY() + (t.binLabel.isEmpty() ? "" : " \"" + t.binLabel + "\""));
-        if (!t.bin.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
+    private void press(String num, Target t, Rect bin, Set<String> before, List<ScreenWords.Word> base) {
+        // The page's own button over the dustbin, if it has one; else a tap on the picture.
+        AccessibilityNodeInfo node = null;
+        for (AccessibilityNodeInfo c : t.buttons) {
+            Rect r = bounds(c);
+            if (r.contains(bin.centerX(), bin.centerY()) && (node == null || r.width() < bounds(node).width())) node = c;
+        }
+        log("row " + num + (t.name.isEmpty() ? "" : " (" + t.name + ")") + ": pressing its dustbin at "
+                + bin.centerX() + "," + bin.centerY());
+        if (node == null || !node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(bin.centerX(), bin.centerY());
         clearPopup(num, t, before, base, 1, 10, null);
+    }
+
+    // ---- which icon is the dustbin: compared with the two dustbin pictures ------------
+
+    /** An icon counts as a dustbin when it is at least this alike to one of the pictures. */
+    private static final double BIN_MATCH = 0.88;
+    private List<double[]> binPictures;
+
+    private List<double[]> binPictures() {
+        if (binPictures != null) return binPictures;
+        List<double[]> out = new ArrayList<>();
+        for (String name : new String[] {"bin_purple.png", "bin_basket.png"}) {
+            try (java.io.InputStream in = service.getAssets().open(name)) {
+                android.graphics.Bitmap b = android.graphics.BitmapFactory.decodeStream(in);
+                if (b == null) continue;
+                int[] px = new int[b.getWidth() * b.getHeight()];
+                b.getPixels(px, 0, b.getWidth(), 0, 0, b.getWidth(), b.getHeight());
+                out.add(BinFinder.grid(px, b.getWidth(), 0, 0, b.getWidth(), b.getHeight()));
+                b.recycle();
+            } catch (java.io.IOException ignored) {
+            }
+        }
+        binPictures = out;
+        return out;
+    }
+
+    private double binLikeness(ScreenWords.Shot shot, Rect r) {
+        double[] g = shot.grid(r);
+        if (g == null) return 0;
+        double best = 0;
+        for (double[] p : binPictures()) best = Math.max(best, BinFinder.similarity(g, p));
+        return best;
+    }
+
+    /**
+     * The dustbin on the row's line: every icon right of the number (the page's buttons and
+     * any drawn icon) is compared with the dustbin pictures; the most alike wins. Null when
+     * none looks like a dustbin - then nothing is pressed (not the details arrow or Edit).
+     */
+    private Rect pickBin(String num, Target t, ScreenWords.Shot shot) {
+        Rect nr = bounds(t.number);
+        int cy = nr.centerY(), half = dp(38), gap = dp(6);
+        List<Rect> icons = new ArrayList<>();
+        for (AccessibilityNodeInfo c : t.buttons) {
+            Rect r = bounds(c);
+            if (r.height() <= 4 || r.width() <= 4) continue;
+            icons.add(r);
+        }
+        int x0 = Math.max(nr.right + dp(10), shot.w * 2 / 5), x1 = shot.w * 97 / 100;
+        for (int[] b : BinFinder.blobs(shot.px, shot.w, shot.h, cy - half, cy + half, x0, x1, gap)) {
+            int iw = b[2] - b[0], ih = b[3] - b[1];
+            if (ih < dp(12) || ih > dp(70) || iw < ih / 2 || iw > ih * 2) continue;
+            icons.add(new Rect(b[0], b[1], b[2], b[3]));
+        }
+        Rect best = null;
+        double bestLike = 0;
+        StringBuilder scores = new StringBuilder();
+        for (Rect r : icons) {
+            double like = binLikeness(shot, r);
+            scores.append(' ').append(r.centerX()).append(',').append(r.centerY())
+                    .append('=').append(Math.round(like * 100)).append('%');
+            if (like > bestLike) {
+                bestLike = like;
+                best = r;
+            }
+        }
+        log("row " + num + ": icons on its line (how alike a dustbin):" + (scores.length() == 0 ? " none" : scores));
+        return bestLike >= BIN_MATCH ? best : null;
     }
 
     /**
@@ -283,14 +365,15 @@ final class Deleter {
     // ---- finding the row --------------------------------------------------------
 
     private static final class Target {
-        final AccessibilityNodeInfo bin;
+        final AccessibilityNodeInfo number;
+        /** The page's buttons in the row (Edit, details, the dustbin ...). */
+        final List<AccessibilityNodeInfo> buttons;
         final String name;
-        final String binLabel;
 
-        Target(AccessibilityNodeInfo bin, String name) {
-            this.bin = bin;
+        Target(AccessibilityNodeInfo number, List<AccessibilityNodeInfo> buttons, String name) {
+            this.number = number;
+            this.buttons = buttons;
             this.name = name;
-            this.binLabel = label(bin);
         }
     }
 
@@ -306,8 +389,9 @@ final class Deleter {
             AccessibilityNodeInfo row = node.getParent();
             if (row != null && isRow(row)) {
                 List<AccessibilityNodeInfo> inside = subtree(row);
-                AccessibilityNodeInfo bin = binIn(inside, node);
-                if (bin != null) return new Target(bin, nameIn(inside, num));
+                List<AccessibilityNodeInfo> buttons = new ArrayList<>();
+                for (AccessibilityNodeInfo c : inside) if (c.isClickable() && !c.equals(node)) buttons.add(c);
+                return new Target(node, buttons, nameIn(inside, num));
             }
             // 2) Otherwise: the bin on the same line as the number, right of it.
             if (geometric == null) geometric = sameLine(node, nodes);
@@ -322,27 +406,6 @@ final class Deleter {
         int numbers = 0;
         for (AccessibilityNodeInfo n : inside) if (label(n).matches("\\(?\\d{1,4}[.)]?")) numbers++;
         return numbers == 1;
-    }
-
-    /** The row's delete button: one saying delete / bin, else the right-most unnamed button. */
-    private static AccessibilityNodeInfo binIn(List<AccessibilityNodeInfo> inside, AccessibilityNodeInfo number) {
-        AccessibilityNodeInfo named = null, unnamed = null;
-        int unnamedLeft = Integer.MIN_VALUE;
-        for (AccessibilityNodeInfo n : inside) {
-            if (n.equals(number) || !n.isClickable()) continue;
-            String l = label(n).toLowerCase(Locale.ROOT);
-            if (l.contains("delete") || l.contains("bin") || l.contains("trash") || l.contains("remove")) {
-                named = n;
-            } else if (!l.contains("edit")) {
-                Rect r = new Rect();
-                n.getBoundsInScreen(r);
-                if (r.left >= unnamedLeft) {
-                    unnamed = n;
-                    unnamedLeft = r.left;
-                }
-            }
-        }
-        return named != null ? named : unnamed;
     }
 
     /** The first name-like text in the row (letters, not the number). */
@@ -361,8 +424,7 @@ final class Deleter {
     private Target sameLine(AccessibilityNodeInfo number, List<Node> nodes) {
         Rect nr = bounds(number);
         if (nr.height() <= 0) return null;
-        AccessibilityNodeInfo bin = null;
-        int binLeft = Integer.MIN_VALUE;
+        List<AccessibilityNodeInfo> buttons = new ArrayList<>();
         String name = "";
         int nameTop = Integer.MAX_VALUE;
         for (Node n : nodes) {
@@ -372,18 +434,14 @@ final class Deleter {
             if (n.node.isClickable()) {
                 if (Math.abs(r.centerY() - nr.centerY()) > Math.max(nr.height(), r.height()) / 2 + 4) continue;
                 if (r.left < nr.right || r.width() > screen().width() / 3) continue;
-                if (l.toLowerCase(Locale.ROOT).contains("edit")) continue;
-                if (r.left > binLeft) {
-                    bin = n.node;
-                    binLeft = r.left;
-                }
+                buttons.add(n.node);
             } else if (r.top >= nr.bottom && r.top - nr.bottom < dp(60) && Math.abs(r.left - nr.left) < dp(20)
                     && l.matches(".*[A-Za-z]{2,}.*") && r.top < nameTop) {
                 name = l;
                 nameTop = r.top;
             }
         }
-        return bin == null ? null : new Target(bin, name);
+        return new Target(number, buttons, name);
     }
 
     private boolean nameOnPage(String name) {

@@ -74,6 +74,8 @@ final class Ticker {
         lastScreen = "";
         pageOks = null;
         popupsSeen = false;
+        okSpot = null;
+        okLook = okGone = null;
         log("Tick: clicking every empty checkbox directly, clearing pop-ups");
         later(this::next, 100);
     }
@@ -164,7 +166,7 @@ final class Ticker {
 
     /** How often to look for a pop-up after a tick: longer once pop-ups have been coming. */
     private int firstLooks() {
-        return popupsSeen ? 4 : 2;
+        return popupsSeen ? 5 : 2;
     }
 
     private void done(Box b, String how, Set<String> before, List<Rect> oldOks) {
@@ -202,26 +204,73 @@ final class Ticker {
                 clearPopups(clickableKeys(), oldOks, 1, then); // a second pop-up may follow
                 return;
             }
-            // 2) A pop-up drawn but not reported: a new "OK" read off a screenshot.
-            words.read(seen -> {
+            // 2) A pop-up drawn but not reported. Once its OK has been read off a screenshot,
+            //    its look is remembered: later pop-ups are spotted from the pixels alone (fast);
+            //    the words are read (slower) only on the last look, or until an OK is learned.
+            boolean quick = okSpot != null && looksLeft > 1;
+            words.shot(!quick, shot -> {
                 if (!running) return;
-                Rect ok = seen == null ? null : newOk(seen, oldOks);
+                Rect ok = null;
+                String how = "";
+                if (shot != null && okSpot != null && looksLikeOk(shot)) {
+                    ok = okSpot;
+                    how = " (spotted by its look)";
+                }
+                if (ok == null && shot != null && shot.words != null) {
+                    ok = newOk(shot.words, oldOks);
+                    if (ok != null) {
+                        okSpot = grow(ok);
+                        okLook = shot.grid(okSpot);
+                        okGone = null;
+                        if (okLook == null) okSpot = null;
+                    }
+                }
                 if (ok != null) {
-                    log("pop-up: pressing OK at " + ok.centerX() + "," + ok.centerY());
+                    log("pop-up: pressing OK at " + ok.centerX() + "," + ok.centerY() + how);
                     tap(ok.centerX(), ok.centerY());
                     popups++;
                     popupTaps++;
                     popupsSeen = true;
-                    clearPopups(clickableKeys(), oldOks, 1, then); // a second pop-up may follow
+                    if (okSpot != null && okGone == null) {
+                        // First time: see how that spot looks with the pop-up gone.
+                        later(() -> words.shot(false, after -> {
+                            if (!running) return;
+                            double[] g = after == null || okSpot == null ? null : after.grid(okSpot);
+                            if (g != null && okLook != null && BinFinder.similarity(g, okLook) < 0.97) okGone = g;
+                            clearPopups(clickableKeys(), oldOks, 1, then); // a second pop-up may follow
+                        }), 150);
+                    } else {
+                        // Known pop-up: straight on; one left open is found at the next box.
+                        later(then, 120);
+                    }
                 } else if (looksLeft > 1) {
                     clearPopups(before, oldOks, looksLeft - 1, then);
                 } else {
-                    if (seen == null) log("pop-up: couldn't read the screen (Android 11+ needed) - not checked");
+                    if (shot == null) log("pop-up: couldn't read the screen (Android 11+ needed) - not checked");
                     else log("pop-up: no new OK on screen - none to clear");
                     then.run();
                 }
             });
-        }, 120);
+        }, 60);
+    }
+
+    /** Where the pop-up's OK was, a little bigger (its button), and how it looked. */
+    private Rect okSpot;
+    private double[] okLook, okGone;
+
+    private Rect grow(Rect r) {
+        Rect g = new Rect(r);
+        g.inset(-Math.max(dp(6), r.width() / 4), -Math.max(dp(4), r.height() / 3));
+        return g;
+    }
+
+    /** The remembered OK is on screen again: its spot looks like the OK, not like the page. */
+    private boolean looksLikeOk(ScreenWords.Shot shot) {
+        double[] g = shot.grid(okSpot);
+        if (g == null || okLook == null) return false;
+        double like = BinFinder.similarity(g, okLook);
+        if (like < 0.95) return false;
+        return okGone == null || BinFinder.similarity(g, okGone) < like - 0.02;
     }
 
     /** Where the screen shows "OK" (or "Okay"), each as screen pixels. */

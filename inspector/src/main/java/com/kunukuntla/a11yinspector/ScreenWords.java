@@ -2,6 +2,8 @@ package com.kunukuntla.a11yinspector;
 
 import android.accessibilityservice.AccessibilityService;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.ColorSpace;
 import android.graphics.Rect;
 import android.hardware.HardwareBuffer;
 import android.os.Build;
@@ -23,9 +25,9 @@ import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
 /**
- * Takes an accessibility screenshot and reads every word on it (on-device OCR), with where
- * each word is in screen pixels - so a pop-up's OK can be found even when the page doesn't
- * report the pop-up to accessibility. Android 11+.
+ * Takes an accessibility screenshot: its pixels, and (when asked) every word on it read with
+ * on-device OCR, with where each word is in screen pixels - so a pop-up's OK can be found even
+ * when the page doesn't report the pop-up to accessibility. Android 11+.
  */
 final class ScreenWords {
 
@@ -42,6 +44,30 @@ final class ScreenWords {
         }
     }
 
+    /** One screenshot: its pixels (sRGB, ARGB) and, if read, its words. */
+    static final class Shot {
+        final int[] px;
+        final int w, h;
+        List<Word> words;
+
+        Shot(int[] px, int w, int h) {
+            this.px = px;
+            this.w = w;
+            this.h = h;
+        }
+
+        /** The box's pixels as a small grid, to compare with a picture of a button. */
+        double[] grid(Rect r) {
+            int l = Math.max(0, r.left), t = Math.max(0, r.top);
+            int ri = Math.min(w, r.right), b = Math.min(h, r.bottom);
+            if (ri - l < 2 || b - t < 2) return null;
+            return BinFinder.grid(px, w, l, t, ri, b);
+        }
+    }
+
+    /** Android lets an accessibility service take about 3 screenshots a second. */
+    private static final long GAP_MS = 340;
+
     private final AccessibilityService service;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -54,15 +80,20 @@ final class ScreenWords {
 
     /** Every word on screen, or null when no screenshot or reading was possible. */
     void read(Consumer<List<Word>> done) {
+        shot(true, s -> done.accept(s == null ? null : s.words));
+    }
+
+    /** A screenshot (with its words when {@code ocr}), or null when none could be taken. */
+    void shot(boolean ocr, Consumer<Shot> done) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             main.post(() -> done.accept(null));
             return;
         }
-        long wait = Math.max(0, lastShot + 350 - SystemClock.uptimeMillis());
-        main.postDelayed(() -> take(done, 5), wait);
+        long wait = Math.max(0, lastShot + GAP_MS - SystemClock.uptimeMillis());
+        main.postDelayed(() -> take(ocr, done, 5), wait);
     }
 
-    private void take(Consumer<List<Word>> done, int triesLeft) {
+    private void take(boolean ocr, Consumer<Shot> done, int triesLeft) {
         lastShot = SystemClock.uptimeMillis();
         service.takeScreenshot(Display.DEFAULT_DISPLAY, worker,
                 new AccessibilityService.TakeScreenshotCallback() {
@@ -72,8 +103,14 @@ final class ScreenWords {
                         HardwareBuffer buffer = result.getHardwareBuffer();
                         try {
                             Bitmap hw = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
-                            if (hw != null) soft = hw.copy(Bitmap.Config.ARGB_8888, false);
+                            if (hw != null) {
+                                // Standard colours, so pixels compare with the button pictures.
+                                soft = Bitmap.createBitmap(hw.getWidth(), hw.getHeight(),
+                                        Bitmap.Config.ARGB_8888, false, ColorSpace.get(ColorSpace.Named.SRGB));
+                                new Canvas(soft).drawBitmap(hw, 0, 0, null);
+                            }
                         } catch (RuntimeException ignored) {
+                            soft = null;
                         } finally {
                             buffer.close();
                         }
@@ -81,23 +118,32 @@ final class ScreenWords {
                             main.post(() -> done.accept(null));
                             return;
                         }
-                        Bitmap shot = soft;
-                        main.post(() -> recognise(shot, done));
+                        int w = soft.getWidth(), h = soft.getHeight();
+                        int[] px = new int[w * h];
+                        soft.getPixels(px, 0, w, 0, 0, w, h);
+                        Shot s = new Shot(px, w, h);
+                        if (!ocr) {
+                            soft.recycle();
+                            main.post(() -> done.accept(s));
+                            return;
+                        }
+                        Bitmap bmp = soft;
+                        main.post(() -> recognise(bmp, s, done));
                     }
 
                     @Override
                     public void onFailure(int errorCode) {
-                        if (triesLeft > 0) main.postDelayed(() -> take(done, triesLeft - 1), 350);
+                        if (triesLeft > 0) main.postDelayed(() -> take(ocr, done, triesLeft - 1), GAP_MS);
                         else main.post(() -> done.accept(null));
                     }
                 });
     }
 
-    private void recognise(Bitmap shot, Consumer<List<Word>> done) {
+    private void recognise(Bitmap bmp, Shot s, Consumer<Shot> done) {
         if (recognizer == null) recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
-        recognizer.process(InputImage.fromBitmap(shot, 0))
+        recognizer.process(InputImage.fromBitmap(bmp, 0))
                 .addOnSuccessListener(text -> {
-                    shot.recycle();
+                    bmp.recycle();
                     List<Word> out = new ArrayList<>();
                     for (Text.TextBlock block : text.getTextBlocks()) {
                         for (Text.Line line : block.getLines()) {
@@ -109,10 +155,11 @@ final class ScreenWords {
                             }
                         }
                     }
-                    done.accept(out);
+                    s.words = out;
+                    done.accept(s);
                 })
                 .addOnFailureListener(e -> {
-                    shot.recycle();
+                    bmp.recycle();
                     done.accept(null);
                 });
     }
