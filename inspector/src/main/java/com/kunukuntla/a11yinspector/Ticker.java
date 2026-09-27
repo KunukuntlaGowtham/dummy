@@ -15,6 +15,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Ticks every empty checkbox the page reports - also a hidden one (a web page often hides the
@@ -82,15 +84,20 @@ final class Ticker {
         okLook = okGone = null;
         popupShapes = pageBefore = pageWithPopup = null;
         log("Tick: clicking every empty checkbox directly, clearing pop-ups");
+        treeShows = service.getSharedPreferences("taught", android.content.Context.MODE_PRIVATE)
+                .getBoolean("tick_tree_shows", false);
         Taught.Button taught = Taught.get(service, Taught.TICK_POPUP);
         if (taught != null) {
             okSpot = new Rect(taught.spot);
             okLook = taught.look;
             okGone = taught.gone;
             popupShapes = taught.shapes.isEmpty() ? null : taught.shapes;
+            coverWorks = treeShows;
+            if (popupShapes != null) treeShows = true;
             popupsSeen = true;
-            log("using the pop-up OK you taught at " + okSpot.centerX() + "," + okSpot.centerY()
-                    + (popupShapes != null ? " (watched for on the page)" : " (found by its look)"));
+            log("pop-up OK known at " + okSpot.centerX() + "," + okSpot.centerY()
+                    + (treeShows ? " - watched for in the accessibility tree, no screenshots"
+                    : " - the tree doesn't show this pop-up: found by screenshots"));
         }
         later(this::next, 100);
     }
@@ -221,7 +228,7 @@ final class Ticker {
         ticked++;
         tickedRows.add(b.row);
         log("row " + b.row + ": " + how);
-        if (popupShapes != null && okSpot != null) watchPopup(before, oldOks, 0);
+        if (okSpot != null && treeShows) watchPopup(before, oldOks, 0);
         else clearPopups(before, oldOks, firstLooks(), this::next);
     }
 
@@ -240,27 +247,59 @@ final class Ticker {
     /** The elements the pop-up adds to the page (learned from the first pop-up), or null. */
     private Set<String> popupShapes;
 
+    /** The accessibility tree shows this page's pop-up (learned from the first one). */
+    private boolean treeShows;
+
+    /** The pop-up is up: what it adds is in the tree now (not before the tick). */
     private boolean popupUp() {
         Set<String> now = shapes();
-        int have = 0;
-        boolean fresh = false;
-        for (String k : popupShapes) {
-            if (!now.contains(k)) continue;
-            have++;
-            if (pageBefore == null || !pageBefore.contains(k)) fresh = true;
+        if (popupShapes != null) {
+            int have = 0;
+            boolean fresh = false;
+            for (String k : popupShapes) {
+                if (!now.contains(k)) continue;
+                have++;
+                if (pageBefore == null || !pageBefore.contains(k)) fresh = true;
+            }
+            if (fresh && have * 10 >= popupShapes.size() * 8) return true;
         }
-        return fresh && have * 10 >= popupShapes.size() * 8;
+        return coverWorks && pageBefore != null && coverAdded(now, pageBefore);
+    }
+
+    /** The pop-up shows as a big new element in the tree (checked on the first pop-up). */
+    private boolean coverWorks;
+
+    private static final Pattern BOUNDS = Pattern.compile("\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]");
+
+    /**
+     * Something big came into the tree (a cover over the page, or a dialog): a pop-up, even
+     * one that doesn't report its words or buttons.
+     */
+    private boolean coverAdded(Set<String> now, Set<String> before) {
+        Rect s = screen();
+        long big = (long) s.width() * s.height() / 4;
+        for (String k : now) {
+            if (before.contains(k)) continue;
+            if (k.toLowerCase(Locale.ROOT).contains("dialog")) return true;
+            Matcher m = BOUNDS.matcher(k);
+            if (!m.find()) continue;
+            long w = Long.parseLong(m.group(3)) - Long.parseLong(m.group(1));
+            long h = Long.parseLong(m.group(4)) - Long.parseLong(m.group(2));
+            if (w * h >= big) return true;
+        }
+        return false;
     }
 
     /**
      * Watches the page (every 40 ms, no screenshots) for the known pop-up, presses its OK
-     * the moment it shows, and goes on as soon as it has gone. If it doesn't show within
-     * 1.2 s, one screenshot look makes sure nothing was missed.
+     * the moment it shows, and goes on as soon as it has gone. No pop-up within 1.5 s (0.5 s
+     * once none came for 3 boxes): none came - on to the next box.
      */
     private void watchPopup(Set<String> before, List<Rect> oldOks, long waited) {
         later(() -> {
             if (popupUp()) {
-                log("pop-up: pressing OK at " + okSpot.centerX() + "," + okSpot.centerY() + " (seen on the page)");
+                log("pop-up: pressing OK at " + okSpot.centerX() + "," + okSpot.centerY() + " (seen in the tree)");
+                quietBoxes = 0;
                 popups++;
                 popupTaps++;
                 // A moment for it to finish drawing, so the press lands on its button.
@@ -268,8 +307,10 @@ final class Ticker {
                     tap(okSpot.centerX(), okSpot.centerY());
                     waitGone(before, oldOks, 0);
                 }, 60);
-            } else if (waited >= 1200) {
-                clearPopups(before, oldOks, 1, this::next);
+            } else if (waited >= (quietBoxes >= 3 ? 500 : 1500)) {
+                log("pop-up: none came");
+                quietBoxes++;
+                next();
             } else {
                 watchPopup(before, oldOks, waited + 40);
             }
@@ -390,25 +431,34 @@ final class Ticker {
     /** What only the pop-up added: on the page with it, not before the tick, not after it went. */
     private void learnPopupShapes() {
         if (pageWithPopup == null || pageBefore == null) {
-            log("pop-up: couldn't learn how the page shows it");
+            log("pop-up: couldn't learn how the tree shows it");
             return;
         }
         Set<String> after = shapes();
         Set<String> only = new HashSet<>(pageWithPopup);
         only.removeAll(pageBefore);
-        Set<String> newWith = new HashSet<>(only);
         only.removeAll(after);
-        log("pop-up: page elements before " + pageBefore.size() + ", with it up " + pageWithPopup.size()
-                + ", after it went " + after.size() + "; new while up: "
-                + (newWith.isEmpty() ? "none" : String.join("  ", new java.util.ArrayList<>(newWith).subList(0, Math.min(6, newWith.size())))));
+        // A cover counts only if it went with the pop-up (the tick itself didn't add it).
+        boolean cover = coverAdded(pageWithPopup, pageBefore) && !coverAdded(after, pageBefore);
+        coverWorks = cover;
         pageWithPopup = null;
-        if (only.isEmpty()) {
-            log("pop-up: the page shows nothing of it - finding it by screenshots");
-            return;
+        popupShapes = only.isEmpty() ? null : only;
+        treeShows = popupShapes != null || cover;
+        // Remember it for next time too: no screenshot needed from the first box on.
+        Taught.Button b = new Taught.Button();
+        b.spot = new Rect(okSpot);
+        b.look = okLook;
+        b.gone = okGone;
+        b.shapes = only;
+        Taught.put(service, Taught.TICK_POPUP, b);
+        service.getSharedPreferences("taught", android.content.Context.MODE_PRIVATE).edit()
+                .putBoolean("tick_tree_shows", treeShows).apply();
+        if (treeShows) {
+            log("pop-up: the accessibility tree shows it (" + (cover ? "a cover over the page" : only.size()
+                    + " elements") + ") - from now on watched for in the tree, no screenshots");
+        } else {
+            log("pop-up: the accessibility tree shows nothing of it - it can only be found by screenshots");
         }
-        popupShapes = only;
-        log("pop-up: learned it (" + only.size() + " elements it adds) - from now on it is watched"
-                + " for on the page, no screenshots");
     }
 
     /** Where the pop-up's OK was, a little bigger (its button), and how it looked. */
