@@ -393,9 +393,14 @@ final class Ticker {
             log("pop-up: couldn't learn how the page shows it");
             return;
         }
+        Set<String> after = shapes();
         Set<String> only = new HashSet<>(pageWithPopup);
         only.removeAll(pageBefore);
-        only.removeAll(shapes());
+        Set<String> newWith = new HashSet<>(only);
+        only.removeAll(after);
+        log("pop-up: page elements before " + pageBefore.size() + ", with it up " + pageWithPopup.size()
+                + ", after it went " + after.size() + "; new while up: "
+                + (newWith.isEmpty() ? "none" : String.join("  ", new java.util.ArrayList<>(newWith).subList(0, Math.min(6, newWith.size())))));
         pageWithPopup = null;
         if (only.isEmpty()) {
             log("pop-up: the page shows nothing of it - finding it by screenshots");

@@ -147,11 +147,19 @@ final class Taught {
      */
     static Set<String> shapes(AccessibilityService service) {
         Set<String> out = new HashSet<>();
+        java.util.Map<String, Integer> seen = new java.util.HashMap<>();
         for (AccessibilityNodeInfo n : nodes(service)) {
             Rect r = new Rect();
             n.getBoundsInScreen(r);
             if (r.width() <= 0 || r.height() <= 0) continue;
-            out.add(n.getClassName() + "|" + role(n) + "|" + r.toShortString());
+            // How many children too: a pop-up added inside the page changes its parent's
+            // count, even when the pop-up itself is an empty box the same size as another.
+            String k = n.getClassName() + "|" + role(n) + "|" + r.toShortString() + "|" + n.getChildCount()
+                    + (n.isClickable() ? "|clk" : "");
+            // A second element exactly like another counts as its own (the cover over the page
+            // can be the same size as the page's own full-screen box).
+            int times = seen.merge(k, 1, Integer::sum);
+            out.add(times == 1 ? k : k + "#" + times);
         }
         return out;
     }
