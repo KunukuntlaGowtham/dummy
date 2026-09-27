@@ -42,16 +42,23 @@ final class Snap {
 
     static final class Result {
         final List<Rect> emptyBoxes;
-        final List<Word> words;
+        /** The words on it: only read when asked ({@link #readWords}), else empty. */
+        List<Word> words = new ArrayList<>();
         final int[] lum;   // half-size grey copy, for checking a spot has a (ticked) box
         final int w, h;
+        Bitmap picture;    // the full picture until the words are read (or it is dropped)
 
-        Result(List<Rect> emptyBoxes, List<Word> words, int[] lum, int w, int h) {
+        Result(List<Rect> emptyBoxes, int[] lum, int w, int h, Bitmap picture) {
             this.emptyBoxes = emptyBoxes;
-            this.words = words;
             this.lum = lum;
             this.w = w;
             this.h = h;
+            this.picture = picture;
+        }
+
+        void drop() {
+            if (picture != null) picture.recycle();
+            picture = null;
         }
 
         /** How much the spot (screen pixels) varies in brightness: a box there has ink. */
@@ -131,8 +138,8 @@ final class Snap {
                 for (Rect r : BoxFinder.find(lum, w, h, minBox / SCALE, maxBox / SCALE)) {
                     boxes.add(new Rect(r.left * SCALE, r.top * SCALE, r.right * SCALE, r.bottom * SCALE));
                 }
-                Bitmap bmp = soft;
-                main.post(() -> read(bmp, boxes, lum, w, h, done));
+                Result r = new Result(boxes, lum, w, h, soft);
+                main.post(() -> done.accept(r));
             }
 
             @Override
@@ -146,11 +153,16 @@ final class Snap {
         });
     }
 
-    private void read(Bitmap bmp, List<Rect> boxes, int[] lum, int w, int h, Consumer<Result> done) {
+    /** Reads the words on the picture (slower: only when the page's own numbers aren't enough). */
+    void readWords(Result r, Consumer<Result> done) {
+        Bitmap bmp = r.picture;
+        if (bmp == null) {
+            done.accept(r);
+            return;
+        }
         if (recognizer == null) recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
         recognizer.process(InputImage.fromBitmap(bmp, 0))
                 .addOnSuccessListener(text -> {
-                    bmp.recycle();
                     List<Word> words = new ArrayList<>();
                     for (Text.TextBlock block : text.getTextBlocks()) {
                         for (Text.Line line : block.getLines()) {
@@ -162,11 +174,13 @@ final class Snap {
                             }
                         }
                     }
-                    done.accept(new Result(boxes, words, lum, w, h));
+                    r.words = words;
+                    r.drop();
+                    done.accept(r);
                 })
                 .addOnFailureListener(e -> {
-                    bmp.recycle();
-                    done.accept(new Result(boxes, new ArrayList<>(), lum, w, h));
+                    r.drop();
+                    done.accept(r);
                 });
     }
 }

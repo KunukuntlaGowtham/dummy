@@ -4,11 +4,16 @@ import android.accessibilityservice.AccessibilityService;
 import android.annotation.SuppressLint;
 import android.content.ClipData;
 import android.content.ClipboardManager;
+import android.content.Context;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
-import android.graphics.Typeface;
+import android.graphics.RectF;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -24,27 +29,56 @@ import android.widget.Toast;
 import java.io.FileOutputStream;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Two floating buttons. You tick the boxes and close the pop-ups yourself; after every 3-4
- * ticks tap Save (it notes every row and whether it is ticked); at the end tap List for the
- * rows never ticked. Only reads the page.
+ * Watch: while you tick the boxes and close the pop-ups yourself, it keeps taking screenshots,
+ * finds the empty boxes and the ticked ones with their row numbers, and shows them over the
+ * page - red = not ticked, green = ticked - with the running "not ticked" list on a bar at
+ * the top. List shows the final list (Copy numbers, New list). Nothing is tapped.
  */
 public class CheckService extends AccessibilityService {
 
     static final String RESULT_FILE = "last_check.txt";
 
+    private static final Pattern ROW_NUMBER =
+            Pattern.compile("^\\(?(\\d{1,4})[.):]?(?:\\s.*)?$", Pattern.DOTALL);
+    private static final Pattern ONLY_NUMBER = Pattern.compile("^\\(?(\\d{1,4})[.):]?$");
+
+    private final Handler main = new Handler(Looper.getMainLooper());
     private WindowManager wm;
-    private TextView button;
+    private TextView watchButton, listButton;
     private View card;
+    private Marks marks;
+    private Snap snap;
+    private boolean watching;
+    private int gen;
+
+    /** Every row seen, in the order first seen: number -> ticked. */
+    private final LinkedHashMap<String, Boolean> state = new LinkedHashMap<>();
 
     @Override
     protected void onServiceConnected() {
         wm = getSystemService(WindowManager.class);
-        showButton();
+        snap = new Snap(this);
+        load();
+        watchButton = floating("👁\nWatch", 0xEE6A2C91, dp(200), v -> {
+            if (watching) stopWatching();
+            else startWatching();
+        });
+        listButton = floating("📋\nList", 0xEE2E7D32, dp(272), v -> {
+            if (card != null) closeCard();
+            else showList();
+        });
     }
 
     @Override
@@ -57,34 +91,349 @@ public class CheckService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        stopWatching();
         closeCard();
-        for (View b : new View[] {button, listButton}) {
-            if (b == null) continue;
+        for (View v : new View[] {watchButton, listButton}) {
+            if (v == null) continue;
             try {
-                wm.removeView(b);
+                wm.removeView(v);
             } catch (RuntimeException ignored) {
             }
         }
         super.onDestroy();
     }
 
-    // ---- the two buttons: Save (after every few ticks) and List (at the end) ------------
+    // ---- watching: screenshot, find, show, again ------------------------------------------
 
-    private TextView listButton;
+    private void startWatching() {
+        closeCard();
+        watching = true;
+        gen++;
+        watchButton.setText("■\nStop");
+        if (marks == null) {
+            marks = new Marks(this);
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT);
+            lp.gravity = Gravity.TOP | Gravity.START;
+            wm.addView(marks, lp);
+        }
+        marks.bar = "👁 Watching - tick the boxes yourself";
+        marks.invalidate();
+        look(gen);
+    }
 
-    private void showButton() {
-        button = floating("☑+\nSave #" + (captures() + 1), 0xEE6A2C91, dp(200), v -> capture());
-        listButton = floating("📋\nList", 0xEE2E7D32, dp(272), v -> {
-            if (card != null) closeCard();
-            else showList();
+    private void stopWatching() {
+        watching = false;
+        gen++;
+        if (watchButton != null) watchButton.setText("👁\nWatch");
+        if (marks != null) {
+            try {
+                wm.removeView(marks);
+            } catch (RuntimeException ignored) {
+            }
+            marks = null;
+        }
+    }
+
+    /** One look: our marks out of the picture, a screenshot, the marks back with what it found. */
+    private void look(int g) {
+        if (!watching || g != gen) return;
+        if (marks != null) marks.setVisibility(View.INVISIBLE);
+        main.postDelayed(() -> {
+            if (!watching || g != gen) return;
+            snap.take(dp(14), dp(48), result -> {
+                if (marks != null) marks.setVisibility(View.VISIBLE);
+                if (!watching || g != gen) {
+                    result.drop();
+                    return;
+                }
+                numbers(result, numbers -> {
+                    if (!watching || g != gen) return;
+                    try {
+                        process(result, numbers);
+                    } catch (RuntimeException e) {
+                        if (marks != null) {
+                            marks.bar = "Error: " + e;
+                            marks.invalidate();
+                        }
+                    }
+                    main.postDelayed(() -> look(g), 150);
+                });
+            }, why -> {
+                if (marks != null) {
+                    marks.setVisibility(View.VISIBLE);
+                    marks.bar = "No screenshot: " + why;
+                    marks.invalidate();
+                }
+                main.postDelayed(() -> look(g), 800);
+            });
+        }, 40);
+    }
+
+    /**
+     * The row numbers on screen: the page's own (fast, from accessibility) and, only when some
+     * empty box has none beside it, the numbers read off the picture (slower).
+     */
+    private void numbers(Snap.Result r, java.util.function.Consumer<List<Snap.Word>> done) {
+        List<Snap.Word> numbers = new ArrayList<>();
+        try {
+            numbers.addAll(Rows.numbersOnScreen(this));
+        } catch (RuntimeException ignored) {
+        }
+        boolean missing = numbers.isEmpty();
+        for (Rect b : r.emptyBoxes) if (numberBeside(b, numbers) == null) missing = true;
+        if (!missing) {
+            r.drop();
+            done.accept(numbers);
+            return;
+        }
+        snap.readWords(r, read -> {
+            for (Snap.Word w : read.words) if (ROW_NUMBER.matcher(w.text.trim()).matches()) numbers.add(w);
+            done.accept(numbers);
         });
     }
 
+    private void process(Snap.Result snapped, List<Snap.Word> numbers) {
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int top = statusBar() + dp(4), bottom = dm.heightPixels - dp(40);
+        List<Mark> shown = new ArrayList<>();
+        Set<String> emptyHere = new LinkedHashSet<>();
+        List<Integer> dxs = new ArrayList<>(), numXs = new ArrayList<>(), sizes = new ArrayList<>();
+        for (Rect b : snapped.emptyBoxes) {
+            if (b.top < top || b.bottom > bottom || onOurButtons(b)) continue;
+            Snap.Word n = numberBeside(b, numbers);
+            if (n == null) {
+                shown.add(new Mark(b, "?", false));
+                continue;
+            }
+            String num = digits(n.text);
+            emptyHere.add(num);
+            shown.add(new Mark(b, num, false));
+            dxs.add(b.centerX() - n.box.centerX());
+            numXs.add(n.box.centerX());
+            sizes.add(Math.max(b.width(), b.height()));
+        }
+        // Where boxes sit beside their numbers: learned now, or from before.
+        android.content.SharedPreferences p = prefs();
+        int dx, numX, size;
+        if (!dxs.isEmpty()) {
+            dx = median(dxs);
+            numX = median(numXs);
+            size = median(sizes);
+            p.edit().putInt("dx", dx).putInt("numX", numX).putInt("size", size).apply();
+        } else {
+            dx = p.getInt("dx", Integer.MIN_VALUE);
+            numX = p.getInt("numX", Integer.MIN_VALUE);
+            size = p.getInt("size", dp(24));
+        }
+        // Ticked: a number in the numbers' column with a filled box where the empty ones sit.
+        Set<String> tickedHere = new LinkedHashSet<>();
+        if (dx != Integer.MIN_VALUE) {
+            for (Snap.Word n : numbers) {
+                Matcher m = ONLY_NUMBER.matcher(n.text.trim());
+                if (!m.matches()) continue;
+                String num = m.group(1);
+                if (emptyHere.contains(num) || tickedHere.contains(num)) continue;
+                if (Math.abs(n.box.centerX() - numX) > dp(30)) continue;
+                if (n.box.top < top || n.box.bottom > bottom) continue;
+                int cx = n.box.centerX() + dx, cy = n.box.centerY();
+                Rect spot = new Rect(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2);
+                if (snapped.spread(spot) >= 60) {
+                    tickedHere.add(num);
+                    shown.add(new Mark(spot, num, true));
+                }
+            }
+        }
+        boolean changed = false;
+        for (String num : emptyHere) {
+            Boolean was = state.put(num, false);
+            if (was == null || was) changed = true;
+        }
+        for (String num : tickedHere) {
+            Boolean was = state.put(num, true);
+            if (was == null || !was) changed = true;
+        }
+        if (changed) save();
+        if (marks != null) {
+            marks.marks = shown;
+            marks.bar = barText(emptyHere.size(), tickedHere.size());
+            marks.invalidate();
+        }
+    }
+
+    private String barText(int emptyNow, int tickedNow) {
+        List<String> not = notTicked();
+        int ticked = 0;
+        for (boolean t : state.values()) if (t) ticked++;
+        return "👁 " + (not.isEmpty() ? "No row left unticked" : "Not ticked: " + String.join(", ", not))
+                + "  ·  ☑ " + ticked + " of " + state.size() + "  ·  here ☐" + emptyNow + " ☑" + tickedNow;
+    }
+
+    /** The nearest number on the same line as the box (left or right of it), like the main app. */
+    private Snap.Word numberBeside(Rect box, List<Snap.Word> numbers) {
+        int tolerance = Math.max(box.height() / 2, dp(9));
+        Snap.Word best = null;
+        int bestGap = Integer.MAX_VALUE;
+        for (Snap.Word w : numbers) {
+            Rect r = w.box;
+            if (Math.abs(r.centerY() - box.centerY()) > tolerance || Rect.intersects(r, box)) continue;
+            int gap = r.left >= box.right ? r.left - box.right : box.left - r.right;
+            if (gap < bestGap) {
+                bestGap = gap;
+                best = w;
+            }
+        }
+        return best;
+    }
+
+    private boolean onOurButtons(Rect b) {
+        for (View v : new View[] {watchButton, listButton}) {
+            if (v == null) continue;
+            int[] at = new int[2];
+            v.getLocationOnScreen(at);
+            if (Rect.intersects(b, new Rect(at[0], at[1], at[0] + v.getWidth(), at[1] + v.getHeight()))) return true;
+        }
+        return false;
+    }
+
+    // ---- the list, kept across looks (and restarts) ----------------------------------------
+
+    private android.content.SharedPreferences prefs() {
+        return getSharedPreferences("list", MODE_PRIVATE);
+    }
+
+    private void load() {
+        state.clear();
+        for (String line : prefs().getString("rows", "").split("\n")) {
+            String[] f = line.split("\t", -1);
+            if (f.length >= 2 && f[0].matches("\\d+")) state.put(f[0], f[1].equals("1"));
+        }
+    }
+
+    private void save() {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Boolean> e : state.entrySet()) {
+            sb.append(e.getKey()).append('\t').append(e.getValue() ? "1" : "0").append('\n');
+        }
+        prefs().edit().putString("rows", sb.toString()).apply();
+    }
+
+    private List<String> sortedKeys() {
+        List<String> keys = new ArrayList<>(state.keySet());
+        Collections.sort(keys, (a, b) -> Integer.compare(Integer.parseInt(a), Integer.parseInt(b)));
+        return keys;
+    }
+
+    private List<String> notTicked() {
+        List<String> out = new ArrayList<>();
+        for (String k : sortedKeys()) if (!state.get(k)) out.add(k);
+        return out;
+    }
+
+    private void showList() {
+        if (state.isEmpty()) {
+            showCard("Nothing seen yet.\n\nTap 👁 Watch, then tick the boxes and close the pop-ups "
+                    + "yourself, scrolling down the page. Tap 📋 List at the end.", "");
+            return;
+        }
+        List<String> not = notTicked(), yes = new ArrayList<>();
+        for (String k : sortedKeys()) if (state.get(k)) yes.add(k);
+        StringBuilder text = new StringBuilder();
+        text.append(state.size()).append(" rows seen\n\n");
+        if (not.isEmpty()) text.append("✅ All ticked\n");
+        else text.append("☐ NOT ticked (").append(not.size()).append("):\n").append(String.join(", ", not)).append('\n');
+        if (!yes.isEmpty()) text.append("\n☑ Ticked (").append(yes.size()).append("): ").append(String.join(", ", yes)).append('\n');
+        String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date());
+        try (FileOutputStream out = openFileOutput(RESULT_FILE, MODE_PRIVATE)) {
+            out.write(("Tick Check - " + stamp + "\n\n" + text).getBytes());
+        } catch (java.io.IOException ignored) {
+        }
+        showCard(text.toString().trim(), String.join(", ", not));
+    }
+
+    private void newList() {
+        prefs().edit().clear().apply();
+        state.clear();
+        closeCard();
+        if (marks != null) {
+            marks.marks = new ArrayList<>();
+            marks.bar = barText(0, 0);
+            marks.invalidate();
+        }
+        Toast.makeText(this, "New list", Toast.LENGTH_SHORT).show();
+    }
+
+    // ---- the marks over the page ------------------------------------------------------------
+
+    private static final class Mark {
+        final Rect box;
+        final String number;
+        final boolean ticked;
+
+        Mark(Rect box, String number, boolean ticked) {
+            this.box = box;
+            this.number = number;
+            this.ticked = ticked;
+        }
+    }
+
+    /** Draws a red (not ticked) or green (ticked) frame and number on each box, and the bar. */
+    private final class Marks extends View {
+        List<Mark> marks = new ArrayList<>();
+        String bar = "";
+        private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+
+        Marks(Context c) {
+            super(c);
+            line.setStyle(Paint.Style.STROKE);
+            line.setStrokeWidth(dp(3));
+            text.setColor(Color.WHITE);
+            text.setTextSize(dp(13));
+            text.setFakeBoldText(true);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            int[] at = new int[2];
+            getLocationOnScreen(at);
+            canvas.translate(-at[0], -at[1]);
+            for (Mark m : marks) {
+                int colour = m.ticked ? 0xFF2E7D32 : 0xFFD32F2F;
+                line.setColor(colour);
+                RectF r = new RectF(m.box.left - dp(3), m.box.top - dp(3), m.box.right + dp(3), m.box.bottom + dp(3));
+                canvas.drawRoundRect(r, dp(4), dp(4), line);
+                String label = m.number + (m.ticked ? " ✓" : "");
+                float tw = text.measureText(label);
+                float lx = r.right + dp(4), ly = r.centerY() - dp(10);
+                fill.setColor(colour);
+                canvas.drawRoundRect(new RectF(lx, ly, lx + tw + dp(10), ly + dp(20)), dp(6), dp(6), fill);
+                canvas.drawText(label, lx + dp(5), ly + dp(15), text);
+            }
+            if (!bar.isEmpty()) {
+                float y = statusBar() + dp(2);
+                fill.setColor(0xE61B1D22);
+                canvas.drawRect(0, y, getResources().getDisplayMetrics().widthPixels, y + dp(26), fill);
+                text.setTextSize(dp(12));
+                canvas.drawText(bar, dp(8), y + dp(18), text);
+                text.setTextSize(dp(13));
+            }
+        }
+    }
+
+    // ---- buttons and the card -------------------------------------------------------------
+
     /** A round button on the right edge; drag it to move it. */
     @SuppressLint("ClickableViewAccessibility")
-    private TextView floating(String text, int colour, int y, View.OnClickListener onTap) {
+    private TextView floating(String label, int colour, int y, View.OnClickListener onTap) {
         TextView b = new TextView(this);
-        b.setText(text);
+        b.setText(label);
         b.setTextColor(Color.WHITE);
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
         b.setGravity(Gravity.CENTER);
@@ -134,262 +483,7 @@ public class CheckService extends AccessibilityService {
         return b;
     }
 
-    // ---- the list kept across the Saves --------------------------------------------------
-
-    /**
-     * Every row seen in any Save, in the order first seen: number -> "1" ticked / "0" not,
-     * plus its name. A later Save updates a row (you may have ticked it since).
-     */
-    private final java.util.LinkedHashMap<String, Boolean> state = new java.util.LinkedHashMap<>();
-    private final java.util.Map<String, String> names = new java.util.HashMap<>();
-
-    private android.content.SharedPreferences prefs() {
-        return getSharedPreferences("list", MODE_PRIVATE);
-    }
-
-    private int captures() {
-        return prefs().getInt("captures", 0);
-    }
-
-    private void load() {
-        state.clear();
-        names.clear();
-        String saved = prefs().getString("rows", "");
-        for (String line : saved.split("\n")) {
-            String[] f = line.split("\t", -1);
-            if (f.length < 3) continue;
-            state.put(f[0], f[1].equals("1"));
-            if (!f[2].isEmpty()) names.put(f[0], f[2]);
-        }
-    }
-
-    private void save(int captures) {
-        StringBuilder sb = new StringBuilder();
-        for (java.util.Map.Entry<String, Boolean> e : state.entrySet()) {
-            String name = names.get(e.getKey());
-            sb.append(e.getKey()).append('\t').append(e.getValue() ? "1" : "0").append('\t')
-                    .append(name == null ? "" : name.replace('\t', ' ').replace('\n', ' ')).append('\n');
-        }
-        prefs().edit().putString("rows", sb.toString()).putInt("captures", captures).apply();
-    }
-
-    private Snap snap;
-    private boolean saving;
-
-    /** Save: a screenshot of the page now - its empty boxes and their numbers - added to the list. */
-    private void capture() {
-        if (saving) return;
-        closeCard();
-        if (snap == null) snap = new Snap(this);
-        saving = true;
-        // Our buttons out of the picture first.
-        button.setVisibility(View.INVISIBLE);
-        listButton.setVisibility(View.INVISIBLE);
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> snap.take(dp(14), dp(48),
-                result -> {
-                    showButtons();
-                    try {
-                        process(result);
-                    } catch (RuntimeException e) {
-                        Toast.makeText(this, "Save failed: " + e, Toast.LENGTH_LONG).show();
-                    }
-                },
-                why -> {
-                    showButtons();
-                    Toast.makeText(this, "Save failed: " + why, Toast.LENGTH_LONG).show();
-                }), 150);
-    }
-
-    private void showButtons() {
-        saving = false;
-        button.setVisibility(View.VISIBLE);
-        listButton.setVisibility(View.VISIBLE);
-    }
-
-    private static final java.util.regex.Pattern ROW_NUMBER =
-            java.util.regex.Pattern.compile("^\\(?(\\d{1,4})[.):]?(?:\\s.*)?$", java.util.regex.Pattern.DOTALL);
-    private static final java.util.regex.Pattern ONLY_NUMBER = java.util.regex.Pattern.compile("^\\(?(\\d{1,4})[.):]?$");
-
-    private void process(Snap.Result snapped) {
-        StringBuilder log = new StringBuilder();
-        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-        int top = statusBar() + dp(4), bottom = dm.heightPixels - dp(40);
-        // The numbers on screen: the page's own (accessibility) and those read off the picture.
-        List<Snap.Word> numbers = new ArrayList<>();
-        try {
-            numbers.addAll(Rows.numbersOnScreen(this));
-        } catch (RuntimeException ignored) {
-        }
-        for (Snap.Word w : snapped.words) if (ROW_NUMBER.matcher(w.text.trim()).matches()) numbers.add(w);
-
-        load();
-        android.content.SharedPreferences g = prefs();
-        List<Integer> dxs = new ArrayList<>(), numXs = new ArrayList<>(), sizes = new ArrayList<>();
-        java.util.Set<String> emptyHere = new java.util.LinkedHashSet<>();
-        int unnumbered = 0;
-        List<Rect> boxes = new ArrayList<>();
-        for (Rect b : snapped.emptyBoxes) if (b.top >= top && b.bottom <= bottom) boxes.add(b);
-        for (Rect b : boxes) {
-            Snap.Word n = numberBeside(b, numbers);
-            if (n == null) {
-                unnumbered++;
-                log.append("empty box at ").append(b.centerX()).append(',').append(b.centerY()).append(": no number beside it\n");
-                continue;
-            }
-            String num = digits(n.text);
-            emptyHere.add(num);
-            dxs.add(b.centerX() - n.box.centerX());
-            numXs.add(n.box.centerX());
-            sizes.add(Math.max(b.width(), b.height()));
-            log.append("row ").append(num).append(": empty box at ").append(b.centerX()).append(',').append(b.centerY()).append('\n');
-        }
-        // Where boxes sit beside their numbers: learned now, or from earlier saves.
-        int dx, numX, size;
-        if (!dxs.isEmpty()) {
-            dx = median(dxs);
-            numX = median(numXs);
-            size = median(sizes);
-            g.edit().putInt("dx", dx).putInt("numX", numX).putInt("size", size).apply();
-        } else {
-            dx = g.getInt("dx", Integer.MIN_VALUE);
-            numX = g.getInt("numX", Integer.MIN_VALUE);
-            size = g.getInt("size", dp(24));
-        }
-        // Ticked rows: a number in the numbers' column with a (filled) box where the empty ones are.
-        java.util.Set<String> tickedHere = new java.util.LinkedHashSet<>();
-        if (dx != Integer.MIN_VALUE) {
-            for (Snap.Word n : numbers) {
-                java.util.regex.Matcher m = ONLY_NUMBER.matcher(n.text.trim());
-                if (!m.matches()) continue;
-                String num = m.group(1);
-                if (emptyHere.contains(num) || tickedHere.contains(num)) continue;
-                if (Math.abs(n.box.centerX() - numX) > dp(30)) continue;
-                if (n.box.top < top || n.box.bottom > bottom) continue;
-                int cx = n.box.centerX() + dx, cy = n.box.centerY();
-                Rect spot = new Rect(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2);
-                int spread = snapped.spread(spot);
-                if (spread >= 60) {
-                    tickedHere.add(num);
-                    log.append("row ").append(num).append(": ticked (box at ").append(cx).append(',').append(cy)
-                            .append(" is filled)\n");
-                } else {
-                    log.append("row ").append(num).append(": no box where expected (").append(cx).append(',')
-                            .append(cy).append(") - left out\n");
-                }
-            }
-        }
-        int added = 0, nowTicked = 0;
-        for (String num : emptyHere) {
-            if (!state.containsKey(num)) added++;
-            state.put(num, false);
-        }
-        for (String num : tickedHere) {
-            Boolean was = state.get(num);
-            if (was == null) added++;
-            else if (!was) nowTicked++;
-            state.put(num, true);
-        }
-        int n = captures() + 1;
-        save(n);
-        int ticked = 0;
-        for (boolean t : state.values()) if (t) ticked++;
-        button.setText("☑+\nSave #" + (n + 1));
-        String stamp = new SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(new Date());
-        String line = "Save #" + n + " (" + stamp + "): " + emptyHere.size() + " not ticked, " + tickedHere.size()
-                + " ticked on screen" + (unnumbered > 0 ? ", " + unnumbered + " empty box(es) without a number" : "");
-        prefs().edit().putString("log", prefs().getString("log", "") + line + "\n" + log + "\n").apply();
-        Toast.makeText(this, line + "\n" + state.size() + " rows so far (" + added + " new"
-                + (nowTicked > 0 ? ", " + nowTicked + " ticked since" : "") + "): " + ticked + " ticked, "
-                + (state.size() - ticked) + " not", Toast.LENGTH_LONG).show();
-    }
-
-    /** The nearest number on the same line as the box (left or right of it), like the main app. */
-    private Snap.Word numberBeside(Rect box, List<Snap.Word> numbers) {
-        int tolerance = Math.max(box.height() / 2, dp(9));
-        Snap.Word best = null;
-        int bestGap = Integer.MAX_VALUE;
-        for (Snap.Word w : numbers) {
-            Rect r = w.box;
-            if (Math.abs(r.centerY() - box.centerY()) > tolerance || Rect.intersects(r, box)) continue;
-            int gap = r.left >= box.right ? r.left - box.right : box.left - r.right;
-            if (gap < bestGap) {
-                bestGap = gap;
-                best = w;
-            }
-        }
-        return best;
-    }
-
-    private static String digits(String text) {
-        java.util.regex.Matcher m = ROW_NUMBER.matcher(text.trim());
-        return m.matches() ? m.group(1) : text.replaceAll("\\D", "");
-    }
-
-    private static int median(List<Integer> v) {
-        List<Integer> s = new ArrayList<>(v);
-        java.util.Collections.sort(s);
-        return s.get(s.size() / 2);
-    }
-
-    private int statusBar() {
-        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
-        return id > 0 ? getResources().getDimensionPixelSize(id) : dp(24);
-    }
-
-    /** List: the rows never ticked in any Save, in number order. */
-    private void showList() {
-        load();
-        if (state.isEmpty()) {
-            showCard("Nothing saved yet.\n\nTick 3-4 boxes, tap ☑+ Save, and again after every few. "
-                    + "Then tap 📋 List.", "");
-            return;
-        }
-        List<String> keys = new ArrayList<>(state.keySet());
-        keys.sort((a, b) -> {
-            boolean na = a.matches("\\d+"), nb = b.matches("\\d+");
-            if (na && nb) return Integer.compare(Integer.parseInt(a), Integer.parseInt(b));
-            return na ? -1 : nb ? 1 : 0;
-        });
-        List<String> not = new ArrayList<>(), yes = new ArrayList<>();
-        StringBuilder rowsText = new StringBuilder();
-        for (String k : keys) {
-            if (state.get(k)) {
-                yes.add(k);
-            } else {
-                not.add(k);
-                String name = names.get(k);
-                rowsText.append("   ").append(k).append(name == null || k.startsWith("?") ? "" : "  " + name).append('\n');
-            }
-        }
-        StringBuilder text = new StringBuilder();
-        text.append("From ").append(captures()).append(" save(s), ").append(state.size()).append(" rows\n\n");
-        if (not.isEmpty()) {
-            text.append("✅ All ticked\n");
-        } else {
-            text.append("☐ NOT ticked (").append(not.size()).append("):\n").append(String.join(", ", not))
-                    .append("\n\n").append(rowsText);
-        }
-        if (!yes.isEmpty()) text.append("\n☑ Ticked (").append(yes.size()).append("): ").append(String.join(", ", yes)).append('\n');
-        String stamp = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date());
-        try (FileOutputStream out = openFileOutput(RESULT_FILE, MODE_PRIVATE)) {
-            out.write(("Tick Check - " + stamp + "\n\n" + text + "\n\nSAVES\n" + prefs().getString("log", "")).getBytes());
-        } catch (java.io.IOException ignored) {
-        }
-        List<String> numbers = new ArrayList<>();
-        for (String k : not) if (k.matches("\\d+")) numbers.add(k);
-        showCard(text.toString().trim(), String.join(", ", numbers));
-    }
-
-    private void newList() {
-        prefs().edit().clear().apply();
-        state.clear();
-        names.clear();
-        button.setText("☑+\nSave #1");
-        closeCard();
-        Toast.makeText(this, "New list - tap ☑+ Save after every few ticks", Toast.LENGTH_SHORT).show();
-    }
-
-    private void showCard(String text, String copy) {
+    private void showCard(String body, String copy) {
         closeCard();
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -399,14 +493,12 @@ public class CheckService extends AccessibilityService {
         bg.setCornerRadius(dp(16));
         box.setBackground(bg);
         TextView t = new TextView(this);
-        t.setText(text);
+        t.setText(body);
         t.setTextColor(Color.WHITE);
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        t.setTypeface(Typeface.DEFAULT);
         ScrollView sc = new ScrollView(this);
         sc.addView(t);
-        box.addView(sc, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT, 1));
+        box.addView(sc);
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.END);
         if (!copy.isEmpty()) {
@@ -427,14 +519,6 @@ public class CheckService extends AccessibilityService {
         lp.gravity = Gravity.CENTER;
         wm.addView(box, lp);
         card = box;
-        // Keep it on screen at most 60% of the height.
-        box.post(() -> {
-            int max = getResources().getDisplayMetrics().heightPixels * 6 / 10;
-            if (box.getHeight() > max) {
-                lp.height = max;
-                wm.updateViewLayout(box, lp);
-            }
-        });
     }
 
     private TextView cardButton(String label, View.OnClickListener onClick) {
@@ -454,6 +538,24 @@ public class CheckService extends AccessibilityService {
         } catch (RuntimeException ignored) {
         }
         card = null;
+    }
+
+    // ---- helpers ----------------------------------------------------------------------------
+
+    private static String digits(String text) {
+        Matcher m = ROW_NUMBER.matcher(text.trim());
+        return m.matches() ? m.group(1) : text.replaceAll("\\D", "");
+    }
+
+    private static int median(List<Integer> v) {
+        List<Integer> s = new ArrayList<>(v);
+        Collections.sort(s);
+        return s.get(s.size() / 2);
+    }
+
+    private int statusBar() {
+        int id = getResources().getIdentifier("status_bar_height", "dimen", "android");
+        return id > 0 ? getResources().getDimensionPixelSize(id) : dp(24);
     }
 
     private int dp(int v) {

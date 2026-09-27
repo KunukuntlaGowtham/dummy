@@ -44,11 +44,12 @@ public class MainActivity extends Activity {
         head.addView(title);
         TextView how = new TextView(this);
         how.setText("1. Turn it on in Accessibility (tap the chip below).\n"
-                + "2. Open the page. Tick the boxes and close the pop-ups yourself; after every 3-4 "
-                + "ticks tap the purple ☑+ Save button (4-5 times over the whole page).\n"
-                + "3. At the end tap the green 📋 List button: the rows not ticked, from all the saves. "
-                + "Copy numbers copies them; New list starts over.\n\n"
-                + "Each Save takes a screenshot: the empty boxes on it (like the main app's Tick) and the numbers beside them. Nothing is tapped or changed. Android 11 or newer.");
+                + "2. Open the page and tap the purple 👁 Watch button. Tick the boxes and close the "
+                + "pop-ups yourself, scrolling down the page. It keeps looking at the screen: red frame "
+                + "= not ticked, green = ticked, each with its row number, and the bar at the top shows "
+                + "the rows not ticked so far.\n"
+                + "3. At the end tap the green 📋 List: the rows not ticked (Copy numbers, New list).\n\n"
+                + "It takes screenshots (Android 11 or newer); nothing is tapped or changed.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));
