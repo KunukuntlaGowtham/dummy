@@ -170,6 +170,38 @@ public class MainActivity extends Activity {
         del.addView(numberRow("After bin tap (ms)", tp.getInt("delWaitMs", 800), "delWaitMs", 0, 10000));
         del.addView(numberRow("Before checking (ms)", tp.getInt("delCheckMs", 900), "delCheckMs", 0, 10000));
         del.addView(numberRow("Max deletes", tp.getInt("maxDeletes", 20), "maxDeletes", 1, 500));
+        del.addView(divider());
+        // Testing: your own not-ticked list, and a dry run that only marks the dustbins.
+        del.addView(label("Not-ticked rows to use (page numbers, e.g. 6, 8, 14)"));
+        String[] typed = {tp.getString(CheckboxService.FAILED_ROWS, "").replace(",", ", ")};
+        del.addView(input("6, 8, 14", typed[0], InputType.TYPE_CLASS_TEXT, v -> typed[0] = v));
+        View useRows = pillButton("Use these rows", true, v -> {
+            java.util.TreeSet<Integer> rows = new java.util.TreeSet<>();
+            for (String part : typed[0].split("[^0-9]+")) {
+                if (part.isEmpty()) continue;
+                try {
+                    int n = Integer.parseInt(part);
+                    if (n > 0) rows.add(n);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+            StringBuilder csv = new StringBuilder();
+            for (int n : rows) csv.append(csv.length() == 0 ? "" : ",").append(n);
+            tickPrefs(e -> e.putString(CheckboxService.FAILED_ROWS, csv.toString()));
+            Toast.makeText(this, rows.isEmpty() ? "Not-ticked list cleared"
+                    : "Not-ticked rows set: " + rows, Toast.LENGTH_SHORT).show();
+        });
+        LinearLayout.LayoutParams useLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        useLp.topMargin = dp(8);
+        del.addView(useRows, useLp);
+        del.addView(toggle("Dummy delete: find each row's dustbin and mark it red - no tap",
+                tp.getBoolean("dummyDelete", false),
+                on -> tickPrefs(e -> e.putBoolean("dummyDelete", on))));
+        TextView delNote = label("Long-press B+Del to delete (or dummy-delete) on the page you "
+                + "are on, without going Back first.");
+        delNote.setTextSize(12);
+        del.addView(delNote);
 
         // Last run
         LinearLayout log = card(body, "≡", "Last run", 0xFF6D6A7C);

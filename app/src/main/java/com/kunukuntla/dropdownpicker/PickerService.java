@@ -252,7 +252,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             if (deleteRunning) endDelete("Stopped");
             else if (backRunning) endBack("Stopped");
             else backScrollBack(true);
-        }, null));
+        }, () -> {
+            // Long press: Delete right here, without going Back first (for testing).
+            if (deleteRunning) endDelete("Stopped");
+            else if (!backRunning) startDelete(null);
+        }));
         LinearLayout.LayoutParams backDeleteLp = new LinearLayout.LayoutParams(dp(52), dp(52));
         backDeleteLp.topMargin = dp(6);
         controls.addView(backDeleteButton, backDeleteLp);
@@ -823,7 +827,10 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         deleteGen++;
         deleted = 0;
         deleteQueue.clear();
-        for (int i = 0; i < rows.size(); i++) deleteQueue.add(rows.get(i) - i);
+        dummy = tickPrefs().getBoolean("dummyDelete", false);
+        // Dummy: nothing gets deleted, so nothing moves up - look for the rows as they are.
+        for (int i = 0; i < rows.size(); i++) deleteQueue.add(dummy ? rows.get(i) : rows.get(i) - i);
+        if (dummy) log("DUMMY run: dustbins are only marked, nothing is tapped or deleted");
         deleteTries = 0;
         deleteSteps = 0;
         lastScreenKey = null;
@@ -1099,8 +1106,26 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     /** Taps the dustbin on the number's line, then deals with a confirm dialog. */
+    /** Dummy delete (setting "dummyDelete"): find and mark each dustbin, never tap. */
+    private boolean dummy;
+
     private void tapBin(int target, Bin hit, Seen seen) {
         Rect bin = hit.box;
+        if (dummy) {
+            dlog("DUMMY row " + target + ": dustbin at " + bin.centerX() + "," + bin.centerY()
+                    + " - marked, not tapped");
+            markBin(bin);
+            deleted++;
+            if (deleted >= deleteQueue.size()) {
+                handler.postDelayed(deleteStep(() -> endDelete("Dummy delete: found the dustbin of "
+                        + deleted + " of " + deleteQueue.size() + " rows")), 900);
+            } else {
+                int next = deleteQueue.get(deleted);
+                // Leave the mark up a moment, then go on with the next row on this same picture.
+                handler.postDelayed(deleteStep(() -> findRow(next, seen)), 900);
+            }
+            return;
+        }
         Set<String> before = cardText(hit.row, seen);
         List<Line> confirmsBefore = confirmLines(seen.lines);
         dlog("row " + target + ": tapping its dustbin at " + bin.centerX() + "," + bin.centerY()
@@ -1109,6 +1134,39 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         showStatus("delete: row " + target + " - bin tapped");
         handler.postDelayed(deleteStep(() -> confirm(target, before, confirmsBefore, 3)),
                 pref("delWaitMs", 800));
+    }
+
+    /** Dummy delete: a red frame round the dustbin for a moment (touches go through it). */
+    private void markBin(Rect bin) {
+        View mark = new View(this);
+        GradientDrawable ring = new GradientDrawable();
+        ring.setColor(0x00000000);
+        ring.setStroke(dp(3), 0xFFE53935);
+        ring.setCornerRadius(dp(6));
+        mark.setBackground(ring);
+        int pad = dp(6);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                bin.width() + 2 * pad, bin.height() + 2 * pad,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.x = bin.left - pad;
+        lp.y = bin.top - pad;
+        try {
+            windowManager.addView(mark, lp);
+        } catch (RuntimeException e) {
+            return;
+        }
+        handler.postDelayed(() -> {
+            try {
+                windowManager.removeView(mark);
+            } catch (RuntimeException ignored) {
+            }
+        }, 800);
     }
 
     /**
