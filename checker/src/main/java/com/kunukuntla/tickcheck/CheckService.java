@@ -56,7 +56,7 @@ public class CheckService extends AccessibilityService {
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private WindowManager wm;
-    private TextView watchButton, listButton;
+    private TextView watchButton;
     private View card;
     private Marks marks;
     private Snap snap;
@@ -74,11 +74,7 @@ public class CheckService extends AccessibilityService {
         watchButton = floating("👁\nWatch", 0xEE6A2C91, dp(200), v -> {
             if (watching) stopWatching();
             else startWatching();
-        });
-        listButton = floating("📋\nList", 0xEE2E7D32, dp(272), v -> {
-            if (card != null) closeCard();
-            else showList();
-        });
+        }, this::newList);
     }
 
     @Override
@@ -93,7 +89,7 @@ public class CheckService extends AccessibilityService {
     public void onDestroy() {
         stopWatching();
         closeCard();
-        for (View v : new View[] {watchButton, listButton}) {
+        for (View v : new View[] {watchButton}) {
             if (v == null) continue;
             try {
                 wm.removeView(v);
@@ -122,7 +118,8 @@ public class CheckService extends AccessibilityService {
             lp.gravity = Gravity.TOP | Gravity.START;
             wm.addView(marks, lp);
         }
-        marks.bar = "👁 Watching…\ntick the boxes yourself; the rows not ticked show here";
+        marks.bar = state.isEmpty() ? "👁 Watching…\ntick the boxes yourself; the rows not ticked show here · hold 👁 for a new list"
+                : barText(0, 0);
         marks.invalidate();
         look(gen);
     }
@@ -131,18 +128,27 @@ public class CheckService extends AccessibilityService {
         watching = false;
         gen++;
         if (watchButton != null) watchButton.setText("👁\nWatch");
+        // The numbers stay on screen after Stop; tap Watch to go on, hold it for a new list.
         if (marks != null) {
-            try {
-                wm.removeView(marks);
-            } catch (RuntimeException ignored) {
-            }
-            marks = null;
+            marks.bar = barText(0, 0).replaceFirst("\n.*", "") + "\n⏸ stopped · tap 👁 to go on · hold 👁 for a new list";
+            marks.invalidate();
         }
     }
 
     /** One look: our marks out of the picture, a screenshot, the marks back with what it found. */
+    private final java.util.concurrent.ExecutorService treeWorker = java.util.concurrent.Executors.newSingleThreadExecutor();
+
     private void look(int g) {
         if (!watching || g != gen) return;
+        long started = android.os.SystemClock.uptimeMillis();
+        // The page's own numbers are read at the same time as the screenshot is taken.
+        java.util.concurrent.Future<List<Snap.Word>> tree = treeWorker.submit(() -> {
+            try {
+                return Rows.numbersOnScreen(this);
+            } catch (RuntimeException e) {
+                return new ArrayList<Snap.Word>();
+            }
+        });
         main.postDelayed(() -> {
             if (!watching || g != gen) return;
             snap.take(dp(14), dp(48), result -> {
@@ -150,7 +156,13 @@ public class CheckService extends AccessibilityService {
                     result.drop();
                     return;
                 }
-                numbers(result, numbers -> {
+                List<Snap.Word> treeNumbers;
+                try {
+                    treeNumbers = tree.get(400, java.util.concurrent.TimeUnit.MILLISECONDS);
+                } catch (Exception e) {
+                    treeNumbers = new ArrayList<>();
+                }
+                numbers(result, treeNumbers, numbers -> {
                     if (!watching || g != gen) return;
                     try {
                         process(result, numbers);
@@ -160,7 +172,9 @@ public class CheckService extends AccessibilityService {
                             marks.invalidate();
                         }
                     }
-                    main.postDelayed(() -> look(g), 150);
+                    // Android allows about 3 screenshots a second: the next one as soon as it may.
+                    long wait = Math.max(0, started + 340 - android.os.SystemClock.uptimeMillis());
+                    main.postDelayed(() -> look(g), wait);
                 });
             }, why -> {
                 if (marks != null) {
@@ -176,12 +190,8 @@ public class CheckService extends AccessibilityService {
      * The row numbers on screen: the page's own (fast, from accessibility) and, only when some
      * empty box has none beside it, the numbers read off the picture (slower).
      */
-    private void numbers(Snap.Result r, java.util.function.Consumer<List<Snap.Word>> done) {
-        List<Snap.Word> numbers = new ArrayList<>();
-        try {
-            numbers.addAll(Rows.numbersOnScreen(this));
-        } catch (RuntimeException ignored) {
-        }
+    private void numbers(Snap.Result r, List<Snap.Word> treeNumbers, java.util.function.Consumer<List<Snap.Word>> done) {
+        List<Snap.Word> numbers = new ArrayList<>(treeNumbers);
         int top = statusBar() + panelHeight();
         numbers.removeIf(w -> w.box.top < top);
         boolean missing = numbers.isEmpty();
@@ -227,6 +237,10 @@ public class CheckService extends AccessibilityService {
             numX = median(numXs);
             size = median(sizes);
             p.edit().putInt("dx", dx).putInt("numX", numX).putInt("size", size).apply();
+            // From now on only the boxes' column is searched.
+            int boxX = numX + dx;
+            snap.stripLeft = boxX - size * 3;
+            snap.stripRight = boxX + size * 3;
         } else {
             dx = p.getInt("dx", Integer.MIN_VALUE);
             numX = p.getInt("numX", Integer.MIN_VALUE);
@@ -294,7 +308,7 @@ public class CheckService extends AccessibilityService {
     }
 
     private boolean onOurButtons(Rect b) {
-        for (View v : new View[] {watchButton, listButton}) {
+        for (View v : new View[] {watchButton}) {
             if (v == null) continue;
             int[] at = new int[2];
             v.getLocationOnScreen(at);
@@ -373,10 +387,11 @@ public class CheckService extends AccessibilityService {
     private void newList() {
         prefs().edit().clear().apply();
         state.clear();
+        snap.stripLeft = snap.stripRight = -1;
         closeCard();
         if (marks != null) {
             marks.marks = new ArrayList<>();
-            marks.bar = barText(0, 0);
+            marks.bar = "🆕 New list\n" + (watching ? "watching - tick the boxes yourself" : "tap 👁 to start");
             marks.invalidate();
         }
         Toast.makeText(this, "New list", Toast.LENGTH_SHORT).show();
@@ -450,7 +465,7 @@ public class CheckService extends AccessibilityService {
 
     /** A round button on the right edge; drag it to move it. */
     @SuppressLint("ClickableViewAccessibility")
-    private TextView floating(String label, int colour, int y, View.OnClickListener onTap) {
+    private TextView floating(String label, int colour, int y, View.OnClickListener onTap, Runnable onHold) {
         TextView b = new TextView(this);
         b.setText(label);
         b.setTextColor(Color.WHITE);
@@ -472,7 +487,11 @@ public class CheckService extends AccessibilityService {
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
         float[] down = new float[2];
         int[] start = new int[2];
-        boolean[] dragged = {false};
+        boolean[] dragged = {false}, held = {false};
+        Runnable hold = () -> {
+            held[0] = true;
+            onHold.run();
+        };
         b.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
@@ -481,10 +500,15 @@ public class CheckService extends AccessibilityService {
                     start[0] = p.x;
                     start[1] = p.y;
                     dragged[0] = false;
+                    held[0] = false;
+                    main.postDelayed(hold, 700);
                     return true;
                 case MotionEvent.ACTION_MOVE:
                     float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
-                    if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
+                    if (!dragged[0] && Math.hypot(dx, dy) > slop) {
+                        dragged[0] = true;
+                        main.removeCallbacks(hold);
+                    }
                     if (dragged[0]) {
                         p.x = start[0] - (int) dx; // anchored on the right
                         p.y = start[1] + (int) dy;
@@ -492,7 +516,11 @@ public class CheckService extends AccessibilityService {
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
-                    if (!dragged[0]) onTap.onClick(b);
+                    main.removeCallbacks(hold);
+                    if (!dragged[0] && !held[0]) onTap.onClick(b);
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    main.removeCallbacks(hold);
                     return true;
                 default:
                     return true;

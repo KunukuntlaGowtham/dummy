@@ -45,11 +45,10 @@ public class MainActivity extends Activity {
         TextView how = new TextView(this);
         how.setText("1. Turn it on in Accessibility (tap the chip below).\n"
                 + "2. Open the page and tap the purple 👁 Watch button. Tick the boxes and close the "
-                + "pop-ups yourself, scrolling down the page. It keeps looking at the screen: red frame "
-                + "= not ticked, green = ticked, each with its row number, and the bar at the top shows "
-                + "the rows not ticked so far.\n"
-                + "3. At the end tap the green 📋 List: the rows not ticked (Copy numbers, New list).\n\n"
-                + "It takes screenshots (Android 11 or newer); nothing is tapped or changed.");
+                + "pop-ups yourself, scrolling down the page. The panel at the top shows, live, the rows "
+                + "not ticked - each one less for every not-ticked row before it (6, 8, 10 shows 6, 7, 8).\n"
+                + "3. Tap 👁 again to stop (the numbers stay). Hold 👁 to start a new list.\n\n"
+                + "It takes screenshots (Android 11 or newer); nothing is tapped or changed."); nothing is tapped or changed.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));

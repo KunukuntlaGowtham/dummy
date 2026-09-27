@@ -44,15 +44,16 @@ final class Snap {
         final List<Rect> emptyBoxes;
         /** The words on it: only read when asked ({@link #readWords}), else empty. */
         List<Word> words = new ArrayList<>();
-        final int[] lum;   // half-size grey copy, for checking a spot has a (ticked) box
-        final int w, h;
+        final int[] lum;   // half-size grey copy of the looked-at strip, for checking a spot has a box
+        final int w, h, offX;
         Bitmap picture;    // the full picture until the words are read (or it is dropped)
 
-        Result(List<Rect> emptyBoxes, int[] lum, int w, int h, Bitmap picture) {
+        Result(List<Rect> emptyBoxes, int[] lum, int w, int h, int offX, Bitmap picture) {
             this.emptyBoxes = emptyBoxes;
             this.lum = lum;
             this.w = w;
             this.h = h;
+            this.offX = offX;
             this.picture = picture;
         }
 
@@ -63,7 +64,7 @@ final class Snap {
 
         /** How much the spot (screen pixels) varies in brightness: a box there has ink. */
         int spread(Rect r) {
-            int x0 = Math.max(0, r.left / SCALE), x1 = Math.min(w, r.right / SCALE);
+            int x0 = Math.max(0, r.left / SCALE - offX), x1 = Math.min(w, r.right / SCALE - offX);
             int y0 = Math.max(0, r.top / SCALE), y1 = Math.min(h, r.bottom / SCALE);
             int lo = 255, hi = 0;
             for (int y = y0; y < y1; y++) {
@@ -78,6 +79,12 @@ final class Snap {
     }
 
     static final int SCALE = 2;
+
+    /**
+     * Only this strip of the screen (screen pixels, left to right) is searched for boxes once
+     * their column is known - much faster than the whole screen. -1: the whole width.
+     */
+    volatile int stripLeft = -1, stripRight = -1;
 
     private final AccessibilityService service;
     private final Handler main = new Handler(Looper.getMainLooper());
@@ -125,9 +132,19 @@ final class Snap {
                 }
                 // Empty boxes, on a half-size grey copy (as the main app does).
                 Bitmap half = Bitmap.createScaledBitmap(soft, soft.getWidth() / SCALE, soft.getHeight() / SCALE, true);
-                int w = half.getWidth(), h = half.getHeight();
+                int fullW = half.getWidth(), h = half.getHeight();
+                int x0 = 0, x1 = fullW;
+                if (stripLeft >= 0 && stripRight > stripLeft) {
+                    x0 = Math.max(0, stripLeft / SCALE);
+                    x1 = Math.min(fullW, stripRight / SCALE);
+                    if (x1 - x0 < 8) {
+                        x0 = 0;
+                        x1 = fullW;
+                    }
+                }
+                int w = x1 - x0;
                 int[] px = new int[w * h];
-                half.getPixels(px, 0, w, 0, 0, w, h);
+                half.getPixels(px, 0, w, x0, 0, w, h);
                 half.recycle();
                 int[] lum = new int[px.length];
                 for (int k = 0; k < px.length; k++) {
@@ -136,9 +153,9 @@ final class Snap {
                 }
                 List<Rect> boxes = new ArrayList<>();
                 for (Rect r : BoxFinder.find(lum, w, h, minBox / SCALE, maxBox / SCALE)) {
-                    boxes.add(new Rect(r.left * SCALE, r.top * SCALE, r.right * SCALE, r.bottom * SCALE));
+                    boxes.add(new Rect((r.left + x0) * SCALE, r.top * SCALE, (r.right + x0) * SCALE, r.bottom * SCALE));
                 }
-                Result r = new Result(boxes, lum, w, h, soft);
+                Result r = new Result(boxes, lum, w, h, x0, soft);
                 main.post(() -> done.accept(r));
             }
 
