@@ -1920,8 +1920,12 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             return;
         }
 
+        int found = 0;
+        for (TextNode d : days) if (d != null) found++;
+        log("Calendar " + header.text + ": " + found + " day numbers found");
         if (days[date.getDayOfMonth()] == null) {
-            stop("Couldn't find day " + date.getDayOfMonth() + " under " + header.text);
+            stop("Couldn't find day " + date.getDayOfMonth() + " under " + header.text
+                    + " (" + found + " day numbers found)");
             return;
         }
         // Read the colours from a fresh screenshot.
@@ -1942,6 +1946,9 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             }
             bmp.recycle();
             log("Day colours: " + seen.toString().trim());
+            TextNode want = days[date.getDayOfMonth()];
+            log("Day " + date.getDayOfMonth() + " is at " + want.bounds.toShortString() + " \""
+                    + want.text.replace('\n', ' ') + "\"");
             chooseDay(date.getDayOfMonth(), mode, days, colours);
         })), 60);
     }
@@ -2025,15 +2032,61 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
                 break;
             }
         }
+        int month = DayChoice.monthOf(header.text) % 12;
         TextNode[] out = new TextNode[32];
+        boolean[] exact = new boolean[32];
         for (TextNode n : all) {
             if (n.bounds.top < header.bounds.bottom || n.bounds.top > limit) continue;
-            if (!n.text.matches("\\d{1,2}")) continue;
-            int d = Integer.parseInt(n.text);
+            int[] day = dayOf(n.text, month);
+            if (day == null) continue;
+            int d = day[0];
+            boolean named = day[1] == 1; // a full date naming this month: the right cell for sure
             if (d < 1 || d > 31) continue;
-            if (out[d] == null || n.bounds.top < out[d].bounds.top) out[d] = n;
+            if (out[d] == null || (named && !exact[d])) {
+                out[d] = n;
+                exact[d] = named;
+                continue;
+            }
+            if (exact[d] || named) continue;
+            // The same number twice: the grid shows the end of last month in its first row and
+            // the start of next month in its last row. So a small day is the top one, a big day
+            // (the end of this month) the bottom one.
+            boolean lower = n.bounds.top > out[d].bounds.top;
+            if (d <= 15 ? !lower : lower) out[d] = n;
         }
         return out;
+    }
+
+    private static final String[] MONTH_NAMES = {"jan", "feb", "mar", "apr", "may", "jun",
+            "jul", "aug", "sep", "oct", "nov", "dec"};
+
+    /**
+     * The day number a calendar cell's text stands for, as {day, 1 if the text names this
+     * month (a full date like "Sunday, 27 September 2026") else 0}, or null. A date naming
+     * another month is not this month's day.
+     */
+    private static int[] dayOf(String text, int month) {
+        String t = text.trim();
+        if (t.matches("\\d{1,2}")) return new int[] {Integer.parseInt(t), 0};
+        if (t.length() > 40) return null;
+        String low = t.toLowerCase(Locale.ROOT);
+        int named = -1;
+        for (int i = 0; i < 12; i++) {
+            if (low.matches(".*\\b" + MONTH_NAMES[i] + "[a-z]*\\b.*")) {
+                named = i;
+                break;
+            }
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?<!\\d)(\\d{1,2})(?!\\d)").matcher(t);
+        if (named >= 0) {
+            if (named != month || !m.find()) return null;
+            return new int[] {Integer.parseInt(m.group(1)), 1};
+        }
+        // "27" with a short word under it ("27\nAvailable", "27 ₹300"): the number first.
+        java.util.regex.Matcher lead = java.util.regex.Pattern.compile("^(\\d{1,2})(?:\\s|$).{0,20}$",
+                java.util.regex.Pattern.DOTALL).matcher(t);
+        if (lead.matches()) return new int[] {Integer.parseInt(lead.group(1)), 0};
+        return null;
     }
 
     private static Rect gridBounds(TextNode[] days) {
@@ -2087,8 +2140,42 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         tap(x, area.centerY());
     }
 
-    /** The cell's background colour: the most common colour around the edge of its box. */
+    /**
+     * The cell's colour: a 7 x 7 grid of points over the day's box (a little beyond it too).
+     * The number itself (black) doesn't count; a colour on a fifth of the points or more wins
+     * over white - a coloured circle or pill behind the number leaves white corners.
+     */
     private static String cellColour(Bitmap bmp, Rect b) {
+        int grow = Math.max(b.width(), b.height()) / 4;
+        Rect area = new Rect(b.left - grow, b.top - grow / 2, b.right + grow, b.bottom + grow / 2);
+        java.util.Map<String, Integer> votes = new java.util.HashMap<>();
+        int total = 0;
+        for (int gy = 0; gy < 7; gy++) {
+            for (int gx = 0; gx < 7; gx++) {
+                int x = area.left + (2 * gx + 1) * area.width() / 14;
+                int y = area.top + (2 * gy + 1) * area.height() / 14;
+                if (x < 0 || y < 0 || x >= bmp.getWidth() || y >= bmp.getHeight()) continue;
+                String c = DayChoice.colourName(bmp.getPixel(x, y));
+                if (c.equals("BLACK")) continue;
+                votes.merge(c, 1, Integer::sum);
+                total++;
+            }
+        }
+        String bestColour = null;
+        int bestColourVotes = 0;
+        for (java.util.Map.Entry<String, Integer> e : votes.entrySet()) {
+            if (e.getKey().equals("WHITE") || e.getKey().equals("GREY")) continue;
+            if (e.getValue() > bestColourVotes) {
+                bestColour = e.getKey();
+                bestColourVotes = e.getValue();
+            }
+        }
+        if (bestColour != null && bestColourVotes * 5 >= total) return bestColour;
+        return oldCellColour(bmp, b);
+    }
+
+    /** The cell's background colour: the most common colour around the edge of its box. */
+    private static String oldCellColour(Bitmap bmp, Rect b) {
         int insetX = Math.max(2, b.width() / 8), insetY = Math.max(2, b.height() / 8);
         int[][] points = {
                 {b.left + insetX, b.top + insetY}, {b.right - insetX, b.top + insetY},
