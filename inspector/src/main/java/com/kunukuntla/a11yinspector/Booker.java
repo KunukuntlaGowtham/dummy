@@ -205,16 +205,19 @@ final class Booker {
             if (d[0] == plan.day && d[1] == plan.month && d[2] == plan.year) {
                 AccessibilityNodeInfo cell = e.getKey();
                 if (!cell.isEnabled()) {
-                    stop("✗ " + dateText() + " can't be chosen (not open for booking)");
-                    return;
+                    log("date: " + dateText() + " is shown as not open - tapping it anyway to see what the page says");
                 }
+                pageBefore = pageTexts();
                 // A real tap on the day, like a finger (a click on the cell isn't taken as a
                 // choice by this calendar), once the day is clear of the page's header.
                 inView(cell, 0, r -> {
                     log("date: tapping " + dateText() + " at " + r.centerX() + "," + r.centerY());
                     tap(r.centerX(), r.centerY());
                     done.append("✓ Date: ").append(dateText()).append('\n');
-                    later(() -> tickBox(0), 500);
+                    later(() -> {
+                        said("after the date");
+                        tickBox(0);
+                    }, 1200);
                 });
                 return;
             }
@@ -496,10 +499,55 @@ final class Booker {
         b.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         later(() -> {
             log("continue: pressing it");
+            pageBefore = pageTexts();
             click(b);
             done.append("✓ Continue pressed\n");
-            later(() -> stop("Done"), 300);
+            // Wait for the next screen, or for the page's message saying what is wrong.
+            later(() -> {
+                said("after Continue");
+                boolean stillHere = false;
+                for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+                    if (n.isVisibleToUser() && norm(Taught.label(n)).equals("continue")) stillHere = true;
+                }
+                done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
+                stop("Done");
+            }, 2500);
         }, 200);
+    }
+
+    // ---- what the page says (its error messages) -------------------------------------------
+
+    private java.util.Set<String> pageBefore = new java.util.HashSet<>();
+
+    /** Every text on the page now (not bare numbers, like the calendar's days). */
+    private java.util.Set<String> pageTexts() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+            String t = Taught.label(n);
+            if (t.length() < 2 || t.matches("[\\d\\s/:.-]+")) continue;
+            out.add(t);
+        }
+        return out;
+    }
+
+    /** Logs the texts that came up since {@code pageBefore}: the page's messages, errors. */
+    private void said(String when) {
+        java.util.List<String> fresh = new java.util.ArrayList<>();
+        for (String t : pageTexts()) if (!pageBefore.contains(t)) fresh.add(t);
+        if (fresh.isEmpty()) {
+            log("page " + when + ": no new message");
+            return;
+        }
+        String msg = String.join(" | ", fresh.subList(0, Math.min(8, fresh.size())));
+        log("page " + when + " says: " + msg);
+        done.append("💬 ").append(when).append(": ").append(msg).append('\n');
+    }
+
+    /** A toast (short message) the page showed: logged as a message. */
+    void toast(String text) {
+        if (!running || text == null || text.trim().isEmpty()) return;
+        log("page toast: " + text.trim());
+        done.append("💬 toast: ").append(text.trim()).append('\n');
     }
 
     // ---- the dropdown's options, for the form ---------------------------------------------

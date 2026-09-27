@@ -49,6 +49,14 @@ public class InspectorService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        // Short messages (toasts) the page shows while Book runs: its errors.
+        if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
+                && booker != null && booker.isRunning()
+                && !getPackageName().contentEquals(event.getPackageName() == null ? "" : event.getPackageName())) {
+            StringBuilder sb = new StringBuilder();
+            for (CharSequence t : event.getText()) sb.append(t).append(' ');
+            booker.toast(sb.toString());
+        }
     }
 
     @Override
