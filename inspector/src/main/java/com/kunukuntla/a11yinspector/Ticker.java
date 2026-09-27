@@ -44,10 +44,14 @@ final class Ticker {
     private final List<String> tickedRows = new ArrayList<>();
     private final List<String> failedRows = new ArrayList<>();
     private String lastScreen = "";
+    private final ColourPatches colours;
+    /** Every box ticked this run: purple too, so never taken for a pop-up's button. */
+    private final List<Rect> tickedBoxes = new ArrayList<>();
 
     Ticker(AccessibilityService service, Listener listener) {
         this.service = service;
         this.listener = listener;
+        this.colours = new ColourPatches(service);
     }
 
     boolean isRunning() {
@@ -61,6 +65,7 @@ final class Ticker {
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         tried.clear();
+        tickedBoxes.clear();
         tickedRows.clear();
         failedRows.clear();
         ticked = notTicked = popups = stillScreens = 0;
@@ -102,6 +107,18 @@ final class Ticker {
         }
         tried.add(b.node);
         Set<String> before = clickableKeys();
+        // The page's own purple before the tick (ticked boxes, headers): not a pop-up.
+        colours.find(base -> {
+            if (!running) return;
+            tickBox(b, before, base == null ? new ArrayList<>() : base);
+        });
+    }
+
+    /** Pop-up taps after the current box - at most 3, so a patch that won't go can't loop. */
+    private int popupTaps;
+
+    private void tickBox(Box b, Set<String> before, List<Rect> base) {
+        popupTaps = 0;
         log("row " + b.row + ": clicking its checkbox (box at " + b.box.centerX() + ","
                 + b.box.centerY() + ")");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
@@ -114,23 +131,25 @@ final class Ticker {
                         + " - tapping the box at " + b.box.centerX() + "," + b.box.centerY());
                 tap(b.box.centerX(), b.box.centerY());
                 later(() -> {
-                    if (isChecked(b.node)) done(b, "ticked ✓ by a tap", before);
+                    if (isChecked(b.node)) done(b, "ticked ✓ by a tap", before, base);
                     else {
                         notTicked++;
                         failedRows.add(b.row);
                         log("row " + b.row + ": still empty ✗");
-                        clearPopups(before, 3, this::next);
+                        tickedBoxes.add(new Rect(b.box));
+                        clearPopups(before, base, 3, this::next);
                     }
                 }, 500);
             }
         }, 450);
     }
 
-    private void done(Box b, String how, Set<String> before) {
+    private void done(Box b, String how, Set<String> before, List<Rect> base) {
         ticked++;
         tickedRows.add(b.row);
+        tickedBoxes.add(new Rect(b.box));
         log("row " + b.row + ": " + how);
-        clearPopups(before, 3, this::next);
+        clearPopups(before, base, 3, this::next);
     }
 
     // ---- pop-ups ---------------------------------------------------------------
@@ -140,8 +159,14 @@ final class Ticker {
      * clickable with an OK / Yes / Close ... text, or any button inside a dialog. Taps it, then
      * looks again (a second pop-up); with none, carries on.
      */
-    private void clearPopups(Set<String> before, int looksLeft, Runnable then) {
+    private void clearPopups(Set<String> before, List<Rect> base, int looksLeft, Runnable then) {
+        if (popupTaps >= 3) {
+            log("pop-up: 3 taps after this box already - going on");
+            later(then, 300);
+            return;
+        }
         later(() -> {
+            // 1) A pop-up the page reports: its OK / Yes / Close ... button.
             AccessibilityNodeInfo button = popupButton(before);
             if (button != null) {
                 Rect r = new Rect();
@@ -150,14 +175,72 @@ final class Ticker {
                 log("pop-up: tapping \"" + what + "\" at " + r.centerX() + "," + r.centerY());
                 if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
                 popups++;
-                Set<String> now = clickableKeys();
-                clearPopups(now, 3, then); // a second pop-up may follow
-            } else if (looksLeft > 1) {
-                clearPopups(before, looksLeft - 1, then);
-            } else {
-                then.run();
+                popupTaps++;
+                clearPopups(clickableKeys(), base, 3, then); // a second pop-up may follow
+                return;
             }
+            // 2) A pop-up drawn but not reported: a new patch of its purple on a screenshot.
+            colours.find(now -> {
+                if (!running) return;
+                Rect patch = now == null ? null : newPatch(now, base);
+                if (patch != null) {
+                    log("pop-up: tapping its purple button at " + patch.centerX() + ","
+                            + patch.centerY() + " (" + patch.width() + "x" + patch.height() + ")");
+                    tap(patch.centerX(), patch.centerY());
+                    popups++;
+                    popupTaps++;
+                    clearPopups(before, base, 3, then); // a second pop-up may follow
+                } else if (looksLeft > 1) {
+                    clearPopups(before, base, looksLeft - 1, then);
+                } else {
+                    if (now == null) log("pop-up: no screenshot (Android 11+ needed) - not checked");
+                    then.run();
+                }
+            });
         }, 300);
+    }
+
+    /**
+     * The pop-up's button: the biggest patch of purple that the page didn't have before the
+     * tick and that isn't a ticked box. Button-shaped (wider than tall) patches first; a
+     * squarer one only if clearly bigger than a checkbox.
+     */
+    private Rect newPatch(List<Rect> now, List<Rect> base) {
+        int near = dp(8), pad = dp(12);
+        Rect best = null, bestSquare = null;
+        int boxArea = dp(30) * dp(30);
+        for (Rect r : now) {
+            boolean old = false;
+            for (Rect b : base) {
+                if (Math.abs(b.centerX() - r.centerX()) <= near && Math.abs(b.centerY() - r.centerY()) <= near
+                        && Math.abs(b.width() - r.width()) <= near && Math.abs(b.height() - r.height()) <= near) {
+                    old = true;
+                    break;
+                }
+            }
+            if (old) continue;
+            boolean isBox = false;
+            for (Rect t : tickedBoxes) {
+                Rect grown = new Rect(t);
+                grown.inset(-pad, -pad);
+                if (Rect.intersects(grown, r)) {
+                    isBox = true;
+                    break;
+                }
+            }
+            if (isBox) continue;
+            long area = (long) r.width() * r.height();
+            if (r.width() >= r.height() * 3 / 2) {
+                if (best == null || area > (long) best.width() * best.height()) best = r;
+            } else if (area > boxArea * 2L) {
+                if (bestSquare == null || area > (long) bestSquare.width() * bestSquare.height()) bestSquare = r;
+            }
+        }
+        return best != null ? best : bestSquare;
+    }
+
+    private int dp(int v) {
+        return Math.round(v * service.getResources().getDisplayMetrics().density);
     }
 
     private AccessibilityNodeInfo popupButton(Set<String> before) {
