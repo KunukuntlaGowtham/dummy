@@ -794,6 +794,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     /** One look at the screen: its text, and its pixels when a screenshot was possible. */
     private static final class Seen {
         final List<Line> lines = new ArrayList<>();
+        /** The dustbins found on this look, once worked out (the text doesn't change after). */
+        List<Bin> bins;
         int[] px;
         int w, h;
     }
@@ -891,8 +893,13 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     /** Takes a screenshot (our buttons hidden) and reads it, together with the page's own text. */
     private void readScreen(Consumer<Seen> done) {
+        readScreen(done, false);
+    }
+
+    /** {@code allText}: always read the text too (looking for a confirm box's button). */
+    private void readScreen(Consumer<Seen> done, boolean allText) {
         setButtonVisible(false);
-        handler.postDelayed(deleteStep(() -> capture(bmp -> deleteStep(() -> {
+        handler.postDelayed(deleteStep(() -> quickCapture(bmp -> deleteStep(() -> {
             setButtonVisible(true);
             if (bmp == null) {
                 // Without a picture the dustbins can't be found or a delete checked: stop and
@@ -906,11 +913,55 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             seen.h = bmp.getHeight();
             seen.px = new int[seen.w * seen.h];
             bmp.getPixels(seen.px, 0, seen.w, 0, 0, seen.w, seen.h);
-            reader.readAll(bmp, 0, 0, lines -> deleteStep(() -> {
+            // The page's own text already gives the number beside every dustbin found: no
+            // text recognition needed (the slowest step).
+            List<Bin> fromText = binsOnScreen(seen);
+            if (!allText && !fromText.isEmpty() && !lastBinScores.isEmpty()
+                    && fromText.size() >= lastBinScores.size()) {
+                seen.bins = fromText;
+                bmp.recycle();
+                done.accept(seen);
+                return;
+            }
+            // Otherwise read the text - only the left part, where the numbers and the card's
+            // name and date of birth are: about half the work of the whole screen.
+            // (Looking for a confirm box: the whole screen - its buttons are often on the right.)
+            Bitmap left = allText ? bmp
+                    : Bitmap.createBitmap(bmp, 0, 0, Math.max(1, seen.w * 55 / 100), seen.h);
+            if (left != bmp) bmp.recycle();
+            reader.readAll(left, 0, 0, lines -> deleteStep(() -> {
                 for (ScreenReader.Found f : lines) seen.lines.add(new Line(f.box, f.text));
                 done.accept(seen);
             }).run());
-        }).run())), 150);
+        }).run())), 60);
+    }
+
+    private final java.util.concurrent.ExecutorService shareReader =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
+
+    /**
+     * A screenshot for Delete: from screen sharing when it is on (the latest picture is already
+     * there - no wait, no three-a-second limit; read on a background thread), else Android's
+     * screenshot as before.
+     */
+    private void quickCapture(Consumer<Bitmap> done) {
+        if (com.example.checkboxticker.ScreenService.Companion.getInstance() == null) {
+            capture(done);
+            return;
+        }
+        shareReader.execute(() -> {
+            Bitmap shared;
+            try {
+                shared = sharedSnapshot();
+            } catch (Throwable t) {
+                shared = null;
+            }
+            Bitmap result = shared;
+            handler.post(() -> {
+                if (result != null) done.accept(result);
+                else capture(done);
+            });
+        });
     }
 
     /** The row's number on screen and in reach: tap its bin. Otherwise scroll towards it. */
@@ -977,6 +1028,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
      * horizontal line as the bin, from the page's own text and the screenshot's.
      */
     private List<Bin> binsOnScreen(Seen seen) {
+        if (seen.bins != null) return seen.bins;
         List<Rect> where = new ArrayList<>();
         List<String> what = new ArrayList<>();
         for (Line l : seen.lines) {
@@ -1245,7 +1297,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             } else {
                 verify(target, before, 2);
             }
-        });
+        }, true);
     }
 
     private void confirmTapped(int target, Set<String> before, Line button) {
