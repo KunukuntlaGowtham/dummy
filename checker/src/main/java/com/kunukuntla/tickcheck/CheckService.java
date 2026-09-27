@@ -103,6 +103,10 @@ public class CheckService extends AccessibilityService {
 
     private void startWatching() {
         closeCard();
+        // Each Watch is one pass over the ticked page: a fresh list.
+        state.clear();
+        snap.stripLeft = snap.stripRight = -1;
+        prefs().edit().remove("rows").apply();
         watching = true;
         gen++;
         watchButton.setText("■\nStop");
@@ -118,8 +122,7 @@ public class CheckService extends AccessibilityService {
             lp.gravity = Gravity.TOP | Gravity.START;
             wm.addView(marks, lp);
         }
-        marks.bar = state.isEmpty() ? "👁 Watching…\ntick the boxes yourself; the rows not ticked show here · hold 👁 for a new list"
-                : barText(0, 0);
+        marks.bar = "👁 Watching…\nscroll the page slowly from the top to the end, then tap 👁";
         marks.invalidate();
         look(gen);
     }
@@ -130,7 +133,7 @@ public class CheckService extends AccessibilityService {
         if (watchButton != null) watchButton.setText("👁\nWatch");
         // The numbers stay on screen after Stop; tap Watch to go on, hold it for a new list.
         if (marks != null) {
-            marks.bar = barText(0, 0).replaceFirst("\n.*", "") + "\n⏸ stopped · tap 👁 to go on · hold 👁 for a new list";
+            marks.bar = barText(0, 0).replaceFirst("\n.*", "") + "\n✔ done · tap 👁 to check again · hold 👁 to hide";
             marks.invalidate();
         }
     }
@@ -156,13 +159,23 @@ public class CheckService extends AccessibilityService {
                     result.drop();
                     return;
                 }
-                List<Snap.Word> treeNumbers;
+                List<Snap.Word> before;
                 try {
-                    treeNumbers = tree.get(400, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    before = tree.get(400, java.util.concurrent.TimeUnit.MILLISECONDS);
                 } catch (Exception e) {
-                    treeNumbers = new ArrayList<>();
+                    before = new ArrayList<>();
                 }
-                numbers(result, treeNumbers, numbers -> {
+                // The page's numbers again, now: if they moved, the page was scrolling while
+                // the picture was taken - then only the numbers in the picture itself are used,
+                // so no box gets the number of another row.
+                List<Snap.Word> after;
+                try {
+                    after = Rows.numbersOnScreen(this);
+                } catch (RuntimeException e) {
+                    after = new ArrayList<>();
+                }
+                boolean still = samePlaces(before, after);
+                numbers(result, still ? after : new ArrayList<>(), numbers -> {
                     if (!watching || g != gen) return;
                     try {
                         process(result, numbers);
@@ -190,6 +203,14 @@ public class CheckService extends AccessibilityService {
      * The row numbers on screen: the page's own (fast, from accessibility) and, only when some
      * empty box has none beside it, the numbers read off the picture (slower).
      */
+    private static boolean samePlaces(List<Snap.Word> a, List<Snap.Word> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            if (!a.get(i).text.equals(b.get(i).text) || !a.get(i).box.equals(b.get(i).box)) return false;
+        }
+        return true;
+    }
+
     private void numbers(Snap.Result r, List<Snap.Word> treeNumbers, java.util.function.Consumer<List<Snap.Word>> done) {
         List<Snap.Word> numbers = new ArrayList<>(treeNumbers);
         int top = statusBar() + panelHeight();
@@ -229,50 +250,96 @@ public class CheckService extends AccessibilityService {
             numXs.add(n.box.centerX());
             sizes.add(Math.max(b.width(), b.height()));
         }
-        // Where boxes sit beside their numbers: learned now, or from before.
-        android.content.SharedPreferences p = prefs();
-        int dx, numX, size;
+        // Only the boxes' column is searched from now on (faster).
         if (!dxs.isEmpty()) {
-            dx = median(dxs);
-            numX = median(numXs);
-            size = median(sizes);
-            p.edit().putInt("dx", dx).putInt("numX", numX).putInt("size", size).apply();
-            // From now on only the boxes' column is searched.
-            int boxX = numX + dx;
+            int boxX = median(numXs) + median(dxs), size = median(sizes);
             snap.stripLeft = boxX - size * 3;
             snap.stripRight = boxX + size * 3;
-        } else {
-            dx = p.getInt("dx", Integer.MIN_VALUE);
-            numX = p.getInt("numX", Integer.MIN_VALUE);
-            size = p.getInt("size", dp(24));
         }
-        // Ticked: a number in the numbers' column with a filled box where the empty ones sit.
         Set<String> tickedHere = new LinkedHashSet<>();
-        if (dx != Integer.MIN_VALUE) {
-            for (Snap.Word n : numbers) {
-                Matcher m = ONLY_NUMBER.matcher(n.text.trim());
-                if (!m.matches()) continue;
-                String num = m.group(1);
-                if (emptyHere.contains(num) || tickedHere.contains(num)) continue;
-                if (Math.abs(n.box.centerX() - numX) > dp(30)) continue;
-                if (n.box.top < top || n.box.bottom > bottom) continue;
-                int cx = n.box.centerX() + dx, cy = n.box.centerY();
-                Rect spot = new Rect(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2);
-                if (snapped.spread(spot) >= 60) {
-                    tickedHere.add(num);
-                    shown.add(new Mark(spot, num, true));
-                }
-            }
-        }
         boolean changed = false;
         for (String num : emptyHere) {
+            // Once seen empty it stays on the list (the page is already ticked; nothing changes).
             Boolean was = state.put(num, false);
             if (was == null || was) changed = true;
         }
-        for (String num : tickedHere) {
-            Boolean was = state.put(num, true);
-            if (was == null || !was) changed = true;
+
+        if (changed) save();
+        if (marks != null) {
+            marks.marks = shown;
+            marks.bar = barText(emptyHere.size(), tickedHere.size());
+            marks.invalidate();
         }
+    }
+
+    private String barText(int emptyNow, int tickedNow) {
+        List<String> not = notTicked();
+        return (not.isEmpty() ? "✅ No empty box seen yet" : "☐ " + String.join(", ", shifted(not)))
+                + "\n" + (not.isEmpty() ? "" : "rows " + String.join(", ", not) + " · ")
+                + "scroll to the end, then tap 👁";
+    }
+
+    private static boolean samePlaces(List<Snap.Word> a, List<Snap.Word> b) {
+        if (a.size() != b.size()) return false;
+        for (int i = 0; i < a.size(); i++) {
+            if (!a.get(i).text.equals(b.get(i).text) || !a.get(i).box.equals(b.get(i).box)) return false;
+        }
+        return true;
+    }
+
+    private void numbers(Snap.Result r, List<Snap.Word> treeNumbers, java.util.function.Consumer<List<Snap.Word>> done) {
+        List<Snap.Word> numbers = new ArrayList<>(treeNumbers);
+        int top = statusBar() + panelHeight();
+        numbers.removeIf(w -> w.box.top < top);
+        boolean missing = numbers.isEmpty();
+        for (Rect b : r.emptyBoxes) if (numberBeside(b, numbers) == null) missing = true;
+        if (!missing) {
+            r.drop();
+            done.accept(numbers);
+            return;
+        }
+        snap.readWords(r, read -> {
+            for (Snap.Word w : read.words) {
+                if (w.box.top >= top && ONLY_NUMBER.matcher(w.text.trim()).matches()) numbers.add(w);
+            }
+            done.accept(numbers);
+        });
+    }
+
+    private void process(Snap.Result snapped, List<Snap.Word> numbers) {
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int top = statusBar() + panelHeight(), bottom = dm.heightPixels - dp(40);
+        List<Mark> shown = new ArrayList<>();
+        Set<String> emptyHere = new LinkedHashSet<>();
+        List<Integer> dxs = new ArrayList<>(), numXs = new ArrayList<>(), sizes = new ArrayList<>();
+        for (Rect b : snapped.emptyBoxes) {
+            if (b.top < top || b.bottom > bottom || onOurButtons(b)) continue;
+            Snap.Word n = numberBeside(b, numbers);
+            if (n == null) {
+                shown.add(new Mark(b, "?", false));
+                continue;
+            }
+            String num = digits(n.text);
+            emptyHere.add(num);
+            shown.add(new Mark(b, num, false));
+            dxs.add(b.centerX() - n.box.centerX());
+            numXs.add(n.box.centerX());
+            sizes.add(Math.max(b.width(), b.height()));
+        }
+        // Only the boxes' column is searched from now on (faster).
+        if (!dxs.isEmpty()) {
+            int boxX = median(numXs) + median(dxs), size = median(sizes);
+            snap.stripLeft = boxX - size * 3;
+            snap.stripRight = boxX + size * 3;
+        }
+        Set<String> tickedHere = new LinkedHashSet<>();
+        boolean changed = false;
+        for (String num : emptyHere) {
+            // Once seen empty it stays on the list (the page is already ticked; nothing changes).
+            Boolean was = state.put(num, false);
+            if (was == null || was) changed = true;
+        }
+
         if (changed) save();
         if (marks != null) {
             marks.marks = shown;
@@ -384,17 +451,20 @@ public class CheckService extends AccessibilityService {
         showCard(text.toString().trim(), String.join(", ", shifted(not)));
     }
 
+    /** Hold 👁: stop and take the numbers off the screen. */
     private void newList() {
-        prefs().edit().clear().apply();
+        stopWatching();
         state.clear();
+        prefs().edit().clear().apply();
         snap.stripLeft = snap.stripRight = -1;
         closeCard();
         if (marks != null) {
-            marks.marks = new ArrayList<>();
-            marks.bar = "🆕 New list\n" + (watching ? "watching - tick the boxes yourself" : "tap 👁 to start");
-            marks.invalidate();
+            try {
+                wm.removeView(marks);
+            } catch (RuntimeException ignored) {
+            }
+            marks = null;
         }
-        Toast.makeText(this, "New list", Toast.LENGTH_SHORT).show();
     }
 
     // ---- the marks over the page ------------------------------------------------------------

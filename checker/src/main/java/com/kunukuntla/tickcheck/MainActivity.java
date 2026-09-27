@@ -44,11 +44,12 @@ public class MainActivity extends Activity {
         head.addView(title);
         TextView how = new TextView(this);
         how.setText("1. Turn it on in Accessibility (tap the chip below).\n"
-                + "2. Open the page and tap the purple 👁 Watch button. Tick the boxes and close the "
-                + "pop-ups yourself, scrolling down the page. The panel at the top shows, live, the rows "
-                + "not ticked - each one less for every not-ticked row before it (6, 8, 10 shows 6, 7, 8).\n"
-                + "3. Tap 👁 again to stop (the numbers stay). Hold 👁 to start a new list.\n\n"
-                + "It takes screenshots (Android 11 or newer); nothing is tapped or changed.");
+                + "2. Tick the boxes and close the pop-ups yourself.\n"
+                + "3. Go back to the top of the page, tap the purple 👁 button and scroll slowly to the end. "
+                + "The panel at the top shows the rows not ticked - each one less for every not-ticked row "
+                + "before it (6, 8, 10 shows 6, 7, 8).\n"
+                + "4. Tap 👁 to stop - the numbers stay. Hold 👁 to take them off the screen.\n\n"
+                + "It takes screenshots (Android 11 or newer); nothing is tapped or changed."); nothing is tapped or changed.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));
