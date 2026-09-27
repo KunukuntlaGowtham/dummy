@@ -59,4 +59,21 @@ class BinFinderTest {
     fun anEmptyRowHasNoBin() {
         assertNull(BinFinder.find(page(), w, h, 60, 170, 500, 1040, 8))
     }
+
+    @Test
+    fun theSameIconIsAlikeAndTheArrowIsNot() {
+        val px = page()
+        fill(px, 750, 85, 800, 140, purple)
+        fill(px, 760, 95, 765, 130, card)
+        fill(px, 780, 95, 785, 130, card)
+        chevron(px, 880, 100, 20)
+        val found = BinFinder.blobs(px, w, h, 60, 170, 500, 1040, 8)
+        assertEquals(2, found.size)
+        val bin = BinFinder.grid(px, w, 750, 85, 800, 140)
+        val (l, t, r, b) = found[0]
+        val again = BinFinder.similarity(bin, BinFinder.grid(px, w, l, t, r, b))
+        val arrow = found[1].let { BinFinder.similarity(bin, BinFinder.grid(px, w, it[0], it[1], it[2], it[3])) }
+        assert(again > 0.99) { "same icon: $again" }
+        assert(arrow < 0.9) { "arrow: $arrow" }
+    }
 }

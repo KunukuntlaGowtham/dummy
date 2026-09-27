@@ -815,6 +815,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             return;
         }
         afterDelete = then;
+        runLog.setLength(0);
+        log("B+Del: delete the not-ticked list " + rows);
         deleteRunning = true;
         deleteGen++;
         deleted = 0;
@@ -834,6 +836,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         deleteGen++;
         backDeleteButton.setText(DELETE_LABEL);
         setButtonVisible(true);
+        log("End: " + message);
+        Keywords.saveLastRun(this, runLog.toString());
         showStatus("delete: " + message);
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
         Runnable then = afterDelete;
@@ -860,6 +864,12 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     private int pref(String key, int fallback) {
         return Math.max(0, Math.min(10000, tickPrefs().getInt(key, fallback)));
+    }
+
+    /** One line of what Delete did, kept for the app's Last run card. */
+    private void dlog(String line) {
+        log(line);
+        showStatus("delete: " + line);
     }
 
     private void deleteNext() {
@@ -909,6 +919,11 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         List<Bin> numbers = binsOnScreen(seen);
         Bin hit = null;
         for (Bin b : numbers) if (b.number == target) hit = b;
+        StringBuilder onScreen = new StringBuilder();
+        for (Bin b : numbers) onScreen.append(b.number).append(' ');
+        dlog("row " + target + ": dustbins on screen for rows [" + onScreen.toString().trim()
+                + "], " + lastBinScores.size() + " matched the pictures"
+                + (seen.px == null ? " (no screenshot)" : ""));
         int safeTop = screen.height() / 8;
         int safeBottom = gestureTop() - mm(12);
         if (hit != null && hit.box.top >= safeTop && hit.box.bottom <= safeBottom) {
@@ -968,6 +983,21 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             where.add(l.box);
             what.add(l.text);
         }
+        // 1) The dustbin pictures themselves, anywhere on the right of the screen, each with
+        //    the number on its line.
+        List<Bin> matched = new ArrayList<>();
+        for (Rect bin : binIcons(seen)) {
+            Integer n = numberBeside(bin, where, what);
+            if (n == null || n <= 0) continue;
+            boolean twice = false;
+            for (Bin o : matched) if (o.number == n || Rect.intersects(o.box, bin)) twice = true;
+            if (!twice) matched.add(new Bin(bin, n, rowLine(bin, n, seen)));
+        }
+        if (!matched.isEmpty()) {
+            matched.sort((a, b) -> Integer.compare(a.box.top, b.box.top));
+            return matched;
+        }
+        // 2) No dustbin picture matched: the icon with the most ink on each number's line.
         List<Bin> out = new ArrayList<>();
         // A bin sits on a card's number line: look along each line that starts with a number.
         for (Line row : cardNumbers(seen)) {
@@ -1021,6 +1051,8 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         Rect bin = hit.box;
         Set<String> before = cardText(hit.row, seen);
         List<Line> confirmsBefore = confirmLines(seen.lines);
+        dlog("row " + target + ": tapping its dustbin at " + bin.centerX() + "," + bin.centerY()
+                + " (card text: " + before.size() + " lines)");
         tapThrough(bin.centerX(), bin.centerY());
         showStatus("delete: row " + target + " - bin tapped");
         handler.postDelayed(deleteStep(() -> confirm(target, before, confirmsBefore, 3)),
@@ -1050,6 +1082,87 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
         int x1 = seen.w * 97 / 100; // not the scroll bar at the edge
         int[] r = BinFinder.find(seen.px, seen.w, seen.h, cy - half, cy + half, x0, x1, mm(1));
         return r == null ? null : new Rect(r[0], r[1], r[2], r[3]);
+    }
+
+    /** The two dustbin pictures (assets), as grids to compare icons with. Loaded once. */
+    private List<double[]> binTemplates;
+
+    private List<double[]> binTemplates() {
+        if (binTemplates != null) return binTemplates;
+        List<double[]> out = new ArrayList<>();
+        for (String name : new String[] {"bin_purple.png", "bin_basket.png"}) {
+            try (java.io.InputStream in = getAssets().open(name)) {
+                Bitmap b = android.graphics.BitmapFactory.decodeStream(in);
+                if (b == null) continue;
+                int[] px = new int[b.getWidth() * b.getHeight()];
+                b.getPixels(px, 0, b.getWidth(), 0, 0, b.getWidth(), b.getHeight());
+                out.add(BinFinder.grid(px, b.getWidth(), 0, 0, b.getWidth(), b.getHeight()));
+                b.recycle();
+            } catch (java.io.IOException e) {
+                android.util.Log.e("DropdownPicker", "dustbin picture " + name + " not loaded", e);
+            }
+        }
+        binTemplates = out;
+        return out;
+    }
+
+    /** How alike an icon is to the closer of the two dustbin pictures (1 = the same). */
+    private double binLikeness(Seen seen, int[] icon) {
+        double[] g = BinFinder.grid(seen.px, seen.w, icon[0], icon[1], icon[2], icon[3]);
+        double best = 0;
+        for (double[] t : binTemplates()) best = Math.max(best, BinFinder.similarity(g, t));
+        return best;
+    }
+
+    /** An icon counts as a dustbin when it is at least this alike to one of the pictures. */
+    private static final double BIN_MATCH = 0.9;
+
+    /**
+     * Every icon on the right part of the screen that looks like one of the two dustbin
+     * pictures: bands a few mm apart are searched for icons of an icon's size and shape.
+     */
+    private List<Rect> binIcons(Seen seen) {
+        List<Rect> out = new ArrayList<>();
+        if (seen.px == null || binTemplates().isEmpty()) return out;
+        int band = mm(12), step = mm(3);
+        int x0 = seen.w * 2 / 5, x1 = seen.w * 97 / 100;
+        int top = seen.h / 20, bottom = Math.min(seen.h, gestureTop());
+        List<Double> scores = new ArrayList<>();
+        for (int y = top; y + band <= bottom; y += step) {
+            for (int[] b : BinFinder.blobs(seen.px, seen.w, seen.h, y, y + band, x0, x1, mm(1))) {
+                // Whole icons only (not cut by the band's edge), icon-sized and roughly square.
+                if (b[1] <= y || b[3] >= y + band) continue;
+                int iw = b[2] - b[0], ih = b[3] - b[1];
+                if (ih < mm(2) || ih > mm(11) || iw < ih / 2 || iw > ih * 2) continue;
+                Rect r = new Rect(b[0], b[1], b[2], b[3]);
+                boolean seenAlready = false;
+                for (Rect o : out) if (Rect.intersects(o, r)) seenAlready = true;
+                if (seenAlready) continue;
+                double like = binLikeness(seen, b);
+                if (like >= BIN_MATCH) {
+                    out.add(r);
+                    scores.add(like);
+                }
+            }
+        }
+        lastBinScores = scores;
+        return out;
+    }
+
+    /** How alike each dustbin found on the last screen was (for the log). */
+    private List<Double> lastBinScores = new ArrayList<>();
+
+    /** The card number's own text on the bin's line, or a stand-in at the bin's height. */
+    private Line rowLine(Rect bin, int number, Seen seen) {
+        Line best = null;
+        for (Line l : seen.lines) {
+            java.util.regex.Matcher m = ROW_NUMBER.matcher(l.text.trim());
+            if (!m.matches() || Integer.parseInt(m.group(1)) != number) continue;
+            if (Math.abs(l.box.centerY() - bin.centerY()) > Math.max(bin.height(), mm(4))) continue;
+            if (best == null || l.box.left < best.box.left) best = l;
+        }
+        if (best != null) return best;
+        return new Line(new Rect(0, bin.top, bin.left, bin.bottom), String.valueOf(number));
     }
 
     /**
@@ -1124,6 +1237,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             if (b != null) {
                 confirmTapped(target, before, b);
             } else if (gone(before, seen)) {
+                dlog("row " + target + ": no confirm box, card already gone");
                 rowDeleted(target, seen); // deleted straight away, no dialog
             } else if (looksLeft > 1) {
                 handler.postDelayed(deleteStep(() ->
@@ -1135,6 +1249,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
     }
 
     private void confirmTapped(int target, Set<String> before, Line button) {
+        dlog("row " + target + ": confirm box - tapping \"" + button.text + "\"");
         tapThrough(button.box.centerX(), button.box.centerY());
         showStatus("delete: row " + target + " - tapped " + button.text);
         handler.postDelayed(deleteStep(() -> verify(target, before, 3)), pref("delCheckMs", 900));
@@ -1148,6 +1263,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
             } else if (looksLeft > 1) {
                 handler.postDelayed(deleteStep(() -> verify(target, before, looksLeft - 1)), 600);
             } else if (++deleteTries < 2) {
+                dlog("row " + target + ": card still there after the tap - trying again");
                 showStatus("delete: row " + target + " still there - trying again");
                 findRow(target, seen);
             } else {
@@ -1167,6 +1283,7 @@ public class PickerService extends com.example.checkboxticker.CheckboxService {
 
     /** The row went: every later row moves up one, so the list does too. Then the next row. */
     private void rowDeleted(int target, Seen seen) {
+        dlog("row " + target + ": deleted ✓ (new screenshot shows the card gone)");
         deleted++;
         deleteTries = 0;
         // Keep the saved list to the ones not deleted yet, so a stopped run carries on from
