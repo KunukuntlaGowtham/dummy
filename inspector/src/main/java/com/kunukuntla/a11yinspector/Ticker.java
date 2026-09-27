@@ -101,37 +101,46 @@ final class Ticker {
     // ---- one box after another ------------------------------------------------------
 
     private void next() {
-        Box b = firstEmptyBox();
+        // Strictly in page order: the first empty checkbox on the whole page (the page
+        // reports those further down too, 0 high while off screen), brought on screen first.
+        AccessibilityNodeInfo further = anyEmptyBox();
+        Box b = further == null ? null : boxFor(further);
         if (b == null) {
-            // The page reports its checkboxes further down too (0 high while off screen):
-            // bring the next one on screen instead of scrolling blind, and stop as soon as
-            // the page has no empty one left at all.
-            AccessibilityNodeInfo further = anyEmptyBox();
             if (further == null) {
                 if (endChecks++ >= 1) {
                     stop("No empty checkbox left on the page");
                 } else {
                     log("no empty checkbox left on the page - one scroll to be sure");
-                    scroll();
+                    scroll(true);
                     later(this::next, 450);
                 }
                 return;
             }
             if (showTries++ < 2) {
-                log("an empty checkbox further on - bringing it on screen");
+                log("next empty checkbox is off screen - bringing it on");
                 further.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
                 later(this::next, 300);
                 return;
             }
             String screen = screenKey();
             if (screen.equals(lastScreen) && ++stillScreens >= 2) {
-                stop("No empty checkbox left (the page no longer scrolls)");
+                // It won't come on screen: skip it, go on with the next one.
+                tried.add(further);
+                notTicked++;
+                failedRows.add("?");
+                log("a checkbox never came on screen - skipped ✗");
+                stillScreens = 0;
+                showTries = 0;
+                later(this::next, 50);
                 return;
             }
             if (!screen.equals(lastScreen)) stillScreens = 0;
             lastScreen = screen;
-            log("no empty checkbox on this screen - scrolling on");
-            scroll();
+            Rect r = new Rect();
+            further.getBoundsInScreen(r);
+            boolean up = r.bottom <= screen().height() / 3;
+            log("next empty checkbox is off screen - scrolling " + (up ? "up" : "down") + " to it");
+            scroll(!up);
             showTries = 0;
             later(this::next, 450);
             return;
@@ -144,7 +153,7 @@ final class Ticker {
 
     private int showTries, endChecks;
 
-    /** Any empty, enabled checkbox not tried yet, on screen or not. */
+    /** The first (in page order) empty, enabled checkbox not tried yet, on screen or not. */
     private AccessibilityNodeInfo anyEmptyBox() {
         for (Node n : all()) {
             AccessibilityNodeInfo node = n.node;
@@ -392,20 +401,19 @@ final class Ticker {
         }
     }
 
-    /** The top-most empty, enabled checkbox not tried yet (hidden ones too), or null. */
-    private Box firstEmptyBox() {
-        List<Node> nodes = all();
-        Box best = null;
-        for (Node n : nodes) {
-            AccessibilityNodeInfo node = n.node;
-            if (!isCheckbox(node) || node.isChecked() || !node.isEnabled()) continue;
-            if (tried.contains(node)) continue;
-            Rect box = visibleBox(node);
-            if (box == null) continue;
-            if (best == null || box.top < best.box.top) best = new Box(node, box, "?");
-        }
-        if (best == null) return null;
-        return new Box(best.node, best.box, rowOf(best.box, nodes));
+    /** The checkbox as a box on screen with its row number, or null when it is off screen. */
+    private Box boxFor(AccessibilityNodeInfo node) {
+        Rect box = visibleBox(node);
+        if (box == null) return null;
+        Rect s = screen();
+        int bottom = s.height() - barHeight("navigation_bar_height");
+        if (box.top < barHeight("status_bar_height") || box.bottom > bottom) return null;
+        return new Box(node, box, rowOf(box, all()));
+    }
+
+    private int barHeight(String name) {
+        int id = service.getResources().getIdentifier(name, "dimen", "android");
+        return id > 0 ? service.getResources().getDimensionPixelSize(id) : dp(24);
     }
 
     private static boolean isCheckbox(AccessibilityNodeInfo n) {
@@ -494,7 +502,8 @@ final class Ticker {
                 }
                 boolean d = inDialog || role.contains("dialog") || role.contains("alertdialog");
                 out.add(new Node(n, d));
-                for (int i = 0; i < n.getChildCount(); i++) {
+                // Children in page order (the stack pops the last one first).
+                for (int i = n.getChildCount() - 1; i >= 0; i--) {
                     stack.add(n.getChild(i));
                     dialog.add(d);
                 }
@@ -545,19 +554,21 @@ final class Ticker {
                 .addStroke(new GestureDescription.StrokeDescription(p, 0, 60)).build(), null, null);
     }
 
-    /** A steady drag up (no fling), about half a screen. */
-    private void scroll() {
+    /** A steady drag (no fling), about half a screen; {@code down}: show what is further down. */
+    private void scroll(boolean down) {
         Rect s = screen();
+        float a = s.height() * 3 / 4f, b = s.height() * 3 / 10f;
+        float from = down ? a : b, to = down ? b : a;
         Path p = new Path();
-        p.moveTo(s.centerX(), s.height() * 3 / 4f);
-        p.lineTo(s.centerX(), s.height() * 3 / 10f);
+        p.moveTo(s.centerX(), from);
+        p.lineTo(s.centerX(), to);
         GestureDescription.StrokeDescription drag = new GestureDescription.StrokeDescription(p, 0, 450, true);
         service.dispatchGesture(new GestureDescription.Builder().addStroke(drag).build(),
                 new AccessibilityService.GestureResultCallback() {
                     @Override
                     public void onCompleted(GestureDescription g) {
                         Path hold = new Path();
-                        hold.moveTo(s.centerX(), s.height() * 3 / 10f);
+                        hold.moveTo(s.centerX(), to);
                         service.dispatchGesture(new GestureDescription.Builder()
                                 .addStroke(drag.continueStroke(hold, 0, 150, false)).build(), null, null);
                     }
