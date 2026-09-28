@@ -49,6 +49,15 @@ public class InspectorService extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
+        CharSequence evPkg = event.getPackageName();
+        if (evPkg != null && !getPackageName().contentEquals(evPkg)) {
+            // Which screen of which app is open (for the app details), and the event recorder.
+            if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getClassName() != null
+                    && !"com.android.systemui".contentEquals(evPkg)) {
+                openScreen.put(evPkg.toString(), event.getClassName().toString());
+            }
+            if (recorder.on && evPkg.toString().equals(recordPkg)) recorder.add(event);
+        }
         // Short messages (toasts) the page shows while Book runs: its errors.
         if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
                 && booker != null && booker.isRunning()
@@ -740,6 +749,68 @@ public class InspectorService extends AccessibilityService {
     }
 
     private DeepLook deepLook;
+    private final java.util.Map<String, String> openScreen = new java.util.HashMap<>();
+    private final RawScan.Recorder recorder = new RawScan.Recorder();
+    private String recordPkg = "";
+
+    /** The app in front (not us, not the status bar). */
+    private String appInFront() {
+        AccessibilityNodeInfo active = getRootInActiveWindow();
+        if (active != null && active.getPackageName() != null && !getPackageName().contentEquals(active.getPackageName())) {
+            return active.getPackageName().toString();
+        }
+        for (AccessibilityNodeInfo r : roots()) {
+            if (r.getPackageName() != null && !"com.android.systemui".contentEquals(r.getPackageName())) {
+                return r.getPackageName().toString();
+            }
+        }
+        return "";
+    }
+
+    /** Every property of every element, and the app's own details. */
+    private void rawTree() {
+        closeCard();
+        String pkg = appInFront();
+        String report;
+        String tree;
+        try {
+            tree = RawScan.rawTree(this);
+        } catch (RuntimeException e) {
+            tree = "Raw tree failed: " + e;
+        }
+        String app = pkg.isEmpty() ? "APP\n  not found\n" : RawScan.appInfo(this, pkg, openScreen.get(pkg));
+        String when = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
+        report = "A11y Inspector - raw tree & app details - " + when + "\n"
+                + "=================================================\n" + app + "\n" + tree;
+        String firstLine = tree.substring(0, Math.max(0, tree.indexOf('\n')));
+        StringBuilder sum = new StringBuilder();
+        for (String line : app.split("\n")) {
+            if (line.startsWith("  Name") || line.startsWith("  Version") || line.startsWith("  Built with")
+                    || line.startsWith("  Screen open") || line.startsWith("  Screens") || line.startsWith("  Permissions")) {
+                sum.append(line.trim()).append('\n');
+            }
+        }
+        sum.append(firstLine).append("\nOpen Full report for everything (every flag, action, extra).");
+        done(sum.toString(), report, false);
+    }
+
+    /** Records the app's accessibility events for 15 s while you use it. */
+    private void record() {
+        closeCard();
+        recordPkg = appInFront();
+        if (recordPkg.isEmpty()) {
+            Toast.makeText(this, "No app in front to record", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        recorder.start();
+        Toast.makeText(this, "Recording " + recordPkg + " for 15 s - use the app now", Toast.LENGTH_LONG).show();
+        button.setAlpha(0.5f);
+        handler.postDelayed(() -> {
+            String rep = recorder.stop(recordPkg);
+            button.setAlpha(1f);
+            done(recorder.summary(), rep, false);
+        }, 15000);
+    }
 
     private void finish(boolean deep) {
         Scanner.Result r;
@@ -769,8 +840,12 @@ public class InspectorService extends AccessibilityService {
         }
         scanning = false;
         button.setAlpha(1f);
-        if (deep) showCard(summary, "Whole page ↓", v -> wholePage());
-        else showCard(summary);
+        if (deep) {
+            showCard(summary, new String[] {"Whole page ↓", "Raw tree", "Record 15 s"},
+                    new View.OnClickListener[] {v -> wholePage(), v -> rawTree(), v -> record()});
+        } else {
+            showCard(summary);
+        }
     }
 
     /** Scrolls the page to the end, screen by screen, listing what each screen brings. */
@@ -809,10 +884,10 @@ public class InspectorService extends AccessibilityService {
     // ---- the result card over the page --------------------------------------------
 
     private void showCard(String summary) {
-        showCard(summary, null, null);
+        showCard(summary, new String[0], new View.OnClickListener[0]);
     }
 
-    private void showCard(String summary, String extraLabel, View.OnClickListener extra) {
+    private void showCard(String summary, String[] extraLabels, View.OnClickListener[] extras) {
         closeCard();
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
@@ -833,8 +908,14 @@ public class InspectorService extends AccessibilityService {
 
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.END);
+        if (extras.length > 0) {
+            // The deeper looks, on their own row.
+            LinearLayout more = new LinearLayout(this);
+            more.setGravity(Gravity.END);
+            for (int i = 0; i < extras.length; i++) more.addView(cardButton(extraLabels[i], extras[i]));
+            box.addView(more);
+        }
         row.addView(cardButton("Close", v -> closeCard()));
-        if (extra != null) row.addView(cardButton(extraLabel, extra));
         row.addView(cardButton("Full report", v -> {
             closeCard();
             startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

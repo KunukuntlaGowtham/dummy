@@ -58,7 +58,7 @@ public class MainActivity extends Activity {
         TextView how = new TextView(this);
         how.setText("Turn it on in Accessibility, open any app, then tap the green 🔍 Scan "
                 + "button: it lists everything that app lets an accessibility service read and "
-                + "control on that screen. Long-press it for a deep scan: web pages woken, plus a screenshot - text the page hides from accessibility, checkbox shapes, colours - and a Whole page button that scrolls to the end listing every screen. "
+                + "control on that screen. Long-press it for a deep scan: web pages woken, plus a screenshot - text the page hides from accessibility, checkbox shapes, colours - and buttons for the whole page (scrolls to the end), the raw tree with every property plus the app's own details, and a 15 s recording of the events the app sends. "
                 + "Purple ☑ Tick ticks every checkbox and clears pop-ups; red 🗑 Del asks which row "
                 + "numbers to delete and clears their two pop-ups.");
         how.setTextColor(0xE6FFFFFF);
