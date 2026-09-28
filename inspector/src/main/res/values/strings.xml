@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">A11y Inspector</string>
+    <string name="a11y_description">Shows a Scan button over any app. A scan lists everything that app reports to accessibility on the screen - every element, its text, state and the actions it accepts - so you can see what an automation app can read and control there. Nothing is tapped or changed.</string>
+</resources>
