@@ -16,7 +16,8 @@ android {
     }
 
     signingConfigs {
-        // The same fixed debug key as the main app, so updates install over the old one.
+        // The same fixed debug key committed at app/debug.keystore, so every
+        // build is signed identically and updates install over the old one.
         getByName("debug") {
             storeFile = file("../app/debug.keystore")
             storePassword = "android"
@@ -28,6 +29,7 @@ android {
     buildTypes {
         getByName("debug") {
             signingConfig = signingConfigs.getByName("debug")
+            // Shrink to keep the APK small; the app uses only framework APIs.
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
@@ -40,8 +42,7 @@ android {
     }
 }
 
+// No third-party dependencies: the inspector needs only the Android framework,
+// which keeps the APK as small as possible.
 dependencies {
-    // Reads the words on a screenshot, to find a pop-up's OK the page doesn't report.
-    // The Play Services version keeps the APK small: the model comes from Play services.
-    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
 }

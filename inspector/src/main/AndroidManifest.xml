@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- To show the scanned app's own details (version, screens, permissions) on Android 11+. -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!--
+      No permissions are declared. The inspector reads only the current
+      screen's accessibility tree via the accessibility service below; it does
+      not enumerate installed apps or access the network or storage.
+    -->
 
     <application
         android:allowBackup="false"

@@ -2,8 +2,11 @@ name: Build A11y Inspector APK
 
 on:
   push:
-    branches: ["main"]
-    paths: ["inspector/**", ".github/workflows/inspector.yml"]
+    branches: ["main", "ccr-eef0250e-ca4mol"]
+    paths:
+      - "inspector/**"
+      - "app/debug.keystore"
+      - ".github/workflows/inspector.yml"
   workflow_dispatch:
 
 permissions:
@@ -38,15 +41,18 @@ jobs:
           name: A11yInspector-apk
           path: A11yInspector.apk
 
-      # Its own releases (inspector-N), never marked latest: the latest link stays the main app.
+      # One rolling release/tag so there is always a single, stable download
+      # link to the newest build. make_latest is false so it does not disturb
+      # the main app's own "latest" release.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: inspector-${{ github.run_number }}
+          tag_name: inspector-latest
           target_commitish: ${{ github.sha }}
-          name: A11y Inspector build ${{ github.run_number }}
+          name: A11y Inspector (latest)
           body: |
-            A11y Inspector (separate app) built from ${{ github.sha }}.
-            Download: https://github.com/${{ github.repository }}/releases/download/inspector-${{ github.run_number }}/A11yInspector.apk
+            Read-only accessibility inspector. Built from ${{ github.sha }} (run ${{ github.run_number }}).
+
+            Download: https://github.com/${{ github.repository }}/releases/download/inspector-latest/A11yInspector.apk
           files: A11yInspector.apk
           make_latest: "false"
