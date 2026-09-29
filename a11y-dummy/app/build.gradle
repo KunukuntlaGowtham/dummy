@@ -1,0 +1,10 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+dependencies { implementation 'androidx.recyclerview:recyclerview:1.3.2' }
+
+android { namespace 'com.example.a11ydummy'; compileSdk 35
+    defaultConfig { applicationId 'com.example.a11ydummy'; minSdk 24; targetSdk 35; versionCode 1; versionName '1.0' }
+}
