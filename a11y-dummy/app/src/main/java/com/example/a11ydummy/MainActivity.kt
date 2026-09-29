@@ -4,6 +4,7 @@ import android.app.AlertDialog
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -65,11 +66,13 @@ class MainActivity : android.app.Activity() {
     private fun updateCounters() { counter.text = "Checked: $checked / 15"; counter.contentDescription = "Checked $checked of 15"; popupCounter.text = "Popups dismissed: $dismissed / 15" }
     private fun resetAll() { checked = 0; dismissed = 0; adapter.reset(); updateCounters(); recycler.scrollToPosition(0) }
 
-    private inner class PersonAdapter(private val people: List<Person>) : RecyclerView.Adapter<PersonVH>() {
+    private inner class PersonAdapter(private val people: List<Person>) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         private val states = BooleanArray(people.size)
-        override fun onCreateViewHolder(parent: android.view.ViewGroup, viewType: Int): PersonVH = PersonVH(makeCard())
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
+            object : RecyclerView.ViewHolder(makeCard()) {}
         override fun getItemCount() = people.size
-        override fun onBindViewHolder(holder: PersonVH, position: Int) = holder.bind(people[position], position)
+        override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) =
+            bindCard(holder.itemView as LinearLayout, people[position], position)
         fun reset() { java.util.Arrays.fill(states, false); notifyDataSetChanged() }
 
         private fun makeCard(): LinearLayout = LinearLayout(this@MainActivity).apply {
@@ -77,29 +80,26 @@ class MainActivity : android.app.Activity() {
             minimumHeight = (resources.displayMetrics.heightPixels * 0.92).toInt()
         }
 
-        inner class PersonVH(view: View) : RecyclerView.ViewHolder(view) {
-            fun bind(p: Person, position: Int) {
-                val card = itemView as LinearLayout
-                card.removeAllViews()
-                val heading = TextView(this@MainActivity).apply { text = "Person ${p.index} of 15"; textSize = 24f; setPadding(0, 0, 0, 24) }
-                card.addView(heading)
-                listOf("Name: ${p.name}", "Gender: ${p.gender}", "DOB: ${p.dob}", "Age: ${p.age}", "ID: ${p.id}").forEach { s -> card.addView(TextView(this@MainActivity).apply { text=s; textSize=18f; setPadding(0,10,0,10) }) }
-                val check = CheckBox(this@MainActivity).apply {
-                    id = View.generateViewId()
-                    contentDescription = "dummy_checkbox_${p.index.toString().padStart(2,'0')}"
-                    text = "I confirm Person ${p.index}"
-                    textSize = 18f
-                    isChecked = states[position]
-                    isEnabled = !states[position]
-                    setOnClickListener {
-                        if (!states[position]) {
-                            states[position] = true; checked++; isEnabled = false; updateCounters(); showPopup(position)
-                        }
+        private fun bindCard(card: LinearLayout, p: Person, position: Int) {
+            card.removeAllViews()
+            val heading = TextView(this@MainActivity).apply { text = "Person ${p.index} of 15"; textSize = 24f; setPadding(0, 0, 0, 24) }
+            card.addView(heading)
+            listOf("Name: ${p.name}", "Gender: ${p.gender}", "DOB: ${p.dob}", "Age: ${p.age}", "ID: ${p.id}").forEach { s -> card.addView(TextView(this@MainActivity).apply { text=s; textSize=18f; setPadding(0,10,0,10) }) }
+            val check = CheckBox(this@MainActivity).apply {
+                id = View.generateViewId()
+                contentDescription = "dummy_checkbox_${p.index.toString().padStart(2,'0')}"
+                text = "I confirm Person ${p.index}"
+                textSize = 18f
+                isChecked = states[position]
+                isEnabled = !states[position]
+                setOnClickListener {
+                    if (!states[position]) {
+                        states[position] = true; checked++; isEnabled = false; updateCounters(); showPopup(position)
                     }
                 }
-                card.addView(check, LinearLayout.LayoutParams(-1, 72))
-                card.addView(TextView(this@MainActivity).apply { text="Scroll down after closing the popup to load the next person."; textSize=14f; setPadding(0,24,0,0) })
             }
+            card.addView(check, LinearLayout.LayoutParams(-1, 72))
+            card.addView(TextView(this@MainActivity).apply { text="Scroll down after closing the popup to load the next person."; textSize=14f; setPadding(0,24,0,0) })
         }
     }
 
