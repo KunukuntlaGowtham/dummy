@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">A11y Inspector</string>
-    <string name="a11y_description">A read-only accessibility inspector. Turn it on, open any other app, then come back here and tap Refresh: it lists everything that app reports to accessibility on its last screen — every element, its text, state and the actions it advertises — so you can see what an automation tool would be able to read and control. It never taps or changes anything in another app.</string>
+    <string name="a11y_description">A read-only accessibility inspector. Turn it on, open any other app, then come back here and tap Refresh: it lists everything on screen that reports to accessibility — every window (dialogs, keyboard, split-screen), and within each, every element with its text, state, grid position, input type, range and the actions it advertises — so you can see what an automation tool would be able to read and control. It never taps or changes anything in another app.</string>
     <string name="btn_settings">Turn on / open Accessibility settings</string>
     <string name="btn_refresh">Refresh — show last app\'s report</string>
     <string name="btn_copy">Copy report</string>
@@ -10,4 +10,6 @@
     <string name="empty_report">No report yet.\n\n1. Turn the inspector on above.\n2. Open the app you want to inspect and move around it.\n3. Come back here and tap Refresh.</string>
     <string name="nothing_to_copy">Nothing to copy yet.</string>
     <string name="copied">Report copied to clipboard.</string>
+    <string name="btn_budget">Scan depth: up to %1$d elements (tap to change)</string>
+    <string name="budget_changed">Scan depth changed. It applies to the next scan.</string>
 </resources>

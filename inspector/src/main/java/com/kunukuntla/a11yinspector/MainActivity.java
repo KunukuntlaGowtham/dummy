@@ -35,6 +35,7 @@ public class MainActivity extends Activity {
     private static final int GREEN = 0xFF2E7D32;
     private TextView status;
     private TextView report;
+    private Button budget;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,6 +74,19 @@ public class MainActivity extends Activity {
 
         root.addView(button(getString(R.string.btn_copy), v -> copyReport()));
 
+        budget = new Button(this);
+        budget.setAllCaps(false);
+        LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        blp.bottomMargin = dp(6);
+        budget.setLayoutParams(blp);
+        budget.setOnClickListener(v -> {
+            Limits.cycle(this);
+            updateBudgetLabel();
+            toast(getString(R.string.budget_changed));
+        });
+        root.addView(budget);
+
         // The report can be wide and tall, so scroll both ways in a monospace view.
         report = new TextView(this);
         report.setTextSize(11);
@@ -97,7 +111,12 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         refreshStatus();
+        updateBudgetLabel();
         showReport();
+    }
+
+    private void updateBudgetLabel() {
+        budget.setText(getString(R.string.btn_budget, Limits.maxNodes(this)));
     }
 
     private void refreshStatus() {
