@@ -56,11 +56,16 @@ public class MainActivity extends Activity {
         title.setTypeface(Typeface.DEFAULT_BOLD);
         head.addView(title);
         TextView how = new TextView(this);
-        how.setText("Turn it on in Accessibility, open any app, then tap the green 🔍 Scan "
-                + "button: it lists everything that app lets an accessibility service read and "
-                + "control on that screen. Long-press it for a deep scan: web pages woken, plus a screenshot - text the page hides from accessibility, checkbox shapes, colours - and buttons for the whole page (scrolls to the end), the raw tree with every property plus the app's own details, and a 15 s recording of the events the app sends. "
-                + "Purple ☑ Tick ticks every checkbox and clears pop-ups; red 🗑 Del asks which row "
-                + "numbers to delete and clears their two pop-ups.");
+        how.setText("Turn it on in Accessibility, open any app, then use the round buttons - all "
+                + "work through accessibility, no screenshots. Green 🔍 Scan lists everything the app "
+                + "reports on that screen, and what Tick, Clear and Book would find there: pop-ups "
+                + "and the button that clears each, every checkbox with its row, the calendar "
+                + "(month, open and closed days, arrows), the dropdown, radios and Continue. "
+                + "Long-press it for a deep scan: web pages woken, every property of every element "
+                + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
+                + "recording of the app's events. Purple ☑ Tick ticks every checkbox and clears "
+                + "the pop-up after each; orange ✖ Clear clears the pop-ups up now; blue 📅 Book "
+                + "picks the dropdown option, the date, the checkbox, the radio and Continue.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));

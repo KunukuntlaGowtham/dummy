@@ -39,9 +39,3 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
-
-dependencies {
-    // Reads the words on a screenshot, to find a pop-up's OK the page doesn't report.
-    // The Play Services version keeps the APK small: the model comes from Play services.
-    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
-}

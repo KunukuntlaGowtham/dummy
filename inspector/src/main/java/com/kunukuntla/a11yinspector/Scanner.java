@@ -19,7 +19,9 @@ import java.util.TreeMap;
 /**
  * Walks every window the phone reports to accessibility and writes down what an automation
  * app could read and control there: each kind of control, how many accept a click (or typing,
- * scrolling ...), every controllable element with its actions, and the whole element tree.
+ * scrolling ...), what Tick, Clear and Book would find and do (pop-ups, checkboxes, the
+ * calendar, the dropdown ...), every controllable element with its actions, and the whole
+ * element tree. A deep scan adds the app's own details and every property of every element.
  * Reads only - nothing is tapped or changed.
  */
 final class Scanner {
@@ -51,7 +53,7 @@ final class Scanner {
         }
     }
 
-    static Result scan(AccessibilityService service, boolean deep) {
+    static Result scan(AccessibilityService service, boolean deep, String screenOpen) {
         String own = service.getPackageName();
         StringBuilder tree = new StringBuilder();
         StringBuilder controls = new StringBuilder();
@@ -167,13 +169,23 @@ final class Scanner {
         if (!none.isEmpty()) sum.append("❌ Not reported: ").append(String.join(", ", none)).append('\n');
         if (webViews > 0 && webNodes < 40) {
             sum.append("⚠️ The web view reports very little - its page may hide its controls from "
-                    + "accessibility (then only screenshots and taps can work there).\n");
+                    + "accessibility (long-press Scan for a deep scan: it wakes the web view first).\n");
         }
+
+        // What Tick, Clear and Book would find and do here.
+        Automation.Result auto;
+        try {
+            auto = Automation.look(service);
+        } catch (RuntimeException e) {
+            auto = new Automation.Result("⚠️ In-depth look failed: " + e + "\n", "");
+        }
+        sum.append(auto.summary);
 
         StringBuilder rep = new StringBuilder();
         rep.append("A11y Inspector - ").append(when).append('\n');
         rep.append("=================================================\n");
         rep.append(sum).append('\n');
+        rep.append(auto.report).append('\n');
         rep.append("WINDOWS\n").append(windows).append('\n');
         rep.append("ACTIONS ACCEPTED (how many elements accept each)\n");
         if (actionCounts.isEmpty()) rep.append("  none\n");
@@ -193,6 +205,15 @@ final class Scanner {
         rep.append("  legend: [clk] clickable  [long] long-clickable  [chk ☐/☑] checkable  [edit] "
                 + "editable  [scroll] scrollable  [off] disabled  [hidden] not on screen\n");
         rep.append(tree);
+        if (deep) {
+            // The deepest look too: the app's own details and every property of every element.
+            rep.append("\n\n").append(RawScan.appInfo(service, app, screenOpen));
+            try {
+                rep.append('\n').append(RawScan.rawTree(service));
+            } catch (RuntimeException e) {
+                rep.append("\nRaw tree failed: ").append(e).append('\n');
+            }
+        }
         return new Result(sum.toString(), rep.toString());
     }
 

@@ -26,9 +26,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Shows a floating Scan button over any app. Tap: scan the screen now. Long press: deep scan
- * (wake the web views first, wait, then scan). The result shows in a card over the page and is
- * kept for the app's own screen (Share / Copy / Save).
+ * Floating buttons over any app, all working through accessibility (no screenshots):
+ * <ul>
+ *   <li>🔍 Scan - tap: scan the screen now; long press: deep scan (wake the web views first,
+ *       then every property of every element and the app's own details too);</li>
+ *   <li>☑ Tick - ticks every empty checkbox, clearing the pop-up after each;</li>
+ *   <li>✖ Clear - clears the pop-ups up now (presses their OK / Close);</li>
+ *   <li>📅 Book - picks the dropdown option, the date in the calendar, the checkbox, the radio
+ *       button, then Continue.</li>
+ * </ul>
+ * Results show in a card over the page and are kept for the app's own screen (Share / Copy / Save).
  */
 public class InspectorService extends AccessibilityService {
 
@@ -77,36 +84,12 @@ public class InspectorService extends AccessibilityService {
         closeCard();
         closeAsk();
         if (ticker != null) ticker.stop("Stopped");
-        if (deleter != null) deleter.stop("Stopped");
-        if (teacher != null) teacher.cancel();
+        if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
-        if (bookButton != null) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton}) {
+            if (v == null) continue;
             try {
-                windowManager.removeView(bookButton);
-            } catch (RuntimeException ignored) {
-            }
-        }
-        if (teachButton != null) {
-            try {
-                windowManager.removeView(teachButton);
-            } catch (RuntimeException ignored) {
-            }
-        }
-        if (delButton != null) {
-            try {
-                windowManager.removeView(delButton);
-            } catch (RuntimeException ignored) {
-            }
-        }
-        if (tickButton != null) {
-            try {
-                windowManager.removeView(tickButton);
-            } catch (RuntimeException ignored) {
-            }
-        }
-        if (button != null) {
-            try {
-                windowManager.removeView(button);
+                windowManager.removeView(v);
             } catch (RuntimeException ignored) {
             }
         }
@@ -185,232 +168,124 @@ public class InspectorService extends AccessibilityService {
         showTickButton();
     }
 
-    // ---- the Tick button: tick every checkbox directly, clear pop-ups ----------------
+    // ---- Tick, Clear and Book --------------------------------------------------------
 
-    private TextView tickButton;
-    private WindowManager.LayoutParams tickParams;
-    private Ticker ticker;
+    private TextView tickButton, clearButton, bookButton;
+    private Ticker ticker, clearer;
+    private Booker booker;
+    private View ask;
 
-    @SuppressLint("ClickableViewAccessibility")
     private void showTickButton() {
         ticker = new Ticker(this, (summary, log) -> {
-            try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
-                out.write(log.getBytes());
-            } catch (java.io.IOException ignored) {
-            }
+            saveReport(log);
             tickButton.setText("☑\nTick");
             showCard(summary);
         });
-        tickButton = new TextView(this);
-        tickButton.setText("☑\nTick");
-        tickButton.setTextColor(Color.WHITE);
-        tickButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        tickButton.setGravity(Gravity.CENTER);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xEE6A2C91);
-        bg.setStroke(dp(2), 0x66FFFFFF);
-        tickButton.setBackground(bg);
-        tickButton.setElevation(dp(4));
-        tickParams = new WindowManager.LayoutParams(dp(56), dp(56),
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        tickParams.gravity = Gravity.TOP | Gravity.START;
-        tickParams.x = dp(12);
-        tickParams.y = dp(226);
-        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
-        float[] down = new float[2];
-        int[] start = new int[2];
-        boolean[] dragged = {false};
-        tickButton.setOnTouchListener((v, e) -> {
-            switch (e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    down[0] = e.getRawX();
-                    down[1] = e.getRawY();
-                    start[0] = tickParams.x;
-                    start[1] = tickParams.y;
-                    dragged[0] = false;
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
-                    if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
-                    if (dragged[0]) {
-                        tickParams.x = start[0] + (int) dx;
-                        tickParams.y = start[1] + (int) dy;
-                        windowManager.updateViewLayout(tickButton, tickParams);
-                    }
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    if (!dragged[0]) {
-                        closeCard();
-                        if (ticker.isRunning()) {
-                            ticker.stop("Stopped");
-                        } else {
-                            tickButton.setText("■\nStop");
-                            ticker.start();
-                        }
-                    }
-                    return true;
-                default:
-                    return true;
+        tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> {
+            closeCard();
+            if (ticker.isRunning()) {
+                ticker.stop("Stopped");
+            } else if (!busy()) {
+                tickButton.setText("■\nStop");
+                ticker.start();
             }
         });
-        windowManager.addView(tickButton, tickParams);
-        showDeleteButton();
-    }
-
-    // ---- the Del button: delete the rows you type, clearing the two pop-ups ---------
-
-    private TextView delButton;
-    private WindowManager.LayoutParams delParams;
-    private Deleter deleter;
-    private View ask;
-
-    @SuppressLint("ClickableViewAccessibility")
-    private void showDeleteButton() {
-        deleter = new Deleter(this, (summary, log) -> {
-            try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
-                out.write(log.getBytes());
-            } catch (java.io.IOException ignored) {
-            }
-            delButton.setText("🗑\nDel");
+        clearer = new Ticker(this, (summary, log) -> {
+            saveReport(log);
+            clearButton.setText("✖\nClear");
             showCard(summary);
         });
-        delButton = new TextView(this);
-        delButton.setText("🗑\nDel");
-        delButton.setTextColor(Color.WHITE);
-        delButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
-        delButton.setGravity(Gravity.CENTER);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xEEC62828);
-        bg.setStroke(dp(2), 0x66FFFFFF);
-        delButton.setBackground(bg);
-        delButton.setElevation(dp(4));
-        delParams = new WindowManager.LayoutParams(dp(56), dp(56),
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        delParams.gravity = Gravity.TOP | Gravity.START;
-        delParams.x = dp(12);
-        delParams.y = dp(292);
-        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
-        float[] down = new float[2];
-        int[] start = new int[2];
-        boolean[] dragged = {false};
-        delButton.setOnTouchListener((v, e) -> {
-            switch (e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    down[0] = e.getRawX();
-                    down[1] = e.getRawY();
-                    start[0] = delParams.x;
-                    start[1] = delParams.y;
-                    dragged[0] = false;
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
-                    if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
-                    if (dragged[0]) {
-                        delParams.x = start[0] + (int) dx;
-                        delParams.y = start[1] + (int) dy;
-                        windowManager.updateViewLayout(delButton, delParams);
-                    }
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    if (!dragged[0]) {
-                        closeCard();
-                        if (deleter.isRunning()) deleter.stop("Stopped");
-                        else askRows();
-                    }
-                    return true;
-                default:
-                    return true;
-            }
-        });
-        windowManager.addView(delButton, delParams);
-        showTeachButton();
-    }
-
-    // ---- the Teach button: you tap the dustbin and pop-up buttons once, it remembers -----
-
-    private TextView teachButton;
-    private Teacher teacher;
-
-    private void showTeachButton() {
-        teacher = new Teacher(this, this::showCard);
-        teachButton = new TextView(this);
-        teachButton.setText("🎯\nTeach");
-        teachButton.setTextColor(Color.WHITE);
-        teachButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        teachButton.setGravity(Gravity.CENTER);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xEEE65100);
-        bg.setStroke(dp(2), 0x66FFFFFF);
-        teachButton.setBackground(bg);
-        teachButton.setElevation(dp(4));
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(dp(56), dp(56),
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity = Gravity.TOP | Gravity.START;
-        lp.x = dp(12);
-        lp.y = dp(358);
-        teachButton.setOnClickListener(v -> {
+        clearButton = floating("✖\nClear", 0xEEE65100, 292, v -> {
             closeCard();
-            if (teacher.isActive()) teacher.cancel();
-            else showTeachChoices();
-        });
-        windowManager.addView(teachButton, lp);
-        showBookButton();
-    }
-
-    // ---- the Book button: dropdown option, date, checkbox, radio, Continue --------------
-
-    private TextView bookButton;
-    private Booker booker;
-
-    private void showBookButton() {
-        booker = new Booker(this, (summary, log) -> {
-            try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
-                out.write(log.getBytes());
-            } catch (java.io.IOException ignored) {
+            if (clearer.isRunning()) {
+                clearer.stop("Stopped");
+            } else if (!busy()) {
+                clearButton.setText("■\nStop");
+                clearer.clearNow();
             }
+        });
+        booker = new Booker(this, (summary, log) -> {
+            saveReport(log);
             bookButton.setText("📅\nBook");
             showCard(summary);
         });
-        bookButton = new TextView(this);
-        bookButton.setText("📅\nBook");
-        bookButton.setTextColor(Color.WHITE);
-        bookButton.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
-        bookButton.setGravity(Gravity.CENTER);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xEE1565C0);
-        bg.setStroke(dp(2), 0x66FFFFFF);
-        bookButton.setBackground(bg);
-        bookButton.setElevation(dp(4));
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(dp(56), dp(56),
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity = Gravity.TOP | Gravity.START;
-        lp.x = dp(12);
-        lp.y = dp(424);
-        bookButton.setOnClickListener(v -> {
+        bookButton = floating("📅\nBook", 0xEE1565C0, 358, v -> {
             closeCard();
             if (booker.isRunning()) booker.stop("Stopped");
-            else {
+            else if (!busy()) {
                 Toast.makeText(this, "Reading the dropdown's options…", Toast.LENGTH_SHORT).show();
                 Booker.options(this, handler, this::askBooking);
             }
         });
-        windowManager.addView(bookButton, lp);
+    }
+
+    /** Another run is on: say so instead of starting a second one over it. */
+    private boolean busy() {
+        boolean on = ticker.isRunning() || clearer.isRunning() || booker.isRunning();
+        if (on) Toast.makeText(this, "Stop the running one first", Toast.LENGTH_SHORT).show();
+        return on;
+    }
+
+    private void saveReport(String text) {
+        try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
+            out.write(text.getBytes());
+        } catch (java.io.IOException ignored) {
+        }
+    }
+
+    /** A round floating button you can drag; a tap runs {@code onTap}. */
+    @SuppressLint("ClickableViewAccessibility")
+    private TextView floating(String label, int colour, int yDp, View.OnClickListener onTap) {
+        TextView b = new TextView(this);
+        b.setText(label);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        b.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(colour);
+        bg.setStroke(dp(2), 0x66FFFFFF);
+        b.setBackground(bg);
+        b.setElevation(dp(4));
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(dp(56), dp(56),
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        lp.x = dp(12);
+        lp.y = dp(yDp);
+        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
+        float[] down = new float[2];
+        int[] start = new int[2];
+        boolean[] dragged = {false};
+        b.setOnTouchListener((v, e) -> {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    down[0] = e.getRawX();
+                    down[1] = e.getRawY();
+                    start[0] = lp.x;
+                    start[1] = lp.y;
+                    dragged[0] = false;
+                    return true;
+                case MotionEvent.ACTION_MOVE:
+                    float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
+                    if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
+                    if (dragged[0]) {
+                        lp.x = start[0] + (int) dx;
+                        lp.y = start[1] + (int) dy;
+                        windowManager.updateViewLayout(b, lp);
+                    }
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!dragged[0]) onTap.onClick(v);
+                    return true;
+                default:
+                    return true;
+            }
+        });
+        windowManager.addView(b, lp);
+        return b;
     }
 
     /** Asks for the dropdown option, the date and the radio button, then fills the page. */
@@ -547,167 +422,6 @@ public class InspectorService extends AccessibilityService {
         return e;
     }
 
-    private void showTeachChoices() {
-        closeCard();
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(16), dp(14), dp(16), dp(10));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xF01B1D22);
-        bg.setCornerRadius(dp(16));
-        box.setBackground(bg);
-        TextView title = new TextView(this);
-        title.setText("Teach: show me by tapping");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        box.addView(title);
-        TextView what = new TextView(this);
-        what.setText("Open the page first. You tap each thing once; every tap really happens "
-                + "(a box is ticked, a row is deleted). Then Tick and Del press them straight away.\n\n"
-                + "Taught now: " + taughtList());
-        what.setTextColor(0xCCFFFFFF);
-        what.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        what.setPadding(0, dp(4), 0, dp(8));
-        box.addView(what);
-        box.addView(choice("☑  Teach Tick: a checkbox, then its pop-up's OK", v -> {
-            closeCard();
-            teacher.teachTick();
-        }));
-        box.addView(choice("🗑  Teach Del: a dustbin, then its 2 pop-ups' buttons", v -> {
-            closeCard();
-            teacher.teachDelete();
-        }));
-        box.addView(choice("Forget what I taught", v -> {
-            Taught.forgetAll(this);
-            closeCard();
-            Toast.makeText(this, "Forgotten - Tick and Del find things themselves again", Toast.LENGTH_SHORT).show();
-        }));
-        box.addView(choice("Close", v -> closeCard()));
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                getResources().getDisplayMetrics().widthPixels * 92 / 100,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity = Gravity.CENTER;
-        windowManager.addView(box, lp);
-        card = box;
-    }
-
-    private String taughtList() {
-        List<String> out = new ArrayList<>();
-        if (Taught.get(this, Taught.TICK_POPUP) != null) out.add("Tick's pop-up OK");
-        if (Taught.get(this, Taught.DEL_BIN) != null) out.add("dustbin");
-        if (Taught.get(this, Taught.DEL_POPUP_1) != null) out.add("Del pop-up 1");
-        if (Taught.get(this, Taught.DEL_POPUP_2) != null) out.add("Del pop-up 2");
-        return out.isEmpty() ? "nothing" : String.join(", ", out);
-    }
-
-    private TextView choice(String label, View.OnClickListener onClick) {
-        TextView b = new TextView(this);
-        b.setText(label);
-        b.setTextColor(0xFF9AE6A1);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        b.setPadding(dp(4), dp(10), dp(4), dp(10));
-        b.setOnClickListener(onClick);
-        return b;
-    }
-
-    /** Asks which row numbers to delete, then starts. */
-    private void askRows() {
-        closeAsk();
-        android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(18), dp(16), dp(18), dp(10));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xF81B1D22);
-        bg.setCornerRadius(dp(16));
-        box.setBackground(bg);
-
-        TextView title = new TextView(this);
-        title.setText("Which numbers to delete?");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        box.addView(title);
-        TextView hint = new TextView(this);
-        hint.setText("Row numbers on the page, e.g. 2, 4 or 3-5. Each row's delete button is "
-                + "pressed and its two pop-ups cleared.");
-        hint.setTextColor(0xCCFFFFFF);
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        hint.setPadding(0, dp(4), 0, dp(10));
-        box.addView(hint);
-
-        android.widget.EditText input = new android.widget.EditText(this);
-        input.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
-        input.setText(prefs.getString("delete_rows", ""));
-        input.setSelectAllOnFocus(true);
-        input.setTextColor(Color.WHITE);
-        input.setHintTextColor(0x88FFFFFF);
-        input.setHint("2, 4");
-        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
-        box.addView(input, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.END);
-        row.addView(cardButton("Cancel", v -> closeAsk()));
-        row.addView(cardButton("Delete", v -> {
-            String text = input.getText().toString();
-            List<Integer> rows = parseRows(text);
-            if (rows.isEmpty()) {
-                Toast.makeText(this, "Type the row numbers, e.g. 2, 4", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            prefs.edit().putString("delete_rows", text).apply();
-            closeAsk();
-            delButton.setText("■\nStop");
-            // Let the keyboard go down before the page is read.
-            handler.postDelayed(() -> deleter.start(rows), 400);
-        }));
-        box.addView(row);
-
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                getResources().getDisplayMetrics().widthPixels * 88 / 100,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        lp.y = dp(120);
-        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
-        try {
-            windowManager.addView(box, lp);
-            ask = box;
-            input.requestFocus();
-            handler.postDelayed(() -> {
-                android.view.inputmethod.InputMethodManager im =
-                        getSystemService(android.view.inputmethod.InputMethodManager.class);
-                if (im != null) im.showSoftInput(input, 0);
-            }, 200);
-        } catch (RuntimeException e) {
-            Toast.makeText(this, "Couldn't show the question: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
-    }
-
-    /** "2, 4 6-8" -> [2, 4, 6, 7, 8]. */
-    static List<Integer> parseRows(String text) {
-        List<Integer> out = new ArrayList<>();
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d+)(?:\\s*-\\s*(\\d+))?").matcher(text);
-        while (m.find()) {
-            try {
-                int a = Integer.parseInt(m.group(1));
-                int b = m.group(2) == null ? a : Integer.parseInt(m.group(2));
-                for (int i = Math.min(a, b); i <= Math.max(a, b) && out.size() < 200; i++) out.add(i);
-            } catch (NumberFormatException ignored) {
-            }
-        }
-        return out;
-    }
-
     private void closeAsk() {
         if (ask == null) return;
         try {
@@ -748,7 +462,7 @@ public class InspectorService extends AccessibilityService {
         handler.postDelayed(() -> finish(true), 1500);
     }
 
-    private DeepLook deepLook;
+    private WholePage wholePage;
     private final java.util.Map<String, String> openScreen = new java.util.HashMap<>();
     private final RawScan.Recorder recorder = new RawScan.Recorder();
     private String recordPkg = "";
@@ -765,33 +479,6 @@ public class InspectorService extends AccessibilityService {
             }
         }
         return "";
-    }
-
-    /** Every property of every element, and the app's own details. */
-    private void rawTree() {
-        closeCard();
-        String pkg = appInFront();
-        String report;
-        String tree;
-        try {
-            tree = RawScan.rawTree(this);
-        } catch (RuntimeException e) {
-            tree = "Raw tree failed: " + e;
-        }
-        String app = pkg.isEmpty() ? "APP\n  not found\n" : RawScan.appInfo(this, pkg, openScreen.get(pkg));
-        String when = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
-        report = "A11y Inspector - raw tree & app details - " + when + "\n"
-                + "=================================================\n" + app + "\n" + tree;
-        String firstLine = tree.substring(0, Math.max(0, tree.indexOf('\n')));
-        StringBuilder sum = new StringBuilder();
-        for (String line : app.split("\n")) {
-            if (line.startsWith("  Name") || line.startsWith("  Version") || line.startsWith("  Built with")
-                    || line.startsWith("  Screen open") || line.startsWith("  Screens") || line.startsWith("  Permissions")) {
-                sum.append(line.trim()).append('\n');
-            }
-        }
-        sum.append(firstLine).append("\nOpen Full report for everything (every flag, action, extra).");
-        done(sum.toString(), report, false);
     }
 
     /** Records the app's accessibility events for 15 s while you use it. */
@@ -815,34 +502,21 @@ public class InspectorService extends AccessibilityService {
     private void finish(boolean deep) {
         Scanner.Result r;
         try {
-            r = Scanner.scan(this, deep);
+            String pkg = appInFront();
+            r = Scanner.scan(this, deep, openScreen.get(pkg));
         } catch (RuntimeException e) {
             r = new Scanner.Result("Scan failed: " + e, "Scan failed: " + e);
         }
-        if (!deep) {
-            done(r.summary, r.report, false);
-            return;
-        }
-        // Deep: also look at the picture of the screen (our buttons out of it).
-        if (deepLook == null) deepLook = new DeepLook(this);
-        Scanner.Result tree = r;
-        buttonsVisible(false);
-        handler.postDelayed(() -> deepLook.screen((sum, rep) -> {
-            buttonsVisible(true);
-            done(tree.summary + sum, tree.report.replaceFirst("\n\nWINDOWS\n", "\n" + java.util.regex.Matcher.quoteReplacement(sum) + "\nWINDOWS\n") + rep, true);
-        }), 150);
+        done(r.summary, r.report, deep);
     }
 
     private void done(String summary, String report, boolean deep) {
-        try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
-            out.write(report.getBytes());
-        } catch (java.io.IOException ignored) {
-        }
+        saveReport(report);
         scanning = false;
         button.setAlpha(1f);
         if (deep) {
-            showCard(summary, new String[] {"Whole page ↓", "Raw tree", "Record 15 s"},
-                    new View.OnClickListener[] {v -> wholePage(), v -> rawTree(), v -> record()});
+            showCard(summary, new String[] {"Whole page ↓", "Record 15 s"},
+                    new View.OnClickListener[] {v -> wholePage(), v -> record()});
         } else {
             showCard(summary);
         }
@@ -851,21 +525,10 @@ public class InspectorService extends AccessibilityService {
     /** Scrolls the page to the end, screen by screen, listing what each screen brings. */
     private void wholePage() {
         closeCard();
-        if (deepLook == null) deepLook = new DeepLook(this);
+        if (wholePage == null) wholePage = new WholePage(this);
         scanning = true;
         button.setAlpha(0.5f);
-        buttonsVisible(false);
-        deepLook.wholePage(msg -> {
-        }, (sum, rep) -> {
-            buttonsVisible(true);
-            done(sum, rep, false);
-        });
-    }
-
-    private void buttonsVisible(boolean on) {
-        for (View v : new View[] {button, tickButton, delButton, teachButton, bookButton}) {
-            if (v != null) v.setVisibility(on ? View.VISIBLE : View.INVISIBLE);
-        }
+        wholePage.walk((sum, rep) -> done(sum, rep, false));
     }
 
     private List<AccessibilityNodeInfo> roots() {

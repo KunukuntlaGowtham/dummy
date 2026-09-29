@@ -8,32 +8,24 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
-import android.view.accessibility.AccessibilityWindowInfo;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Ticks every empty checkbox the page reports - also a hidden one (a web page often hides the
- * real checkbox and draws a styled label instead): clicks it straight through accessibility,
- * checks it turned ☑, and if not taps the box you see (its label). After each tick it clears a
- * pop-up that came up by pressing its OK (a new OK / Yes / Close ... button the page reports, or
- * a new "OK" read off a screenshot when the pop-up isn't reported). Then the next
- * box; when none is left on screen it scrolls on, until the page stops moving.
+ * Ticks every empty checkbox the page reports, only through accessibility (no screenshots):
+ * clicks it (ACTION_CLICK; a hidden web checkbox is clicked through its label, and as a last
+ * try tapped where the page says it is), checks that the page now reports it ☑, then clears the
+ * pop-up that came up - a new window, a dialog, or a new OK / Yes / Close ... button - by
+ * clicking that button (or dismissing the dialog). Then the next box, in page order; when none
+ * is left on screen the page is brought on / scrolled, until no empty checkbox is left.
+ * Also clears the pop-ups up now on their own ({@link #clearNow}).
  */
 final class Ticker {
 
     interface Listener {
         void done(String summary, String log);
     }
-
-    private static final String[] POPUP_WORDS = {"ok", "okay", "yes", "confirm", "agree", "i agree",
-            "accept", "proceed", "done", "got it", "close", "continue", "submit", "understood"};
 
     private final AccessibilityService service;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -47,18 +39,16 @@ final class Ticker {
     private final List<String> tickedRows = new ArrayList<>();
     private final List<String> failedRows = new ArrayList<>();
     private String lastScreen = "";
-    private final ScreenWords words;
-    /** Where the page shows an "OK" that isn't a pop-up's (it stayed after 3 presses). */
-    private List<Rect> pageOks;
     /** A pop-up came after an earlier tick this run: wait a little longer for the next one. */
     private boolean popupsSeen;
     /** Boxes in a row after which no pop-up came: stop waiting long for one. */
     private int quietBoxes;
+    /** Only clearing the pop-ups up now, no ticking. */
+    private boolean clearOnly;
 
     Ticker(AccessibilityService service, Listener listener) {
         this.service = service;
         this.listener = listener;
-        this.words = new ScreenWords(service);
     }
 
     boolean isRunning() {
@@ -66,8 +56,22 @@ final class Ticker {
     }
 
     void start() {
+        begin(false);
+        log("Tick: clicking every empty checkbox through accessibility, clearing pop-ups");
+        later(this::next, 100);
+    }
+
+    /** Clears the pop-ups that are up now (a dialog's OK, a new window's button), then stops. */
+    void clearNow() {
+        begin(true);
+        log("Clear: pressing the OK / Close of every pop-up up now");
+        later(() -> clearPopups(null, 1, () -> stop(popups == 0 ? "No pop-up up" : "Pop-ups cleared")), 50);
+    }
+
+    private void begin(boolean clear) {
         if (running) return;
         running = true;
+        clearOnly = clear;
         gen++;
         start = SystemClock.uptimeMillis();
         log.setLength(0);
@@ -76,30 +80,9 @@ final class Ticker {
         failedRows.clear();
         ticked = notTicked = popups = stillScreens = 0;
         lastScreen = "";
-        pageOks = new ArrayList<>();
         showTries = endChecks = 0;
         popupsSeen = false;
         quietBoxes = 0;
-        okSpot = lastOk = null;
-        okLook = okGone = null;
-        popupShapes = pageBefore = pageWithPopup = null;
-        log("Tick: clicking every empty checkbox directly, clearing pop-ups");
-        treeShows = service.getSharedPreferences("taught", android.content.Context.MODE_PRIVATE)
-                .getBoolean("tick_tree_shows", false);
-        Taught.Button taught = Taught.get(service, Taught.TICK_POPUP);
-        if (taught != null) {
-            okSpot = new Rect(taught.spot);
-            okLook = taught.look;
-            okGone = taught.gone;
-            popupShapes = taught.shapes.isEmpty() ? null : taught.shapes;
-            coverWorks = treeShows;
-            if (popupShapes != null) treeShows = true;
-            popupsSeen = true;
-            log("pop-up OK known at " + okSpot.centerX() + "," + okSpot.centerY()
-                    + (treeShows ? " - watched for in the accessibility tree, no screenshots"
-                    : " - the tree doesn't show this pop-up: found by screenshots"));
-        }
-        later(this::next, 100);
     }
 
     void stop(String why) {
@@ -107,18 +90,25 @@ final class Ticker {
         running = false;
         gen++;
         log("END: " + why);
-        String summary = why + "\n" + "Ticked " + ticked
+        String summary = clearOnly ? why + "\nPop-ups cleared " + popups : why + "\n" + "Ticked " + ticked
                 + (tickedRows.isEmpty() ? "" : " (rows " + String.join(", ", tickedRows) + ")")
                 + "\nNot ticked " + notTicked
                 + (failedRows.isEmpty() ? "" : " (rows " + String.join(", ", failedRows) + ")")
                 + "\nPop-ups cleared " + popups;
-        listener.done(summary, "A11y Inspector - Tick run\n=========================\n" + summary
-                + "\n\nSTEPS\n" + log);
+        listener.done(summary, "A11y Inspector - " + (clearOnly ? "Clear pop-ups" : "Tick run")
+                + "\n=========================\n" + summary + "\n\nSTEPS\n" + log);
     }
 
     // ---- one box after another ------------------------------------------------------
 
     private void next() {
+        // A pop-up left open (it came late) is cleared before the next box.
+        Page.Popup left = Page.popup(service, null);
+        if (left != null && left.button != null && popupTaps < 3) {
+            clearPopups(null, 1, this::next);
+            return;
+        }
+        popupTaps = 0;
         // Strictly in page order: the first empty checkbox on the whole page (the page
         // reports those further down too, 0 high while off screen), brought on screen first.
         AccessibilityNodeInfo further = anyEmptyBox();
@@ -135,7 +125,7 @@ final class Ticker {
                 return;
             }
             if (showTries++ < 2) {
-                log("next empty checkbox is off screen - bringing it on");
+                log("next empty checkbox is off screen - asking the page to show it");
                 further.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
                 later(this::next, 300);
                 return;
@@ -166,377 +156,158 @@ final class Ticker {
         showTries = 0;
         endChecks = 0;
         tried.add(b.node);
-        tickBox(b, clickableKeys(), pageOks);
+        tickBox(b);
     }
 
     private int showTries, endChecks;
 
     /** The first (in page order) empty, enabled checkbox not tried yet, on screen or not. */
     private AccessibilityNodeInfo anyEmptyBox() {
-        for (Node n : all()) {
-            AccessibilityNodeInfo node = n.node;
-            if (isCheckbox(node) && !node.isChecked() && node.isEnabled() && !tried.contains(node)) return node;
+        for (AccessibilityNodeInfo node : Page.nodes(service)) {
+            if (Page.isCheckbox(node) && !node.isChecked() && node.isEnabled() && !tried.contains(node)) return node;
         }
         return null;
     }
 
-    /** Pop-up taps after the current box - at most 3, so an OK that won't go can't loop. */
+    /** Pop-up presses after the current box - at most 3, so an OK that won't go can't loop. */
     private int popupTaps;
 
-    private void tickBox(Box b, Set<String> before, List<Rect> oldOks) {
-        popupTaps = 0;
-        pageBefore = shapes();
-        log("row " + b.row + ": clicking its checkbox (box at " + b.box.centerX() + ","
-                + b.box.centerY() + ")");
+    /**
+     * Ticks the box through accessibility, one way after another until the page reports it ☑:
+     * a click on the box, a click on its label (a hidden web checkbox), a tap where it is.
+     */
+    private void tickBox(Box b) {
+        Page.Before before = new Page.Before(service);
+        log("row " + b.row + ": clicking its checkbox (at " + b.box.centerX() + "," + b.box.centerY() + ")");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         whenChecked(b.node, 450, checked -> {
             if (checked) {
-                done(b, "ticked ✓ by a direct click", before, oldOks);
-            } else {
-                // The click didn't take (or was refused): a real tap on the box you see.
+                done(b, "ticked ✓ by a click", before);
+                return;
+            }
+            AccessibilityNodeInfo label = clickableParent(b.node);
+            if (label != null) {
                 log("row " + b.row + ": " + (sent ? "click didn't tick it" : "click refused")
-                        + " - tapping the box at " + b.box.centerX() + "," + b.box.centerY());
+                        + " - clicking its label");
+                label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            }
+            whenChecked(b.node, label != null ? 450 : 0, byLabel -> {
+                if (byLabel) {
+                    done(b, "ticked ✓ by a click on its label", before);
+                    return;
+                }
+                log("row " + b.row + ": tapping it at " + b.box.centerX() + "," + b.box.centerY());
                 tap(b.box.centerX(), b.box.centerY());
                 whenChecked(b.node, 500, ok -> {
-                    if (ok) done(b, "ticked ✓ by a tap", before, oldOks);
+                    if (ok) done(b, "ticked ✓ by a tap", before);
                     else {
                         notTicked++;
                         failedRows.add(b.row);
                         log("row " + b.row + ": still empty ✗");
-                        clearPopups(before, oldOks, firstLooks(), this::next);
+                        clearPopups(before, looks(), this::next);
                     }
                 });
-            }
+            });
         });
     }
 
-    /** Checks every 90 ms (up to {@code ms}) whether the box turned ☑. */
+    /** The nearest clickable parent (up to 3 levels): a web checkbox's label. */
+    private static AccessibilityNodeInfo clickableParent(AccessibilityNodeInfo n) {
+        AccessibilityNodeInfo p = n.getParent();
+        for (int i = 0; p != null && i < 3; i++, p = p.getParent()) {
+            if (p.isClickable()) return p;
+        }
+        return null;
+    }
+
+    /** Checks every 40 ms (up to {@code ms}) whether the box turned ☑. */
     private void whenChecked(AccessibilityNodeInfo node, long ms, java.util.function.Consumer<Boolean> then) {
+        if (ms <= 0) {
+            then.accept(Page.isChecked(node));
+            return;
+        }
         later(() -> {
-            boolean on = isChecked(node);
+            boolean on = Page.isChecked(node);
             if (on || ms <= 40) then.accept(on);
             else whenChecked(node, ms - 40, then);
         }, 40);
     }
 
-    /** How often to look for a pop-up after a tick: longer once pop-ups have been coming. */
-    private int firstLooks() {
-        return popupsSeen ? 6 : quietBoxes >= 3 ? 2 : 4;
+    /** How many 100 ms looks for a pop-up after a tick: longer once pop-ups have been coming. */
+    private int looks() {
+        return popupsSeen ? 15 : quietBoxes >= 3 ? 5 : 10;
     }
 
-    private void done(Box b, String how, Set<String> before, List<Rect> oldOks) {
+    private void done(Box b, String how, Page.Before before) {
         ticked++;
         tickedRows.add(b.row);
         log("row " + b.row + ": " + how);
-        if (okSpot != null && treeShows) watchPopup(before, oldOks, 0);
-        else clearPopups(before, oldOks, firstLooks(), this::next);
-    }
-
-    // ---- the fast way: the pop-up known from how the page changes -------------------
-
-    /**
-     * What the page's elements are (kind and place, not text): a pop-up adds its own ones
-     * (a cover over the page, its box), even when it doesn't report its words or buttons.
-     */
-    private Set<String> shapes() {
-        return Taught.shapes(service);
-    }
-
-    /** The page before this box was ticked; while learning, the page with the pop-up up. */
-    private Set<String> pageBefore, pageWithPopup;
-    /** The elements the pop-up adds to the page (learned from the first pop-up), or null. */
-    private Set<String> popupShapes;
-
-    /** The accessibility tree shows this page's pop-up (learned from the first one). */
-    private boolean treeShows;
-
-    /** The pop-up is up: what it adds is in the tree now (not before the tick). */
-    private boolean popupUp() {
-        Set<String> now = shapes();
-        if (popupShapes != null) {
-            int have = 0;
-            boolean fresh = false;
-            for (String k : popupShapes) {
-                if (!now.contains(k)) continue;
-                have++;
-                if (pageBefore == null || !pageBefore.contains(k)) fresh = true;
-            }
-            if (fresh && have * 10 >= popupShapes.size() * 8) return true;
-        }
-        return coverWorks && pageBefore != null && coverAdded(now, pageBefore);
-    }
-
-    /** The pop-up shows as a big new element in the tree (checked on the first pop-up). */
-    private boolean coverWorks;
-
-    private static final Pattern BOUNDS = Pattern.compile("\\[(-?\\d+),(-?\\d+)\\]\\[(-?\\d+),(-?\\d+)\\]");
-
-    /**
-     * Something big came into the tree (a cover over the page, or a dialog): a pop-up, even
-     * one that doesn't report its words or buttons.
-     */
-    private boolean coverAdded(Set<String> now, Set<String> before) {
-        Rect s = screen();
-        long big = (long) s.width() * s.height() / 4;
-        for (String k : now) {
-            if (before.contains(k)) continue;
-            if (k.toLowerCase(Locale.ROOT).contains("dialog")) return true;
-            Matcher m = BOUNDS.matcher(k);
-            if (!m.find()) continue;
-            long w = Long.parseLong(m.group(3)) - Long.parseLong(m.group(1));
-            long h = Long.parseLong(m.group(4)) - Long.parseLong(m.group(2));
-            if (w * h >= big) return true;
-        }
-        return false;
-    }
-
-    /**
-     * Watches the page (every 40 ms, no screenshots) for the known pop-up, presses its OK
-     * the moment it shows, and goes on as soon as it has gone. No pop-up within 1.5 s (0.5 s
-     * once none came for 3 boxes): none came - on to the next box.
-     */
-    private void watchPopup(Set<String> before, List<Rect> oldOks, long waited) {
-        later(() -> {
-            if (popupUp()) {
-                log("pop-up: pressing OK at " + okSpot.centerX() + "," + okSpot.centerY() + " (seen in the tree)");
-                quietBoxes = 0;
-                popups++;
-                popupTaps++;
-                // A moment for it to finish drawing, so the press lands on its button.
-                later(() -> {
-                    tap(okSpot.centerX(), okSpot.centerY());
-                    waitGone(before, oldOks, 0);
-                }, 60);
-            } else if (waited >= (quietBoxes >= 3 ? 500 : 1500)) {
-                log("pop-up: none came");
-                quietBoxes++;
-                next();
-            } else {
-                watchPopup(before, oldOks, waited + 40);
-            }
-        }, 40);
-    }
-
-    private void waitGone(Set<String> before, List<Rect> oldOks, long waited) {
-        later(() -> {
-            if (!popupUp()) {
-                next();
-            } else if (waited >= 1000) {
-                // Still up: press again (at most 3 times), else go on.
-                if (popupTaps >= 3) {
-                    log("pop-up: still up after 3 presses - going on");
-                    next();
-                } else {
-                    log("pop-up: still up - pressing OK again");
-                    tap(okSpot.centerX(), okSpot.centerY());
-                    popupTaps++;
-                    waitGone(before, oldOks, 0);
-                }
-            } else {
-                waitGone(before, oldOks, waited + 40);
-            }
-        }, 40);
+        clearPopups(before, looks(), this::next);
     }
 
     // ---- pop-ups ---------------------------------------------------------------
 
     /**
-     * Looks (a few times, 300 ms apart) for a pop-up that came up after the tick: a new
-     * clickable with an OK / Yes / Close ... text, or any button inside a dialog. Taps it, then
-     * looks again (a second pop-up); with none, carries on.
+     * Looks (every 100 ms, {@code looksLeft} times) for a pop-up that came up since
+     * {@code before} (any pop-up up, when null): presses its OK / Yes / Close ... button, or
+     * dismisses it, waits for it to go, and looks again for a second one. With none, carries on.
      */
-    private void clearPopups(Set<String> before, List<Rect> oldOks, int looksLeft, Runnable then) {
+    private void clearPopups(Page.Before before, int looksLeft, Runnable then) {
         if (popupTaps >= 3) {
-            log("pop-up: 3 taps after this box already - going on; that OK is ignored from now on");
-            if (lastOk != null) oldOks.add(new Rect(lastOk));
-            okSpot = null;
-            okLook = okGone = null;
-            popupShapes = null;
-            later(then, 150);
+            log("pop-up: 3 presses after this box already - going on");
+            later(then, 100);
             return;
         }
         later(() -> {
-            // 1) A pop-up the page reports: its OK / Yes / Close ... button.
-            AccessibilityNodeInfo button = popupButton(before);
-            if (button != null) {
-                Rect r = new Rect();
-                button.getBoundsInScreen(r);
-                String what = label(button);
-                log("pop-up: tapping \"" + what + "\" at " + r.centerX() + "," + r.centerY());
-                if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
-                popups++;
-                popupTaps++;
-                popupsSeen = true;
-                clearPopups(clickableKeys(), oldOks, 1, then); // a second pop-up may follow
-                return;
-            }
-            // 2) A pop-up drawn but not reported. Once its OK has been read off a screenshot,
-            //    its look is remembered: later pop-ups are spotted from the pixels alone (fast);
-            //    the words are read (slower) only on the last look, or until an OK is learned.
-            boolean quick = okSpot != null && looksLeft > 1;
-            words.shot(!quick, shot -> {
-                if (!running) return;
-                Rect ok = null;
-                String how = "";
-                if (shot != null && okSpot != null && looksLikeOk(shot)) {
-                    ok = okSpot;
-                    how = " (spotted by its look)";
-                }
-                if (ok == null && shot != null && shot.words != null) {
-                    ok = newOk(shot.words, oldOks);
-                    if (ok != null) {
-                        okSpot = grow(ok);
-                        pageWithPopup = shapes();
-                        okLook = shot.grid(okSpot);
-                        okGone = null;
-                        if (okLook == null) okSpot = null;
-                    }
-                }
-                if (ok != null) {
-                    lastOk = new Rect(ok);
-                    log("pop-up: pressing OK at " + ok.centerX() + "," + ok.centerY() + how);
-                    tap(ok.centerX(), ok.centerY());
-                    popups++;
-                    popupTaps++;
-                    popupsSeen = true;
-                    if (okSpot != null && okGone == null) {
-                        // First time: see how that spot looks with the pop-up gone.
-                        later(() -> words.shot(false, after -> {
-                            if (!running) return;
-                            double[] g = after == null || okSpot == null ? null : after.grid(okSpot);
-                            if (g != null && okLook != null && BinFinder.similarity(g, okLook) < 0.97) {
-                                okGone = g;
-                                learnPopupShapes();
-                                then.run();
-                            } else {
-                                clearPopups(clickableKeys(), oldOks, 1, then); // still there, or another
-                            }
-                        }), 150);
-                    } else {
-                        // Known pop-up: straight on; one left open is found at the next box.
-                        later(then, 120);
-                    }
-                } else if (looksLeft > 1) {
-                    clearPopups(before, oldOks, looksLeft - 1, then);
+            Page.Popup p = Page.popup(service, before);
+            if (p == null) {
+                if (looksLeft > 1) {
+                    clearPopups(before, looksLeft - 1, then);
                 } else {
-                    if (shot == null) log("pop-up: couldn't read the screen (Android 11+ needed) - not checked");
-                    else log("pop-up: no new OK on screen - none to clear");
-                    if (popupTaps == 0) quietBoxes++;
+                    if (popupTaps == 0) {
+                        log("pop-up: none came");
+                        quietBoxes++;
+                    }
                     then.run();
                 }
-            });
-        }, 60);
-    }
-
-    /** What only the pop-up added: on the page with it, not before the tick, not after it went. */
-    private void learnPopupShapes() {
-        if (pageWithPopup == null || pageBefore == null) {
-            log("pop-up: couldn't learn how the tree shows it");
-            return;
-        }
-        Set<String> after = shapes();
-        Set<String> only = new HashSet<>(pageWithPopup);
-        only.removeAll(pageBefore);
-        only.removeAll(after);
-        // A cover counts only if it went with the pop-up (the tick itself didn't add it).
-        boolean cover = coverAdded(pageWithPopup, pageBefore) && !coverAdded(after, pageBefore);
-        coverWorks = cover;
-        pageWithPopup = null;
-        popupShapes = only.isEmpty() ? null : only;
-        treeShows = popupShapes != null || cover;
-        // Remember it for next time too: no screenshot needed from the first box on.
-        Taught.Button b = new Taught.Button();
-        b.spot = new Rect(okSpot);
-        b.look = okLook;
-        b.gone = okGone;
-        b.shapes = only;
-        Taught.put(service, Taught.TICK_POPUP, b);
-        service.getSharedPreferences("taught", android.content.Context.MODE_PRIVATE).edit()
-                .putBoolean("tick_tree_shows", treeShows).apply();
-        if (treeShows) {
-            log("pop-up: the accessibility tree shows it (" + (cover ? "a cover over the page" : only.size()
-                    + " elements") + ") - from now on watched for in the tree, no screenshots");
-        } else {
-            log("pop-up: the accessibility tree shows nothing of it - it can only be found by screenshots");
-        }
-    }
-
-    /** Where the pop-up's OK was, a little bigger (its button), and how it looked. */
-    private Rect okSpot, lastOk;
-    private double[] okLook, okGone;
-
-    private Rect grow(Rect r) {
-        Rect g = new Rect(r);
-        g.inset(-Math.max(dp(6), r.width() / 4), -Math.max(dp(4), r.height() / 3));
-        return g;
-    }
-
-    /** The remembered OK is on screen again: its spot looks like the OK, not like the page. */
-    private boolean looksLikeOk(ScreenWords.Shot shot) {
-        double[] g = shot.grid(okSpot);
-        if (g == null || okLook == null) return false;
-        double like = BinFinder.similarity(g, okLook);
-        if (like < 0.95) return false;
-        return okGone == null || BinFinder.similarity(g, okGone) < like - 0.02;
-    }
-
-    /** Where the screen shows "OK" (or "Okay"), each as screen pixels. */
-    private static List<Rect> okWords(List<ScreenWords.Word> seen) {
-        List<Rect> out = new ArrayList<>();
-        if (seen == null) return out;
-        for (ScreenWords.Word w : seen) {
-            String t = w.text.toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "");
-            if (t.equals("ok") || t.equals("okay")) out.add(w.box);
-        }
-        return out;
-    }
-
-    /** An OK on screen now that wasn't there before the tick (the pop-up's), or null. */
-    private Rect newOk(List<ScreenWords.Word> seen, List<Rect> oldOks) {
-        int near = dp(12);
-        for (Rect r : okWords(seen)) {
-            boolean old = false;
-            for (Rect o : oldOks) {
-                if (Math.abs(o.centerX() - r.centerX()) <= near && Math.abs(o.centerY() - r.centerY()) <= near) {
-                    old = true;
-                    break;
-                }
+                return;
             }
-            if (!old) return r;
-        }
-        return null;
+            popups++;
+            popupTaps++;
+            popupsSeen = true;
+            quietBoxes = 0;
+            AccessibilityNodeInfo gone;
+            if (p.button != null) {
+                Rect r = Page.bounds(p.button);
+                log("pop-up (" + p.how + "): pressing \"" + Page.label(p.button) + "\" at "
+                        + r.centerX() + "," + r.centerY());
+                if (!p.button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
+                gone = p.button;
+            } else {
+                log("pop-up (" + p.how + "): dismissing it");
+                p.dismiss.performAction(AccessibilityNodeInfo.ACTION_DISMISS);
+                gone = p.dismiss;
+            }
+            // Wait for it to go (up to 1.5 s), then look once more: a second pop-up may follow.
+            waitGone(gone, 0, () -> clearPopups(before == null ? null : new Page.Before(service), 3, then));
+        }, 100);
     }
 
-    private int dp(int v) {
-        return Math.round(v * service.getResources().getDisplayMetrics().density);
-    }
-
-    private AccessibilityNodeInfo popupButton(Set<String> before) {
-        AccessibilityNodeInfo best = null;
-        int bestRank = Integer.MAX_VALUE;
-        for (Node n : all()) {
-            AccessibilityNodeInfo node = n.node;
-            if (!node.isVisibleToUser() || !node.isEnabled()) continue;
-            if (!node.isClickable()) continue;
-            Rect r = new Rect();
-            node.getBoundsInScreen(r);
-            if (r.width() <= 0 || r.height() <= 0) continue;
-            if (before.contains(key(node, r))) continue; // it was there before the tick
-            String t = label(node).toLowerCase(Locale.ROOT).replaceAll("[^a-z ]", " ").trim();
-            int rank = Integer.MAX_VALUE;
-            for (int i = 0; i < POPUP_WORDS.length; i++) {
-                if (t.equals(POPUP_WORDS[i]) || t.startsWith(POPUP_WORDS[i] + " ")) {
-                    rank = i;
-                    break;
-                }
+    private void waitGone(AccessibilityNodeInfo n, long waited, Runnable then) {
+        later(() -> {
+            boolean still;
+            try {
+                still = n.refresh() && n.isVisibleToUser();
+            } catch (RuntimeException e) {
+                still = false;
             }
-            if (rank == Integer.MAX_VALUE && n.inDialog) rank = 100; // any button in a dialog
-            if (rank < bestRank) {
-                best = node;
-                bestRank = rank;
+            if (!still || waited >= 1500) {
+                if (still) log("pop-up: its button is still there after 1.5 s");
+                then.run();
+            } else {
+                waitGone(n, waited + 50, then);
             }
-        }
-        return best;
+        }, 50);
     }
 
     // ---- finding boxes and reading the page ----------------------------------------
@@ -553,16 +324,6 @@ final class Ticker {
         }
     }
 
-    private static final class Node {
-        final AccessibilityNodeInfo node;
-        final boolean inDialog;
-
-        Node(AccessibilityNodeInfo node, boolean inDialog) {
-            this.node = node;
-            this.inDialog = inDialog;
-        }
-    }
-
     /** The checkbox as a box on screen with its row number, or null when it is off screen. */
     private Box boxFor(AccessibilityNodeInfo node) {
         Rect box = visibleBox(node);
@@ -570,32 +331,12 @@ final class Ticker {
         Rect s = screen();
         int bottom = s.height() - barHeight("navigation_bar_height");
         if (box.top < barHeight("status_bar_height") || box.bottom > bottom) return null;
-        return new Box(node, box, rowOf(box, all()));
+        return new Box(node, box, rowOf(box, Page.nodes(service)));
     }
 
     private int barHeight(String name) {
         int id = service.getResources().getIdentifier(name, "dimen", "android");
         return id > 0 ? service.getResources().getDimensionPixelSize(id) : dp(24);
-    }
-
-    private static boolean isCheckbox(AccessibilityNodeInfo n) {
-        String cls = n.getClassName() == null ? "" : n.getClassName().toString();
-        if (cls.endsWith("RadioButton") || cls.endsWith("Switch")) return false;
-        String role = "";
-        try {
-            CharSequence r = n.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole");
-            if (r != null) role = r.toString().toLowerCase(Locale.ROOT);
-        } catch (RuntimeException ignored) {
-        }
-        return cls.endsWith("CheckBox") || role.contains("checkbox") || n.isCheckable();
-    }
-
-    private boolean isChecked(AccessibilityNodeInfo n) {
-        try {
-            n.refresh();
-        } catch (RuntimeException ignored) {
-        }
-        return n.isChecked();
     }
 
     /**
@@ -615,14 +356,13 @@ final class Ticker {
     }
 
     /** The number printed on the same line as the box (the row), or "?". */
-    private String rowOf(Rect box, List<Node> nodes) {
+    private String rowOf(Rect box, List<AccessibilityNodeInfo> nodes) {
         String best = "?";
         int bestGap = Integer.MAX_VALUE;
-        for (Node n : nodes) {
-            String t = label(n.node).trim();
+        for (AccessibilityNodeInfo n : nodes) {
+            String t = Page.label(n);
             if (!t.matches("\\(?\\d{1,4}[.)]?")) continue;
-            Rect r = new Rect();
-            n.node.getBoundsInScreen(r);
+            Rect r = Page.bounds(n);
             if (Math.abs(r.centerY() - box.centerY()) > Math.max(box.height(), r.height()) / 2 + 4) continue;
             if (Rect.intersects(r, box)) continue;
             int gap = r.left >= box.right ? r.left - box.right : box.left - r.right;
@@ -634,78 +374,15 @@ final class Ticker {
         return best;
     }
 
-    /** Every node of the page (not our own windows), noting which sit inside a dialog. */
-    private List<Node> all() {
-        List<Node> out = new ArrayList<>();
-        String own = service.getPackageName();
-        List<AccessibilityWindowInfo> windows;
-        try {
-            windows = service.getWindows();
-        } catch (RuntimeException e) {
-            windows = new ArrayList<>();
-        }
-        for (AccessibilityWindowInfo w : windows) {
-            if (w.getType() == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
-            if (w.getType() == AccessibilityWindowInfo.TYPE_SYSTEM) continue; // status bar
-            AccessibilityNodeInfo root = w.getRoot();
-            if (root == null || own.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) continue;
-            List<AccessibilityNodeInfo> stack = new ArrayList<>();
-            List<Boolean> dialog = new ArrayList<>();
-            stack.add(root);
-            dialog.add(false);
-            while (!stack.isEmpty() && out.size() < 6000) {
-                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
-                boolean inDialog = dialog.remove(dialog.size() - 1);
-                if (n == null) continue;
-                String role = "";
-                try {
-                    CharSequence r = n.getExtras().getCharSequence("AccessibilityNodeInfo.chromeRole");
-                    if (r != null) role = r.toString().toLowerCase(Locale.ROOT);
-                } catch (RuntimeException ignored) {
-                }
-                boolean d = inDialog || role.contains("dialog") || role.contains("alertdialog");
-                out.add(new Node(n, d));
-                // Children in page order (the stack pops the last one first).
-                for (int i = n.getChildCount() - 1; i >= 0; i--) {
-                    stack.add(n.getChild(i));
-                    dialog.add(d);
-                }
-            }
-        }
-        return out;
-    }
-
-    private Set<String> clickableKeys() {
-        Set<String> out = new HashSet<>();
-        for (Node n : all()) {
-            if (!n.node.isClickable()) continue;
-            Rect r = new Rect();
-            n.node.getBoundsInScreen(r);
-            out.add(key(n.node, r));
-        }
-        return out;
-    }
-
-    private static String key(AccessibilityNodeInfo n, Rect r) {
-        return label(n) + "@" + r.toShortString();
-    }
-
     private String screenKey() {
         StringBuilder sb = new StringBuilder();
-        for (Node n : all()) {
-            String t = label(n.node);
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String t = Page.label(n);
             if (t.isEmpty()) continue;
-            Rect r = new Rect();
-            n.node.getBoundsInScreen(r);
+            Rect r = Page.bounds(n);
             sb.append(t).append('@').append(r.top / 8).append('|');
         }
         return sb.toString();
-    }
-
-    private static String label(AccessibilityNodeInfo n) {
-        CharSequence t = n.getText();
-        if (t == null || t.length() == 0) t = n.getContentDescription();
-        return t == null ? "" : t.toString().replace('\n', ' ').trim();
     }
 
     // ---- gestures ----------------------------------------------------------------
@@ -717,8 +394,29 @@ final class Ticker {
                 .addStroke(new GestureDescription.StrokeDescription(p, 0, 60)).build(), null, null);
     }
 
-    /** A steady drag (no fling), about half a screen; {@code down}: show what is further down. */
+    /**
+     * Scrolls the page: the page's own scroll action on its biggest scrolling list first;
+     * when none takes it, a steady drag (no fling) of about half a screen.
+     * {@code down}: show what is further down.
+     */
     private void scroll(boolean down) {
+        AccessibilityNodeInfo list = null;
+        long biggest = 0;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (!n.isScrollable() || !n.isVisibleToUser()) continue;
+            Rect r = Page.bounds(n);
+            long area = (long) r.width() * r.height();
+            if (area > biggest) {
+                list = n;
+                biggest = area;
+            }
+        }
+        if (list != null && list.performAction(down ? AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                : AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)) return;
+        drag(down);
+    }
+
+    private void drag(boolean down) {
         Rect s = screen();
         float a = s.height() * 3 / 4f, b = s.height() * 3 / 10f;
         float from = down ? a : b, to = down ? b : a;
@@ -744,6 +442,10 @@ final class Ticker {
     }
 
     // ---- helpers -----------------------------------------------------------------
+
+    private int dp(int v) {
+        return Math.round(v * service.getResources().getDisplayMetrics().density);
+    }
 
     private void later(Runnable r, long ms) {
         int g = gen;

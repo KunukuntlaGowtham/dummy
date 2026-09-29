@@ -86,9 +86,9 @@ final class Booker {
             return;
         }
         AccessibilityNodeInfo field = dropdownField();
-        if (field != null && matchScore(Taught.label(field), plan.option) >= 2) {
-            log("dropdown: already \"" + Taught.label(field) + "\"");
-            done.append("✓ Option: ").append(Taught.label(field)).append('\n');
+        if (field != null && matchScore(Page.label(field), plan.option) >= 2) {
+            log("dropdown: already \"" + Page.label(field) + "\"");
+            done.append("✓ Option: ").append(Page.label(field)).append('\n');
             pickDate(0, 0);
             return;
         }
@@ -107,7 +107,7 @@ final class Booker {
             later(() -> pickOption(tries + 1), 400);
             return;
         }
-        String text = Taught.label(item);
+        String text = Page.label(item);
         log("dropdown: choosing \"" + text + "\"");
         Rect r = bounds(item);
         if (r.height() <= 4) {
@@ -137,15 +137,15 @@ final class Booker {
     private boolean optionChosen(String text) {
         AccessibilityNodeInfo f = dropdownField();
         if (f == null) return false;
-        String now = norm(Taught.label(f)), want = norm(text);
+        String now = norm(Page.label(f)), want = norm(text);
         return !now.isEmpty() && (now.equals(want) || want.startsWith(now) || now.startsWith(want));
     }
 
     /** The dropdown's own box: the page's text field (it shows the chosen option). */
     private AccessibilityNodeInfo dropdownField() {
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
             String cls = String.valueOf(n.getClassName());
-            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
             if ((cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield"))
                     && n.isVisibleToUser()) {
                 return n;
@@ -158,10 +158,10 @@ final class Booker {
     private AccessibilityNodeInfo optionItem() {
         AccessibilityNodeInfo best = null;
         int bestScore = 0;
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
-            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
             if (!role.contains("listitem") && !role.contains("option") && !role.contains("menuitem")) continue;
-            int score = matchScore(Taught.label(n), plan.option);
+            int score = matchScore(Page.label(n), plan.option);
             if (score > bestScore) {
                 best = n;
                 bestScore = score;
@@ -260,22 +260,88 @@ final class Booker {
         });
     }
 
-    /** The calendar's day cells: {day, month, year}, the month from the cell's page id "M/YYYY". */
+    /**
+     * The calendar's day cells: {day, month, year}. The month comes from the cell's page id
+     * ("M/YYYY"); for other calendars from the cell's own words ("15 October 2026", "Oct 15,
+     * 2026", "15/10/2026"), else the bare day numbers with the month from the calendar's
+     * header ("October 2026").
+     */
     private Map<AccessibilityNodeInfo, int[]> dayCells() {
+        return dayCells(service);
+    }
+
+    static Map<AccessibilityNodeInfo, int[]> dayCells(AccessibilityService service) {
         Map<AccessibilityNodeInfo, int[]> out = new HashMap<>();
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+        java.util.List<AccessibilityNodeInfo> nodes = Page.nodes(service);
+        for (AccessibilityNodeInfo n : nodes) {
             String id = n.getViewIdResourceName();
-            String text = Taught.label(n);
+            String text = Page.label(n);
             if (id == null || !text.matches("\\d{1,2}")) continue;
             Matcher m = MONTH_ID.matcher(id);
             if (!m.find()) continue;
             out.put(n, new int[] {Integer.parseInt(text), Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))});
         }
+        if (!out.isEmpty()) return out;
+        for (AccessibilityNodeInfo n : nodes) {
+            CharSequence d = n.getContentDescription();
+            int[] date = fullDate(d == null ? "" : d.toString());
+            if (date == null) date = fullDate(Page.label(n));
+            if (date != null) out.put(n, date);
+        }
+        if (!out.isEmpty()) return out;
+        int[] header = null;
+        for (AccessibilityNodeInfo n : nodes) {
+            header = monthYear(Page.label(n));
+            if (header != null) break;
+        }
+        if (header == null) return out;
+        for (AccessibilityNodeInfo n : nodes) {
+            String text = Page.label(n);
+            if (!text.matches("\\d{1,2}") || !(n.isClickable() || n.getParent() != null && n.getParent().isClickable())) continue;
+            int day = Integer.parseInt(text);
+            if (day >= 1 && day <= 31) out.put(n, new int[] {day, header[0], header[1]});
+        }
         return out;
     }
 
+    private static final String[] MONTHS = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
+            "sep", "oct", "nov", "dec"};
+
+    private static int monthOf(String word) {
+        String w = word.toLowerCase(Locale.ROOT);
+        if (w.length() < 3) return 0;
+        for (int i = 0; i < 12; i++) if (w.startsWith(MONTHS[i])) return i + 1;
+        return 0;
+    }
+
+    /** "15 October 2026", "Thursday, Oct 15, 2026", "15/10/2026" -> {day, month, year}. */
+    static int[] fullDate(String s) {
+        if (s == null || s.isEmpty()) return null;
+        Matcher m = Pattern.compile("(\\d{1,2})\\s+([A-Za-z]{3,})\\.?,?\\s+(\\d{4})").matcher(s);
+        if (m.find() && monthOf(m.group(2)) > 0) {
+            return new int[] {Integer.parseInt(m.group(1)), monthOf(m.group(2)), Integer.parseInt(m.group(3))};
+        }
+        m = Pattern.compile("([A-Za-z]{3,})\\.?\\s+(\\d{1,2}),?\\s+(\\d{4})").matcher(s);
+        if (m.find() && monthOf(m.group(1)) > 0) {
+            return new int[] {Integer.parseInt(m.group(2)), monthOf(m.group(1)), Integer.parseInt(m.group(3))};
+        }
+        m = Pattern.compile("^(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})$").matcher(s.trim());
+        if (m.find()) {
+            int d = Integer.parseInt(m.group(1)), mo = Integer.parseInt(m.group(2));
+            if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) return new int[] {d, mo, Integer.parseInt(m.group(3))};
+        }
+        return null;
+    }
+
+    /** A calendar header, "October 2026" / "Oct 2026" -> {month, year}. */
+    static int[] monthYear(String s) {
+        Matcher m = Pattern.compile("^([A-Za-z]{3,})\\.?,?\\s+(\\d{4})$").matcher(s.trim());
+        if (!m.find() || monthOf(m.group(1)) == 0) return null;
+        return new int[] {monthOf(m.group(1)), Integer.parseInt(m.group(2))};
+    }
+
     /** The month most of the cells belong to (the grid also shows a few days either side). */
-    private static int shownMonth(Map<AccessibilityNodeInfo, int[]> cells) {
+    static int shownMonth(Map<AccessibilityNodeInfo, int[]> cells) {
         Map<Integer, Integer> count = new HashMap<>();
         int best = -1, bestCount = 0;
         for (int[] d : cells.values()) {
@@ -290,9 +356,14 @@ final class Booker {
     }
 
     private AccessibilityNodeInfo arrow(boolean forward) {
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+        return arrow(service, forward);
+    }
+
+    /** The calendar's next (or previous) month arrow, or null. */
+    static AccessibilityNodeInfo arrow(AccessibilityService service, boolean forward) {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
             if (!n.isClickable()) continue;
-            String l = Taught.label(n).toLowerCase(Locale.ROOT);
+            String l = Page.label(n).toLowerCase(Locale.ROOT);
             boolean right = l.contains("right") || l.contains("next") || l.contains("forward") || l.equals("›")
                     || l.equals(">");
             boolean left = l.contains("left") || l.contains("prev") || l.equals("‹") || l.equals("<");
@@ -306,7 +377,7 @@ final class Booker {
         return plan.day + "/" + plan.month + "/" + plan.year;
     }
 
-    private static String monthText(int k) {
+    static String monthText(int k) {
         return (k % 12 + 1) + "/" + (k / 12);
     }
 
@@ -314,9 +385,9 @@ final class Booker {
 
     private void tickBox(int waits) {
         AccessibilityNodeInfo box = null;
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
             String cls = String.valueOf(n.getClassName());
-            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
             if (cls.endsWith("RadioButton") || role.contains("radio") || cls.endsWith("Switch")) continue;
             if (cls.endsWith("CheckBox") || role.contains("checkbox") || n.isCheckable()) {
                 box = n;
@@ -376,9 +447,9 @@ final class Booker {
     private void pickRadio(int waits) {
         AccessibilityNodeInfo best = null;
         int bestScore = -1;
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
             String cls = String.valueOf(n.getClassName());
-            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
             if (!cls.endsWith("RadioButton") && !role.contains("radio")) continue;
             if (role.contains("radiogroup") || !n.isEnabled()) continue;
             int score = plan.radio.isEmpty() ? 0 : matchScore(radioText(n), plan.radio);
@@ -435,9 +506,9 @@ final class Booker {
         }, 200);
     }
 
-    private static boolean isRadio(AccessibilityNodeInfo n) {
+    static boolean isRadio(AccessibilityNodeInfo n) {
         return String.valueOf(n.getClassName()).endsWith("RadioButton")
-                || Taught.role(n).toLowerCase(Locale.ROOT).contains("radio");
+                || Page.role(n).toLowerCase(Locale.ROOT).contains("radio");
     }
 
     /**
@@ -447,8 +518,8 @@ final class Booker {
     private AccessibilityNodeInfo roundButton() {
         AccessibilityNodeInfo first = null;
         int small = dp(34);
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
-            if (!n.isClickable() || !Taught.label(n).isEmpty()) continue;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (!n.isClickable() || !Page.label(n).isEmpty()) continue;
             String cls = String.valueOf(n.getClassName());
             if (!cls.endsWith("Button") || cls.endsWith("ImageButton")) continue;
             Rect r = bounds(n);
@@ -461,8 +532,8 @@ final class Booker {
     }
 
     /** The radio button's own words, or its card's words (up to 3 levels up). */
-    private static String radioText(AccessibilityNodeInfo n) {
-        String t = Taught.label(n);
+    static String radioText(AccessibilityNodeInfo n) {
+        String t = Page.label(n);
         if (!t.isEmpty()) return t;
         AccessibilityNodeInfo p = n.getParent();
         for (int i = 0; p != null && i < 3; i++, p = p.getParent()) {
@@ -475,7 +546,7 @@ final class Booker {
 
     private static void collectText(AccessibilityNodeInfo n, StringBuilder sb, int depth) {
         if (n == null || depth > 4 || sb.length() > 200) return;
-        String l = Taught.label(n);
+        String l = Page.label(n);
         if (!l.isEmpty()) sb.append(l).append(' ');
         for (int i = 0; i < n.getChildCount(); i++) collectText(n.getChild(i), sb, depth + 1);
     }
@@ -484,8 +555,8 @@ final class Booker {
 
     private void pressContinue(int waits) {
         AccessibilityNodeInfo button = null;
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
-            if (n.isClickable() && norm(Taught.label(n)).equals("continue")) button = n;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (n.isClickable() && norm(Page.label(n)).equals("continue")) button = n;
         }
         if (button == null || !button.isEnabled()) {
             if (waits < 15) {
@@ -506,8 +577,8 @@ final class Booker {
             later(() -> {
                 said("after Continue");
                 boolean stillHere = false;
-                for (AccessibilityNodeInfo n : Taught.nodes(service)) {
-                    if (n.isVisibleToUser() && norm(Taught.label(n)).equals("continue")) stillHere = true;
+                for (AccessibilityNodeInfo n : Page.nodes(service)) {
+                    if (n.isVisibleToUser() && norm(Page.label(n)).equals("continue")) stillHere = true;
                 }
                 done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
                 stop("Done");
@@ -522,8 +593,8 @@ final class Booker {
     /** Every text on the page now (not bare numbers, like the calendar's days). */
     private java.util.Set<String> pageTexts() {
         java.util.Set<String> out = new java.util.HashSet<>();
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
-            String t = Taught.label(n);
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String t = Page.label(n);
             if (t.length() < 2 || t.matches("[\\d\\s/:.-]+")) continue;
             out.add(t);
         }
@@ -563,9 +634,9 @@ final class Booker {
             return;
         }
         AccessibilityNodeInfo field = null;
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
             String cls = String.valueOf(n.getClassName());
-            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
             if (cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield")) {
                 field = n;
                 break;
@@ -586,12 +657,12 @@ final class Booker {
         handler.postDelayed(poll[0], 150);
     }
 
-    private static java.util.List<String> optionTexts(AccessibilityService service) {
+    static java.util.List<String> optionTexts(AccessibilityService service) {
         java.util.List<String> out = new java.util.ArrayList<>();
-        for (AccessibilityNodeInfo n : Taught.nodes(service)) {
-            String role = Taught.role(n).toLowerCase(Locale.ROOT);
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
             if (!role.contains("listitem") && !role.contains("option") && !role.contains("menuitem")) continue;
-            String t = Taught.label(n);
+            String t = Page.label(n);
             if (!t.isEmpty() && !out.contains(t)) out.add(t);
         }
         return out;
