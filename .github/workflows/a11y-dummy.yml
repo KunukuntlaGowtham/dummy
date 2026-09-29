@@ -30,7 +30,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # packages: '' avoids the action's default attempt to install the
+      # long-removed legacy "tools" package, which fails the step.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install SDK packages
         run: |
