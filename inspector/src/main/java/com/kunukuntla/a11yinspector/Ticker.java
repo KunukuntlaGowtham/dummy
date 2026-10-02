@@ -64,7 +64,70 @@ final class Ticker {
     void start() {
         begin(false);
         log("Tick: clicking every empty checkbox through accessibility, clearing pop-ups");
-        later(this::next, 100);
+        later(this::scanOnce, 50);
+    }
+
+    // ---- the fast way: scan the page once, then click each box straight away ------------
+
+    /** The empty checkboxes found by the one scan at the start, in page order, and their rows. */
+    private final List<AccessibilityNodeInfo> plan = new ArrayList<>();
+    private final java.util.Map<AccessibilityNodeInfo, String> planRows = new java.util.HashMap<>();
+    /** Boxes the quick click didn't tick: left for the careful way (on screen, label, tap). */
+    private final List<AccessibilityNodeInfo> slow = new ArrayList<>();
+    /** The page as it was at the start, with no pop-up: what a pop-up adds is seen against it. */
+    private Page.Before baseline;
+
+    /**
+     * Reads the page once: every empty checkbox (also those below the screen - a web page
+     * reports them all) with its row number, and the page without a pop-up.
+     */
+    private void scanOnce() {
+        plan.clear();
+        planRows.clear();
+        slow.clear();
+        List<AccessibilityNodeInfo> all = Page.nodes(service);
+        for (AccessibilityNodeInfo n : all) {
+            if (!Page.isCheckbox(n) || n.isChecked() || !n.isEnabled()) continue;
+            plan.add(n);
+            Rect seen = Page.visible(n);
+            planRows.put(n, rowOf(seen == null ? Page.bounds(n) : seen, all));
+        }
+        baseline = new Page.Before(service);
+        List<String> rows = new ArrayList<>();
+        for (AccessibilityNodeInfo n : plan) rows.add(planRows.get(n));
+        log("scanned once: " + plan.size() + " empty checkbox(es)" + (rows.isEmpty() ? "" : ", rows " + String.join(", ", rows))
+                + " - each is clicked where it is, on screen or not");
+        next();
+    }
+
+    /** The next box of the one scan, clicked straight away (no scrolling); false when none is left. */
+    private boolean nextPlanned() {
+        while (!plan.isEmpty()) {
+            AccessibilityNodeInfo n = plan.remove(0);
+            try {
+                if (!n.refresh()) continue; // gone from the page
+            } catch (RuntimeException e) {
+                continue;
+            }
+            if (n.isChecked() || !n.isEnabled()) continue;
+            String row = planRows.get(n);
+            Rect r = Page.bounds(n);
+            Box b = new Box(n, r, row == null ? "?" : row);
+            log("row " + b.row + ": clicking its checkbox" + (n.isVisibleToUser() ? "" : " (below / above the screen)"));
+            n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            whenChecked(n, 450, ok -> {
+                if (ok) {
+                    tried.add(n);
+                    done(b, "ticked ✓ by a click", baseline);
+                } else {
+                    log("row " + b.row + ": the click didn't tick it - tried again the careful way at the end");
+                    slow.add(n);
+                    clearPopups(baseline, 3, this::next);
+                }
+            });
+            return true;
+        }
+        return false;
     }
 
     /** Clears the pop-ups that are up now (a dialog's OK, a new window's button), then stops. */
@@ -120,6 +183,10 @@ final class Ticker {
     // ---- one box after another ------------------------------------------------------
 
     private void next() {
+        popupTaps = 0;
+        if (nextPlanned()) return;
+        // The careful way: boxes the quick click missed, and any the page added since (some
+        // pages only add rows once scrolled to) - brought on screen, then label / tap.
         // A pop-up left open (it came late) is cleared before the next box.
         Page.Popup left = Page.popup(service, null);
         if (left != null && left.button != null && !left.crossOnly && popupTaps < 3) {
