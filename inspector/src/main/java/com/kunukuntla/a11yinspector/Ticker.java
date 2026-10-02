@@ -233,9 +233,12 @@ final class Ticker {
         }, 40);
     }
 
-    /** How many 100 ms looks for a pop-up after a tick: longer once pop-ups have been coming. */
+    /**
+     * How many 100 ms looks for a pop-up after a tick: up to 3 s (a page that saves the tick
+     * first shows its pop-up late); 1 s once no pop-up came for 3 boxes in a row.
+     */
     private int looks() {
-        return popupsSeen ? 15 : quietBoxes >= 3 ? 5 : 10;
+        return popupsSeen ? 30 : quietBoxes >= 3 ? 10 : 30;
     }
 
     private void done(Box b, String how, Page.Before before) {

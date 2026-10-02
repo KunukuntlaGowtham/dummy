@@ -67,7 +67,7 @@ public class MainActivity extends Activity {
                 + "Long-press it for a deep scan: web pages woken, every property of every element "
                 + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
                 + "recording of the app's events. Purple ☑ Tick ticks every checkbox and clears "
-                + "the pop-up after each; orange ✖ Clear clears the pop-ups up now; blue 📅 Book "
+                + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
                 + "picks the dropdown option, the date, the checkbox, the radio and Continue.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);

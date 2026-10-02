@@ -185,6 +185,22 @@ final class Page {
         }
     }
 
+    /**
+     * An OK / Got it / Close / Done ... button on screen now that was not in {@code baseline}:
+     * the button of a pop-up that just came up. Null when there is none.
+     */
+    static AccessibilityNodeInfo newOk(AccessibilityService service, Before baseline) {
+        for (AccessibilityNodeInfo n : nodes(service)) {
+            if (!n.isClickable() || !n.isEnabled() || !n.isVisibleToUser()) continue;
+            Rect r = bounds(n);
+            if (r.width() <= 0 || r.height() <= 0) continue;
+            if (!isAcknowledge(label(n))) continue;
+            if (baseline != null && baseline.clickables.contains(key(n))) continue;
+            return n;
+        }
+        return null;
+    }
+
     /** A pop-up that is up: how it shows, and the button that closes it (or null). */
     static final class Popup {
         String how = "";

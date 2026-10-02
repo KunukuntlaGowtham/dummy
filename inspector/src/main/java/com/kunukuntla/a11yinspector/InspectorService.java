@@ -57,6 +57,13 @@ public class InspectorService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         CharSequence evPkg = event.getPackageName();
+        if (autoClear && evPkg != null && !getPackageName().contentEquals(evPkg)) {
+            int t = event.getEventType();
+            if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                    || t == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+                autoCheckSoon();
+            }
+        }
         if (evPkg != null && !getPackageName().contentEquals(evPkg)) {
             // Which screen of which app is open (for the app details), and the event recorder.
             if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getClassName() != null
@@ -203,7 +210,7 @@ public class InspectorService extends AccessibilityService {
                 clearButton.setText("■\nStop");
                 clearer.clearNow();
             }
-        });
+        }, v -> toggleAutoClear());
         booker = new Booker(this, (summary, log) -> {
             saveReport(log);
             bookButton.setText("📅\nBook");
@@ -217,6 +224,80 @@ public class InspectorService extends AccessibilityService {
                 Booker.options(this, handler, this::askBooking);
             }
         });
+    }
+
+    // ---- Auto-clear: press the OK of every new pop-up the moment it comes up ----------
+
+    private boolean autoClear, autoPending;
+    private Page.Before autoBaseline;
+    private long autoLastPress;
+    private String autoLastKey = "";
+    private int autoSameTries, autoPressed;
+
+    /** Long press on Clear: watch the page and press the OK of each pop-up that comes up. */
+    private void toggleAutoClear() {
+        closeCard();
+        autoClear = !autoClear;
+        if (autoClear) {
+            autoBaseline = new Page.Before(this);
+            autoPressed = 0;
+            autoLastKey = "";
+            clearButton.setText("✖\nAuto");
+            GradientDrawable bg = (GradientDrawable) clearButton.getBackground();
+            bg.setStroke(dp(4), 0xFF7CFC00);
+            Toast.makeText(this, "Auto-clear ON: the OK of every new pop-up is pressed. Long-press again to stop.",
+                    Toast.LENGTH_LONG).show();
+        } else {
+            clearButton.setText("✖\nClear");
+            GradientDrawable bg = (GradientDrawable) clearButton.getBackground();
+            bg.setStroke(dp(2), 0x66FFFFFF);
+            Toast.makeText(this, "Auto-clear OFF - " + autoPressed + " pop-up(s) cleared", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** The page changed: look for a new pop-up shortly (changes come in bursts). */
+    private void autoCheckSoon() {
+        if (autoPending) return;
+        autoPending = true;
+        handler.postDelayed(() -> {
+            autoPending = false;
+            if (!autoClear) return;
+            try {
+                autoCheck();
+            } catch (RuntimeException ignored) {
+            }
+        }, 150);
+    }
+
+    private void autoCheck() {
+        AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
+        if (ok == null) {
+            // No pop-up: this is the page as it is now; a pop-up is what comes on top of it.
+            autoBaseline = new Page.Before(this);
+            autoSameTries = 0;
+            return;
+        }
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - autoLastPress < 700) {
+            autoCheckSoon(); // pressed a moment ago: look again once it has had time to go
+            return;
+        }
+        String key = Page.key(ok);
+        autoSameTries = key.equals(autoLastKey) ? autoSameTries + 1 : 0;
+        autoLastKey = key;
+        if (autoSameTries >= 3) return; // it won't go: leave it, don't keep pressing
+        android.graphics.Rect r = Page.bounds(ok);
+        if (!ok.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            android.graphics.Path p = new android.graphics.Path();
+            p.moveTo(r.centerX(), r.centerY());
+            dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                    .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
+                    .build(), null, null);
+        }
+        autoLastPress = now;
+        if (autoSameTries == 0) autoPressed++;
+        Toast.makeText(this, "Auto-clear: pressed \"" + Page.label(ok) + "\"", Toast.LENGTH_SHORT).show();
+        handler.postDelayed(this::autoCheckSoon, 800);
     }
 
     /** Another run is on: say so instead of starting a second one over it. */
@@ -233,9 +314,14 @@ public class InspectorService extends AccessibilityService {
         }
     }
 
-    /** A round floating button you can drag; a tap runs {@code onTap}. */
-    @SuppressLint("ClickableViewAccessibility")
     private TextView floating(String label, int colour, int yDp, View.OnClickListener onTap) {
+        return floating(label, colour, yDp, onTap, null);
+    }
+
+    /** A round floating button you can drag; a tap runs {@code onTap}, a long press {@code onLong}. */
+    @SuppressLint("ClickableViewAccessibility")
+    private TextView floating(String label, int colour, int yDp, View.OnClickListener onTap,
+                              View.OnClickListener onLong) {
         TextView b = new TextView(this);
         b.setText(label);
         b.setTextColor(Color.WHITE);
@@ -258,7 +344,11 @@ public class InspectorService extends AccessibilityService {
         int slop = ViewConfiguration.get(this).getScaledTouchSlop();
         float[] down = new float[2];
         int[] start = new int[2];
-        boolean[] dragged = {false};
+        boolean[] dragged = {false}, longDone = {false};
+        Runnable longPress = () -> {
+            longDone[0] = true;
+            if (onLong != null) onLong.onClick(b);
+        };
         b.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
@@ -267,10 +357,15 @@ public class InspectorService extends AccessibilityService {
                     start[0] = lp.x;
                     start[1] = lp.y;
                     dragged[0] = false;
+                    longDone[0] = false;
+                    if (onLong != null) handler.postDelayed(longPress, ViewConfiguration.getLongPressTimeout());
                     return true;
                 case MotionEvent.ACTION_MOVE:
                     float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
-                    if (!dragged[0] && Math.hypot(dx, dy) > slop) dragged[0] = true;
+                    if (!dragged[0] && Math.hypot(dx, dy) > slop) {
+                        dragged[0] = true;
+                        handler.removeCallbacks(longPress);
+                    }
                     if (dragged[0]) {
                         lp.x = start[0] + (int) dx;
                         lp.y = start[1] + (int) dy;
@@ -278,7 +373,11 @@ public class InspectorService extends AccessibilityService {
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
-                    if (!dragged[0]) onTap.onClick(v);
+                    handler.removeCallbacks(longPress);
+                    if (!dragged[0] && !longDone[0]) onTap.onClick(v);
+                    return true;
+                case MotionEvent.ACTION_CANCEL:
+                    handler.removeCallbacks(longPress);
                     return true;
                 default:
                     return true;
