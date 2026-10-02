@@ -225,6 +225,11 @@ final class Scanner {
         rep.append(tree);
         if (deep) {
             // The deepest look too: the app's own details and every property of every element.
+            try {
+                rep.append("\n\n").append(PageCode.write(service));
+            } catch (RuntimeException e) {
+                rep.append("\n\nPage code failed: ").append(e).append('\n');
+            }
             rep.append("\n\n").append(RawScan.appInfo(service, app, screenOpen));
             try {
                 rep.append('\n').append(RawScan.rawTree(service));

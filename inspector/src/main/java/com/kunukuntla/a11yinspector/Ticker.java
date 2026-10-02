@@ -90,6 +90,7 @@ final class Ticker {
         popupsSeen = false;
         quietBoxes = 0;
         shots = PurpleFinder.available();
+        tickTime = popDelay = waitUntil = 0;
     }
 
     void stop(String why) {
@@ -240,19 +241,38 @@ final class Ticker {
         }, 40);
     }
 
+    /** When the last box was ticked (0 once its pop-up came), and how late pop-ups come here. */
+    private long tickTime, popDelay, waitUntil;
+
     /**
-     * How many 100 ms looks for a pop-up after a tick: up to 3 s (a page that saves the tick
-     * first shows its pop-up late); 1 s once no pop-up came for 3 boxes in a row.
+     * How long to watch for a pop-up after a tick: once one has come, as long as it took plus
+     * 0.7 s (the page is learned); before that up to 3 s; 0.8 s once none came for 2 boxes.
      */
+    private long waitMs() {
+        if (popDelay > 0) return Math.min(3000, popDelay + 700);
+        return quietBoxes >= 2 ? 800 : 3000;
+    }
+
     private int looks() {
-        return popupsSeen ? 30 : quietBoxes >= 3 ? 10 : 30;
+        return (int) (waitMs() / 100);
     }
 
     private void done(Box b, String how, Page.Before before) {
         ticked++;
         tickedRows.add(b.row);
         log("row " + b.row + ": " + how);
+        tickTime = SystemClock.uptimeMillis();
+        waitUntil = tickTime + waitMs();
         clearPopups(before, looks(), this::next);
+    }
+
+    /** A pop-up came: note how long after the tick, to wait just that long next time. */
+    private void popupCame() {
+        if (tickTime == 0) return;
+        long d = SystemClock.uptimeMillis() - tickTime;
+        tickTime = 0;
+        popDelay = Math.max(popDelay, d);
+        log("pop-up came " + d + " ms after the tick - next boxes watch " + waitMs() + " ms");
     }
 
     // ---- pop-ups ---------------------------------------------------------------
@@ -272,7 +292,7 @@ final class Ticker {
             Page.Popup p = Page.popup(service, before);
             if (p == null) {
                 Runnable lookOn = () -> {
-                    if (looksLeft > 1) {
+                    if (looksLeft > 1 && (tickTime == 0 || SystemClock.uptimeMillis() < waitUntil)) {
                         clearPopups(before, looksLeft - 1, then);
                     } else {
                         if (popupTaps == 0) {
@@ -299,6 +319,7 @@ final class Ticker {
                 lookOn.run();
                 return;
             }
+            popupCame();
             popups++;
             popupTaps++;
             popupsSeen = true;
@@ -324,6 +345,7 @@ final class Ticker {
 
     /** The pop-up's purple button, seen on the screenshot: tapped, then checked that it went. */
     private void pressPurple(Rect r, Runnable then) {
+        popupCame();
         popups++;
         popupTaps++;
         popupsSeen = true;

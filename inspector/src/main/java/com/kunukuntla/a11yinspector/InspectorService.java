@@ -645,11 +645,28 @@ public class InspectorService extends AccessibilityService {
         scanning = false;
         button.setAlpha(1f);
         if (deep) {
-            showCard(summary, new String[] {"Whole page ↓", "Record 15 s"},
-                    new View.OnClickListener[] {v -> wholePage(), v -> record()});
+            showCard(summary, new String[] {"Page code", "Whole page ↓", "Record 15 s"},
+                    new View.OnClickListener[] {v -> pageCode(), v -> wholePage(), v -> record()});
         } else {
             showCard(summary);
         }
+    }
+
+    /** The web page on screen written out as HTML-like code (from what the browser reports). */
+    private void pageCode() {
+        closeCard();
+        String code;
+        try {
+            code = PageCode.write(this);
+        } catch (RuntimeException e) {
+            code = "Page code failed: " + e;
+        }
+        String when = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
+        saveReport("A11y Inspector - page code - " + when + "\n=================================================\n" + code);
+        String[] lines = code.split("\n");
+        StringBuilder head = new StringBuilder();
+        for (int i = 0; i < Math.min(lines.length, 60); i++) head.append(lines[i]).append('\n');
+        showCard(head + (lines.length > 60 ? "… open Full report for all " + lines.length + " lines" : ""));
     }
 
     /** Scrolls the page to the end, screen by screen, listing what each screen brings. */
