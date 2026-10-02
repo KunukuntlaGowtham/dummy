@@ -80,7 +80,8 @@ final class PageCode {
         if (tag.equals("input")) attr(a, "type", inputType(n, role));
         Bundle ex = extras(n);
         String url = ex == null ? null : ex.getString("AccessibilityNodeInfo.targetUrl");
-        if (url != null && !url.isEmpty()) attr(a, tag.equals("img") ? "src" : "href", url);
+        boolean picture = role.equalsIgnoreCase("image") || role.equalsIgnoreCase("img");
+        if (url != null && !url.isEmpty()) attr(a, tag.equals("img") || picture ? "src" : "href", url);
         if (desc != null && desc.length() > 0 && !desc.toString().equals(text)) attr(a, tag.equals("img") ? "alt" : "aria-label", desc.toString());
         String hint = ex == null ? null : ex.getString("AccessibilityNodeInfo.hint");
         if (hint == null && Build.VERSION.SDK_INT >= 26 && n.getHintText() != null) hint = n.getHintText().toString();
