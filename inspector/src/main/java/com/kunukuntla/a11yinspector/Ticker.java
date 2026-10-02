@@ -91,6 +91,8 @@ final class Ticker {
         quietBoxes = 0;
         shots = PurpleFinder.available();
         tickTime = popDelay = waitUntil = 0;
+        String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString("ok_spot", null);
+        okSpot = spot == null ? null : Rect.unflattenFromString(spot);
     }
 
     void stop(String why) {
@@ -291,6 +293,13 @@ final class Ticker {
         later(() -> {
             Page.Popup p = Page.popup(service, before);
             if (p == null) {
+                // The page hides the pop-up's words and buttons but reports its cover over the
+                // page: with the OK's place known, tap it now - no screenshot needed.
+                boolean cover = Page.coverCame(service, before);
+                if (cover && okSpot != null) {
+                    pressSpot(before, then);
+                    return;
+                }
                 Runnable lookOn = () -> {
                     if (looksLeft > 1 && (tickTime == 0 || SystemClock.uptimeMillis() < waitUntil)) {
                         clearPopups(before, looksLeft - 1, then);
@@ -308,7 +317,7 @@ final class Ticker {
                     int g = gen;
                     finder.find(r -> {
                         if (!running || g != gen) return;
-                        if (r != null) pressPurple(r, then);
+                        if (r != null) pressPurple(r, before, then);
                         else lookOn.run();
                     }, why -> {
                         shots = false;
@@ -340,19 +349,55 @@ final class Ticker {
             // A lone ✕ closes one box: done. A dialog may be followed by a second one: look again.
             if (p.crossOnly) waitGone(gone, 0, then);
             else waitGone(gone, 0, () -> clearPopups(before == null ? null : new Page.Before(service), 3, then));
-        }, 100);
+        }, 50);
     }
 
+    /** Where the pop-up's OK is (learned from a screenshot once, kept for next time), or null. */
+    private Rect okSpot;
+
     /** The pop-up's purple button, seen on the screenshot: tapped, then checked that it went. */
-    private void pressPurple(Rect r, Runnable then) {
+    private void pressPurple(Rect r, Page.Before before, Runnable then) {
         popupCame();
         popups++;
         popupTaps++;
         popupsSeen = true;
         quietBoxes = 0;
-        log("pop-up (drawn, not reported): tapping its purple button at " + r.centerX() + "," + r.centerY());
+        okSpot = new Rect(r);
+        service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
+                .putString("ok_spot", r.flattenToString()).apply();
+        log("pop-up (drawn, not reported): tapping its purple button at " + r.centerX() + "," + r.centerY()
+                + " - its place is remembered");
         tap(r.centerX(), r.centerY());
-        later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
+        if (Page.coverCame(service, before)) waitCoverGone(before, 0, then);
+        else later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
+    }
+
+    /** The pop-up's cover is in the tree and its OK's place is known: tap it straight away. */
+    private void pressSpot(Page.Before before, Runnable then) {
+        popupCame();
+        popups++;
+        popupTaps++;
+        popupsSeen = true;
+        quietBoxes = 0;
+        log("pop-up: its cover came - tapping OK at " + okSpot.centerX() + "," + okSpot.centerY());
+        tap(okSpot.centerX(), okSpot.centerY());
+        waitCoverGone(before, 0, then);
+    }
+
+    /** Goes on the moment the pop-up's cover has gone; if it stays, finds the OK again on a screenshot. */
+    private void waitCoverGone(Page.Before before, long waited, Runnable then) {
+        later(() -> {
+            if (!Page.coverCame(service, before)) {
+                log("pop-up: gone (" + waited + " ms)");
+                then.run();
+            } else if (waited >= 1200) {
+                log("pop-up: still up - finding its OK again on a screenshot");
+                okSpot = null;
+                clearPopups(before, 20, then);
+            } else {
+                waitCoverGone(before, waited + 40, then);
+            }
+        }, 40);
     }
 
     private void checkPurpleGone(Rect was, Runnable then) {

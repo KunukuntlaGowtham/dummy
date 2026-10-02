@@ -273,6 +273,24 @@ public class InspectorService extends AccessibilityService {
         // Tick and Clear clear their own pop-ups: never tap the same one twice.
         if (ticker.isRunning() || clearer.isRunning()) return;
         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
+        if (ok == null && Page.coverCame(this, autoBaseline)) {
+            // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
+            String spot = getSharedPreferences("popup", MODE_PRIVATE).getString("ok_spot", null);
+            android.graphics.Rect r = spot == null ? null : android.graphics.Rect.unflattenFromString(spot);
+            long now = android.os.SystemClock.uptimeMillis();
+            if (r != null && now - autoLastPress >= 700) {
+                autoLastPress = now;
+                autoPressed++;
+                android.graphics.Path p = new android.graphics.Path();
+                p.moveTo(r.centerX(), r.centerY());
+                dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
+                        .build(), null, null);
+                Toast.makeText(this, "Auto-clear: tapped the pop-up's OK", Toast.LENGTH_SHORT).show();
+                handler.postDelayed(this::autoCheckSoon, 800);
+                return;
+            }
+        }
         if (ok == null) {
             // No pop-up: this is the page as it is now; a pop-up is what comes on top of it.
             autoBaseline = new Page.Before(this);

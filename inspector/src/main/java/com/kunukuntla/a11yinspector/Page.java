@@ -176,13 +176,44 @@ final class Page {
 
     /** What the page is now, before an action: to see what a pop-up added after it. */
     static final class Before {
-        final Set<String> clickables;
+        final Set<String> clickables = new HashSet<>();
+        final Set<String> covers;
         final Set<Integer> windows;
 
         Before(AccessibilityService service) {
-            clickables = clickableKeys(service);
+            List<AccessibilityNodeInfo> all = nodes(service);
+            for (AccessibilityNodeInfo n : all) if (n.isClickable()) clickables.add(key(n));
+            covers = coverKeys(service, all);
             windows = windowIds(service);
         }
+    }
+
+    /**
+     * Elements that cover most of the page and are empty (no words, no children): the dark
+     * cover a web pop-up puts over the page - also when the pop-up hides its own text and
+     * buttons from accessibility.
+     */
+    static Set<String> coverKeys(AccessibilityService service, List<AccessibilityNodeInfo> all) {
+        Set<String> out = new HashSet<>();
+        android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
+        long big = (long) dm.widthPixels * dm.heightPixels * 6 / 10;
+        java.util.Map<String, Integer> seen = new java.util.HashMap<>();
+        for (AccessibilityNodeInfo n : all) {
+            if (n.getChildCount() != 0 || !label(n).isEmpty() || !n.isVisibleToUser()) continue;
+            Rect r = bounds(n);
+            if ((long) r.width() * r.height() < big) continue;
+            String k = r.toShortString();
+            int times = seen.merge(k, 1, Integer::sum);
+            out.add(times == 1 ? k : k + "#" + times);
+        }
+        return out;
+    }
+
+    /** A cover (see {@link #coverKeys}) that wasn't there in {@code before}: a pop-up is up. */
+    static boolean coverCame(AccessibilityService service, Before before) {
+        if (before == null) return false;
+        for (String k : coverKeys(service, nodes(service))) if (!before.covers.contains(k)) return true;
+        return false;
     }
 
     /**
