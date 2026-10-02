@@ -182,7 +182,7 @@ final class Booker {
     private void pickDate(int moves, int waits) {
         if (plan.day <= 0) {
             log("date: none given - left as it is");
-            tickBox(0);
+            afterDate();
             return;
         }
         Map<AccessibilityNodeInfo, int[]> cells = dayCells();
@@ -347,7 +347,7 @@ final class Booker {
                         .putInt("book_day_way", way).apply();
                 done.append("✓ Date: ").append(dateText()).append('\n');
                 said("after the date");
-                tickBox(0);
+                afterDate();
             } else {
                 log("date: nothing changed on the page");
                 chooseDay(step + 1);
@@ -359,7 +359,7 @@ final class Booker {
         log("date: tried 4 ways, the page showed no change - going on");
         done.append("? Date: ").append(dateText()).append(" (not confirmed - the page showed no change)\n");
         said("after the date");
-        tickBox(0);
+        afterDate();
     }
 
     /**
@@ -481,6 +481,157 @@ final class Booker {
 
     static String monthText(int k) {
         return (k % 12 + 1) + "/" + (k / 12);
+    }
+
+    // ---- after the date: slot (radio), checkbox, Continue - whichever is ready ----------
+
+    private boolean radioDone, boxDone;
+
+    /**
+     * After the date the page loads its slots; the checkbox may come only once a slot is
+     * chosen. So no fixed order and no waiting for one thing: every 80 ms whatever is ready is
+     * done - a slot / radio not chosen yet, the checkbox not ticked - and Continue is pressed
+     * the moment it turns on. Up to 10 s for the page to show what it needs.
+     */
+    private void afterDate() {
+        radioDone = boxDone = false;
+        restStart = SystemClock.uptimeMillis();
+        rest(0);
+    }
+
+    private long restStart;
+
+    private void rest(int polls) {
+        if (!radioDone) {
+            AccessibilityNodeInfo r = findRadio();
+            if (r != null) {
+                radioDone = true;
+                log("slot: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
+                chooseRadio(r, () -> rest(0));
+                return;
+            }
+        }
+        if (!boxDone) {
+            AccessibilityNodeInfo b = findBox();
+            if (b != null) {
+                boxDone = true;
+                if (b.isChecked()) {
+                    log("checkbox: already ticked");
+                    done.append("✓ Checkbox (already ticked)\n");
+                } else {
+                    log("checkbox: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
+                    tickIt(b, () -> rest(0));
+                    return;
+                }
+            }
+        }
+        AccessibilityNodeInfo cont = continueButton();
+        if (cont != null && cont.isEnabled()) {
+            if (!radioDone) log("slot: none on the page");
+            pressContinue(0);
+            return;
+        }
+        if (polls >= 125) { // 10 s
+            stop("✗ Continue stayed off" + (radioDone ? "" : " - no slot / radio found")
+                    + (boxDone ? "" : " - no checkbox found"));
+            return;
+        }
+        later(() -> rest(polls + 1), 80);
+    }
+
+    private AccessibilityNodeInfo continueButton() {
+        AccessibilityNodeInfo button = null;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (n.isClickable() && norm(Page.label(n)).equals("continue")) button = n;
+        }
+        return button;
+    }
+
+    private AccessibilityNodeInfo findBox() {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String cls = String.valueOf(n.getClassName());
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
+            if (cls.endsWith("RadioButton") || role.contains("radio") || cls.endsWith("Switch")) continue;
+            if (cls.endsWith("CheckBox") || role.contains("checkbox") || n.isCheckable()) return n;
+        }
+        return null;
+    }
+
+    /** Ticks the checkbox where it is: a click, else a tap on what you see; then {@code then}. */
+    private void tickIt(AccessibilityNodeInfo b, Runnable then) {
+        log("checkbox: clicking it (where it is)");
+        b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        waitFor(() -> isChecked(b), 600, ok -> {
+            if (ok) {
+                log("checkbox: ticked ✓");
+                done.append("✓ Checkbox ticked\n");
+                then.run();
+                return;
+            }
+            Rect r = visible(b);
+            if (r != null) {
+                log("checkbox: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
+                tap(r.centerX(), r.centerY());
+            }
+            waitFor(() -> isChecked(b), 600, ok2 -> {
+                log("checkbox: " + (ok2 ? "ticked ✓" : "still not ticked ✗"));
+                done.append(ok2 ? "✓ Checkbox ticked\n" : "✗ Checkbox not ticked\n");
+                then.run();
+            });
+        });
+    }
+
+    /** The radio / slot to choose (your words, else the first), or null when none is shown yet. */
+    private AccessibilityNodeInfo findRadio() {
+        AccessibilityNodeInfo best = null;
+        int bestScore = -1;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (!isRadio(n) || Page.role(n).toLowerCase(Locale.ROOT).contains("radiogroup") || !n.isEnabled()) continue;
+            int score = plan.radio.isEmpty() ? 0 : matchScore(radioText(n), plan.radio);
+            if (!plan.radio.isEmpty() && score == 0) continue;
+            if (score > bestScore) {
+                best = n;
+                bestScore = score;
+            }
+        }
+        return best != null ? best : roundButton();
+    }
+
+    /** Chooses the radio / slot where it is (click, else tap), then {@code then}. */
+    private void chooseRadio(AccessibilityNodeInfo r, Runnable then) {
+        String text = radioText(r);
+        if (r.isChecked()) {
+            log("radio: \"" + text + "\" already chosen");
+            done.append("✓ Radio: ").append(text).append('\n');
+            then.run();
+            return;
+        }
+        log("radio: choosing \"" + text + "\"");
+        boolean real = isRadio(r);
+        if (!real || !r.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            Rect v = visible(r);
+            if (v != null) tap(v.centerX(), v.centerY());
+        }
+        if (!real) {
+            // A round button drawn by the page: it reports no state - on once tapped.
+            done.append("✓ Radio (round button)").append(text.isEmpty() ? "" : ": " + text).append('\n');
+            later(then, 150);
+            return;
+        }
+        waitFor(() -> isChecked(r), 600, ok -> {
+            if (!ok) {
+                Rect v = visible(r);
+                if (v != null) {
+                    log("radio: click didn't choose it - tapping it");
+                    tap(v.centerX(), v.centerY());
+                }
+            }
+            waitFor(() -> isChecked(r), ok ? 0 : 600, ok2 -> {
+                log("radio: " + (ok2 ? "chosen ✓" : "not shown as chosen - going on"));
+                done.append(ok2 ? "✓ Radio: " : "? Radio: ").append(text).append('\n');
+                then.run();
+            });
+        });
     }
 
     // ---- 3) the checkbox ------------------------------------------------------------
