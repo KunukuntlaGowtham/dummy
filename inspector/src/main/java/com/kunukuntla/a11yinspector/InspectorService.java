@@ -94,7 +94,9 @@ public class InspectorService extends AccessibilityService {
         if (missedBox != null) missedBox.hide();
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton}) {
+        cancelLinkedTick();
+        getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -229,6 +231,7 @@ public class InspectorService extends AccessibilityService {
             bookButton.setText("📅\nBook");
             goButton.setText("▶\nGo");
             finished(summary);
+            if (linkOn && booker.handedOver()) tickAfterGo();
         });
         // Book: choose what to fill (from the page's own dropdown list) and save it.
         bookButton = floating("📅\nBook", 0xEE1565C0, 358, v -> {
@@ -242,10 +245,109 @@ public class InspectorService extends AccessibilityService {
         // Go: fill the page straight away with the saved choices - no form, no reading first.
         goButton = floating("▶\nGo", 0xEE00897B, 424, v -> {
             closeCard();
-            if (booker.isRunning()) booker.stop("Stopped");
+            if (pendingTick != null) {
+                cancelLinkedTick(); // Stop in the 1 s gap: Tick doesn't start
+                Toast.makeText(this, "Tick after Go cancelled", Toast.LENGTH_SHORT).show();
+            } else if (booker.isRunning()) booker.stop("Stopped");
             else if (!busy()) startSaved();
         });
         showReportButton();
+        showLinkButton();
+        applyShown();
+        getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
+    }
+
+    // ---- 🔗 Link: Go and Tick one after the other -------------------------------------
+
+    /** Go and Tick linked: when Go gets past the slot page, Tick starts 1 s later by itself. */
+    private boolean linkOn;
+    private TextView linkButton;
+    /** Tick, waiting out the 1 s after Go (null when none waits). */
+    private Runnable pendingTick;
+
+    private void showLinkButton() {
+        linkOn = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("link_go_tick", false);
+        linkButton = floating("🔗\nLink", 0xEE6D4C41, 556, v -> {
+            closeCard();
+            linkOn = !linkOn;
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("link_go_tick", linkOn).apply();
+            booker.setHandOver(linkOn); // also for a Go running now
+            if (!linkOn) cancelLinkedTick();
+            showLink();
+            Toast.makeText(this, linkOn
+                    ? "Go → Tick linked: when Go reaches the sevak page, Tick starts 1 s later"
+                    : "Go and Tick not linked - each runs on its own", Toast.LENGTH_SHORT).show();
+        });
+        showLink();
+    }
+
+    private void showLink() {
+        linkButton.setText(linkOn ? "🔗\nOn" : "🔗\nLink");
+        GradientDrawable bg = (GradientDrawable) linkButton.getBackground();
+        bg.setStroke(linkOn ? dp(4) : dp(2), linkOn ? 0xFF7CFC00 : 0x66FFFFFF);
+    }
+
+    /** Go got past the slot page: Tick starts 1 s from now (tap Go in the gap to cancel it). */
+    private void tickAfterGo() {
+        cancelLinkedTick();
+        Toast.makeText(this, "Go done - Tick starts in 1 s", Toast.LENGTH_SHORT).show();
+        goButton.setText("⏱\nCancel");
+        pendingTick = () -> {
+            pendingTick = null;
+            goButton.setText("▶\nGo");
+            if (!linkOn || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+            tickButton.setText("■\nStop");
+            ticker.start();
+        };
+        handler.postDelayed(pendingTick, 1000);
+    }
+
+    private void cancelLinkedTick() {
+        if (pendingTick == null) return;
+        handler.removeCallbacks(pendingTick);
+        pendingTick = null;
+        goButton.setText("▶\nGo");
+    }
+
+    // ---- which round buttons are on the screen (chosen in the app) ---------------------
+
+    /** The round buttons by name, in their order down the screen. */
+    private View[] shownButtons() {
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton};
+    }
+
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "link"};
+
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
+            (sp, key) -> {
+                if (key != null && key.startsWith("show_")) applyShown();
+            };
+
+    /** Shows the chosen buttons (all, until you choose), stacked down the left edge in order. */
+    private void applyShown() {
+        android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
+        View[] views = shownButtons();
+        int k = 0;
+        for (int i = 0; i < views.length; i++) {
+            View v = views[i];
+            if (v == null) continue;
+            boolean on = sp.getBoolean("show_" + SHOWN_KEYS[i], true);
+            v.setVisibility(on ? View.VISIBLE : View.GONE);
+            try {
+                WindowManager.LayoutParams lp = (WindowManager.LayoutParams) v.getLayoutParams();
+                // A hidden button's window lets every touch through to the page under it.
+                if (on) {
+                    lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                    lp.x = dp(12);
+                    lp.y = dp(160 + 66 * k);
+                } else {
+                    lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                }
+                windowManager.updateViewLayout(v, lp);
+            } catch (RuntimeException ignored) {
+            }
+            if (on) k++;
+        }
     }
 
     // ---- the last run's result: kept for the 📋 Report button, not shown by itself ----
@@ -287,6 +389,8 @@ public class InspectorService extends AccessibilityService {
         Toast.makeText(this, "Go: " + (plan.option.isEmpty() ? "" : plan.option) + (d.isEmpty() ? "" : " · " + d)
                 + (plan.radio.isEmpty() ? "" : " · " + plan.radio), Toast.LENGTH_SHORT).show();
         goButton.setText("■\nStop");
+        cancelLinkedTick();
+        booker.setHandOver(linkOn);
         booker.start(plan);
     }
 
@@ -598,7 +702,11 @@ public class InspectorService extends AccessibilityService {
                     return;
                 }
                 bookButton.setText("■\nStop");
-                handler.postDelayed(() -> booker.start(plan), 400); // the keyboard goes down first
+                handler.postDelayed(() -> { // the keyboard goes down first
+                    cancelLinkedTick();
+                    booker.setHandOver(linkOn);
+                    booker.start(plan);
+                }, 400);
             }));
         }
         box.addView(row);

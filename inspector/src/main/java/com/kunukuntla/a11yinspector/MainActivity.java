@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
                 + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
                 + "recording of the app's events. Purple ☑ Tick ticks every checkbox and clears "
                 + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
-                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
+                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));
@@ -88,6 +88,7 @@ public class MainActivity extends Activity {
         buttons.addView(pill("Copy", v -> copy()));
         buttons.addView(pill("Save to Downloads", v -> save()));
         page.addView(buttons);
+        page.addView(shownChooser());
 
         report = new TextView(this);
         report.setTypeface(Typeface.MONOSPACE);
@@ -186,6 +187,58 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "Couldn't save: " + e.getMessage(), Toast.LENGTH_LONG).show();
             return null;
         }
+    }
+
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "📋 Report", "🔗 Link"};
+
+    /**
+     * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
+     * left out only go from the screen - everything they do stays (a linked Tick still runs).
+     */
+    private View shownChooser() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(12), dp(6), dp(12), dp(4));
+        TextView head = new TextView(this);
+        head.setText("On the screen (tap to show / hide):");
+        head.setTextColor(0xFF4A4F4A);
+        head.setTextSize(13);
+        box.addView(head);
+        LinearLayout row = new LinearLayout(this);
+        row.setPadding(0, dp(6), 0, 0);
+        android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
+        for (int i = 0; i < InspectorService.SHOWN_KEYS.length; i++) {
+            String key = "show_" + InspectorService.SHOWN_KEYS[i];
+            String name = SHOWN_NAMES[i];
+            TextView chip = new TextView(this);
+            chip.setTypeface(Typeface.DEFAULT_BOLD);
+            chip.setTextSize(13);
+            chip.setPadding(dp(12), dp(7), dp(12), dp(7));
+            Runnable paint = () -> {
+                boolean on = sp.getBoolean(key, true);
+                chip.setText((on ? "✓ " : "") + name);
+                chip.setTextColor(on ? Color.WHITE : GREEN);
+                GradientDrawable bg = new GradientDrawable();
+                bg.setCornerRadius(dp(18));
+                bg.setColor(on ? GREEN : 0xFFDDEEDD);
+                chip.setBackground(bg);
+                chip.setContentDescription(name + (on ? ", shown" : ", hidden"));
+            };
+            paint.run();
+            chip.setOnClickListener(v -> {
+                sp.edit().putBoolean(key, !sp.getBoolean(key, true)).apply();
+                paint.run();
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            lp.rightMargin = dp(8);
+            row.addView(chip, lp);
+        }
+        HorizontalScrollView wide = new HorizontalScrollView(this);
+        wide.setHorizontalScrollBarEnabled(false);
+        wide.addView(row);
+        box.addView(wide);
+        return box;
     }
 
     private View pill(String label, View.OnClickListener onClick) {
