@@ -143,6 +143,13 @@ final class Page {
         return Integer.MAX_VALUE;
     }
 
+    /** A button that only acknowledges a message: OK, Okay, Got it, Close, Done, Understood, Dismiss. */
+    static boolean isAcknowledge(String label) {
+        String t = label.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]", " ").replaceAll("\\s+", " ").trim();
+        return t.equals("ok") || t.equals("okay") || t.equals("got it") || t.equals("close")
+                || t.equals("done") || t.equals("understood") || t.equals("dismiss") || t.equals("ok got it");
+    }
+
     /**
      * The label names a close icon: "✕", "×", "x", or words like cross / close / cancel /
      * dismiss in it ("purple_cross_icon", "close-button", "Close dialog").
@@ -230,14 +237,18 @@ final class Page {
                 if (cross) rank = 50; // a ✕ / cross / close icon: closes a note, banner or box
                 if (rank == Integer.MAX_VALUE && d == 2) rank = 100; // any button in a dialog
                 if (rank == Integer.MAX_VALUE) continue;
-                // An OK on a page with no dialog is the page's own; a ✕ icon still closes something.
-                if (before == null && d == 0 && !cross) continue;
+                // With no dialog marked (a web page often draws its pop-up as a plain box), only a
+                // button that just acknowledges counts - OK, Got it, Close ... or a ✕ icon - never
+                // one that commits something (Continue, Submit, Yes, Confirm ...).
+                boolean ack = isAcknowledge(l);
+                if (before == null && d == 0 && !cross && !ack) continue;
                 if (rank < bestRank) {
                     best = n;
                     bestRank = rank;
                     bestCross = cross && d == 0 && !newWindow;
                     how = newWindow ? "a new window" : d == 2 ? "a dialog" : d == 1 ? "a pane"
-                            : cross ? "a box with a ✕ close button" : "a new button";
+                            : cross ? "a box with a ✕ close button"
+                            : before == null ? "a box with \"" + l + "\"" : "a new button";
                 }
             }
         }
