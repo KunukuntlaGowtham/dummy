@@ -580,7 +580,7 @@ final class Ticker {
                     }, why -> {
                         shots = false;
                         log("pop-up: no screenshots - " + why);
-                    });
+                    }, before);
                     return;
                 }
                 lookOn.run();
