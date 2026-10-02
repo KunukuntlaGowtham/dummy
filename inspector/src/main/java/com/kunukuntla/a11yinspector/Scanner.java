@@ -60,7 +60,9 @@ final class Scanner {
         Map<String, Tally> kinds = new LinkedHashMap<>();
         for (String k : KINDS) kinds.put(k, new Tally());
         Map<String, Integer> actionCounts = new TreeMap<>();
-        int nodes = 0, controllable = 0, webViews = 0, webNodes = 0;
+        int nodes = 0, controllable = 0, webViews = 0, webNodes = 0, webControls = 0;
+        Origin origin = new Origin();
+        Controls check = new Controls(service);
 
         StringBuilder windows = new StringBuilder();
         String app = "?";
@@ -92,25 +94,28 @@ final class Scanner {
             // Depth-first, keeping each node's depth for the tree.
             List<AccessibilityNodeInfo> stack = new ArrayList<>();
             List<Integer> depths = new ArrayList<>();
-            List<Boolean> inWeb = new ArrayList<>();
+            List<String> engines = new ArrayList<>();
             stack.add(root);
             depths.add(0);
-            inWeb.add(false);
+            engines.add(null);
             while (!stack.isEmpty() && nodes < MAX_NODES) {
                 int last = stack.size() - 1;
                 AccessibilityNodeInfo n = stack.remove(last);
                 int depth = depths.remove(last);
-                boolean web = inWeb.remove(last);
+                String parentEngine = engines.remove(last);
                 if (n == null) continue;
                 nodes++;
                 String cls = n.getClassName() == null ? "" : n.getClassName().toString();
                 boolean isWebView = cls.contains("WebView");
+                String engine = Origin.engineOf(n, cls, parentEngine);
+                boolean web = "web".equals(engine);
                 if (isWebView) webViews++;
-                if (web) webNodes++;
+                if (web && !isWebView) webNodes++;
+                origin.add(n, cls, engine);
                 for (int i = n.getChildCount() - 1; i >= 0; i--) {
                     stack.add(n.getChild(i));
                     depths.add(depth + 1);
-                    inWeb.add(web || isWebView);
+                    engines.add(engine);
                 }
 
                 String role = webRole(n);
@@ -137,20 +142,30 @@ final class Scanner {
                 indent(tree, depth).append(line).append('\n');
                 if (usable || n.isCheckable() || n.isEditable()) {
                     controllable++;
+                    if (web) webControls++;
+                    List<String> problems = check.problems(n, text, actions, r, kind);
                     controls.append(String.format(Locale.ROOT, "%4d. ", controllable))
+                            .append(web ? "[web] " : "[app] ")
                             .append(kind == null ? "Element" : singular(kind)).append(": ")
-                            .append(line).append('\n');
+                            .append(line)
+                            .append(problems.isEmpty() ? "  ✓ ok" : "  ⚠ " + String.join("; ", problems))
+                            .append('\n');
                 }
             }
         }
 
         // ---- the report ----
         String when = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.ROOT).format(new Date());
+        String[] where = origin.report(service, app, screenOpen, nodes);
+        check.finish();
         StringBuilder sum = new StringBuilder();
         sum.append("App: ").append(app).append("  (").append(deep ? "deep scan" : "scan").append(")\n");
+        sum.append(where[0]);
         sum.append(nodes).append(" elements, ").append(controllable).append(" controllable")
+                .append(webControls > 0 ? " (" + webControls + " web, " + (controllable - webControls) + " app)" : "")
                 .append(webViews > 0 ? ", " + webViews + " web view(s) with " + webNodes + " elements" : "")
                 .append('\n');
+        sum.append(check.summary());
         for (Map.Entry<String, Tally> e : kinds.entrySet()) {
             Tally t = e.getValue();
             if (t.found == 0) continue;
@@ -185,6 +200,8 @@ final class Scanner {
         rep.append("A11y Inspector - ").append(when).append('\n');
         rep.append("=================================================\n");
         rep.append(sum).append('\n');
+        rep.append(where[1]).append('\n');
+        rep.append(check.report()).append('\n');
         rep.append(auto.report).append('\n');
         rep.append("WINDOWS\n").append(windows).append('\n');
         rep.append("ACTIONS ACCEPTED (how many elements accept each)\n");
@@ -198,7 +215,8 @@ final class Scanner {
                 .append("  Taps, long presses and swipes anywhere on the screen (gestures)\n")
                 .append(Build.VERSION.SDK_INT >= 30 ? "  Screenshots of the screen\n" : "")
                 .append('\n');
-        rep.append("CONTROLLABLE ELEMENTS (").append(controllable).append(")\n");
+        rep.append("CONTROLLABLE ELEMENTS (").append(controllable).append(") - [web] from the web page, "
+                + "[app] the app's own; ✓ ok or ⚠ what is wrong\n");
         rep.append(controls.length() == 0 ? "  none\n" : controls.toString()).append('\n');
         rep.append("FULL ELEMENT TREE (").append(nodes).append(nodes >= MAX_NODES ? ", cut short" : "")
                 .append(")\n");

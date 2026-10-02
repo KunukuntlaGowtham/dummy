@@ -90,7 +90,7 @@ final class RawScan {
     }
 
     /** What the app is built with, from the names of its parts. */
-    private static String framework(PackageInfo p) {
+    static String framework(PackageInfo p) {
         StringBuilder names = new StringBuilder();
         if (p.activities != null) for (ActivityInfo a : p.activities) names.append(a.name).append(' ');
         if (p.services != null) for (ServiceInfo s : p.services) names.append(s.name).append(' ');

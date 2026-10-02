@@ -57,7 +57,10 @@ public class MainActivity extends Activity {
         head.addView(title);
         TextView how = new TextView(this);
         how.setText("Turn it on in Accessibility, open any app, then use the round buttons - all "
-                + "work through accessibility, no screenshots. Green 🔍 Scan lists everything the app "
+                + "work through accessibility, no screenshots. Green 🔍 Scan says where the page comes "
+                + "from (the app's own screen, a web page in a browser or Custom Tab, or a web page "
+                + "inside the app) and what the app is built with, checks every controllable "
+                + "(web or app, ✓ ok or ⚠ what is wrong), lists everything the app "
                 + "reports on that screen, and what Tick, Clear and Book would find there: pop-ups "
                 + "and the button that clears each, every checkbox with its row, the calendar "
                 + "(month, open and closed days, arrows), the dropdown, radios and Continue. "
