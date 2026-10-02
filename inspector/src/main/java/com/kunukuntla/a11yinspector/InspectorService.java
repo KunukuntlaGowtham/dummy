@@ -270,11 +270,14 @@ public class InspectorService extends AccessibilityService {
     }
 
     private void autoCheck() {
+        // Tick and Clear clear their own pop-ups: never tap the same one twice.
+        if (ticker.isRunning() || clearer.isRunning()) return;
         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
         if (ok == null) {
             // No pop-up: this is the page as it is now; a pop-up is what comes on top of it.
             autoBaseline = new Page.Before(this);
             autoSameTries = 0;
+            autoShot();
             return;
         }
         long now = android.os.SystemClock.uptimeMillis();
@@ -298,6 +301,34 @@ public class InspectorService extends AccessibilityService {
         if (autoSameTries == 0) autoPressed++;
         Toast.makeText(this, "Auto-clear: pressed \"" + Page.label(ok) + "\"", Toast.LENGTH_SHORT).show();
         handler.postDelayed(this::autoCheckSoon, 800);
+    }
+
+    private PurpleFinder autoFinder;
+    private boolean autoShotQueued;
+
+    /**
+     * A pop-up the page draws without reporting it: its purple button found on a screenshot
+     * (at most ~3 a second, only while the page is changing) and tapped.
+     */
+    private void autoShot() {
+        if (!PurpleFinder.available() || autoShotQueued) return;
+        if (autoFinder == null) autoFinder = new PurpleFinder(this);
+        autoShotQueued = true;
+        handler.postDelayed(() -> autoFinder.find(r -> {
+            autoShotQueued = false;
+            if (!autoClear || r == null || ticker.isRunning() || clearer.isRunning()) return;
+            long now = android.os.SystemClock.uptimeMillis();
+            if (now - autoLastPress < 700) return;
+            autoLastPress = now;
+            autoPressed++;
+            android.graphics.Path p = new android.graphics.Path();
+            p.moveTo(r.centerX(), r.centerY());
+            dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                    .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
+                    .build(), null, null);
+            Toast.makeText(this, "Auto-clear: tapped the pop-up's button", Toast.LENGTH_SHORT).show();
+            handler.postDelayed(this::autoCheckSoon, 800);
+        }, why -> autoShotQueued = false), autoFinder.waitMs());
     }
 
     /** Another run is on: say so instead of starting a second one over it. */

@@ -46,9 +46,15 @@ final class Ticker {
     /** Only clearing the pop-ups up now, no ticking. */
     private boolean clearOnly;
 
+    /** Finds a pop-up's purple button on a screenshot, for pop-ups the page doesn't report. */
+    private final PurpleFinder finder;
+    /** Screenshots work here (turned off after the first failure of a run). */
+    private boolean shots;
+
     Ticker(AccessibilityService service, Listener listener) {
         this.service = service;
         this.listener = listener;
+        this.finder = new PurpleFinder(service);
     }
 
     boolean isRunning() {
@@ -83,6 +89,7 @@ final class Ticker {
         showTries = endChecks = 0;
         popupsSeen = false;
         quietBoxes = 0;
+        shots = PurpleFinder.available();
     }
 
     void stop(String why) {
@@ -264,15 +271,32 @@ final class Ticker {
         later(() -> {
             Page.Popup p = Page.popup(service, before);
             if (p == null) {
-                if (looksLeft > 1) {
-                    clearPopups(before, looksLeft - 1, then);
-                } else {
-                    if (popupTaps == 0) {
-                        log("pop-up: none came");
-                        quietBoxes++;
+                Runnable lookOn = () -> {
+                    if (looksLeft > 1) {
+                        clearPopups(before, looksLeft - 1, then);
+                    } else {
+                        if (popupTaps == 0) {
+                            log("pop-up: none came");
+                            quietBoxes++;
+                        }
+                        then.run();
                     }
-                    then.run();
+                };
+                // Not in the tree: the page may draw it without reporting it - look for its purple
+                // button on a screenshot (only for pop-ups; ~3 screenshots a second at most).
+                if (shots && finder.waitMs() == 0) {
+                    int g = gen;
+                    finder.find(r -> {
+                        if (!running || g != gen) return;
+                        if (r != null) pressPurple(r, then);
+                        else lookOn.run();
+                    }, why -> {
+                        shots = false;
+                        log("pop-up: no screenshots - " + why);
+                    });
+                    return;
                 }
+                lookOn.run();
                 return;
             }
             popups++;
@@ -296,6 +320,36 @@ final class Ticker {
             if (p.crossOnly) waitGone(gone, 0, then);
             else waitGone(gone, 0, () -> clearPopups(before == null ? null : new Page.Before(service), 3, then));
         }, 100);
+    }
+
+    /** The pop-up's purple button, seen on the screenshot: tapped, then checked that it went. */
+    private void pressPurple(Rect r, Runnable then) {
+        popups++;
+        popupTaps++;
+        popupsSeen = true;
+        quietBoxes = 0;
+        log("pop-up (drawn, not reported): tapping its purple button at " + r.centerX() + "," + r.centerY());
+        tap(r.centerX(), r.centerY());
+        later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
+    }
+
+    private void checkPurpleGone(Rect was, Runnable then) {
+        int g = gen;
+        finder.find(r -> {
+            if (!running || g != gen) return;
+            boolean still = r != null && Math.abs(r.centerX() - was.centerX()) < was.width() / 2
+                    && Math.abs(r.centerY() - was.centerY()) < was.height();
+            if (still && popupTaps < 3) {
+                log("pop-up: still there - tapping again");
+                popupTaps++;
+                tap(r.centerX(), r.centerY());
+                later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
+            } else {
+                if (still) log("pop-up: still there after 3 taps - going on");
+                then.run();
+            }
+        }, why -> {
+        });
     }
 
     private void waitGone(AccessibilityNodeInfo n, long waited, Runnable then) {

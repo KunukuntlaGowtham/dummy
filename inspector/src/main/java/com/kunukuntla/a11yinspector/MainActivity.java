@@ -57,7 +57,7 @@ public class MainActivity extends Activity {
         head.addView(title);
         TextView how = new TextView(this);
         how.setText("Turn it on in Accessibility, open any app, then use the round buttons - all "
-                + "work through accessibility, no screenshots. Green 🔍 Scan says where the page comes "
+                + "work through accessibility; a screenshot is used only to find a pop-up's purple button when the page doesn't report it. Green 🔍 Scan says where the page comes "
                 + "from (the app's own screen, a web page in a browser or Custom Tab, or a web page "
                 + "inside the app) and what the app is built with, checks every controllable "
                 + "(web or app, ✓ ok or ⚠ what is wrong), lists everything the app "
