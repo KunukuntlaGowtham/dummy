@@ -93,7 +93,7 @@ public class InspectorService extends AccessibilityService {
         if (ticker != null) ticker.stop("Stopped");
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
-        for (View v : new View[] {button, tickButton, clearButton, bookButton}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -177,7 +177,7 @@ public class InspectorService extends AccessibilityService {
 
     // ---- Tick, Clear and Book --------------------------------------------------------
 
-    private TextView tickButton, clearButton, bookButton;
+    private TextView tickButton, clearButton, bookButton, goButton;
     private Ticker ticker, clearer;
     private Booker booker;
     private View ask;
@@ -214,8 +214,10 @@ public class InspectorService extends AccessibilityService {
         booker = new Booker(this, (summary, log) -> {
             saveReport(log);
             bookButton.setText("📅\nBook");
+            goButton.setText("▶\nGo");
             showCard(summary);
         });
+        // Book: choose what to fill (from the page's own dropdown list) and save it.
         bookButton = floating("📅\nBook", 0xEE1565C0, 358, v -> {
             closeCard();
             if (booker.isRunning()) booker.stop("Stopped");
@@ -224,6 +226,31 @@ public class InspectorService extends AccessibilityService {
                 Booker.options(this, handler, this::askBooking);
             }
         });
+        // Go: fill the page straight away with the saved choices - no form, no reading first.
+        goButton = floating("▶\nGo", 0xEE00897B, 424, v -> {
+            closeCard();
+            if (booker.isRunning()) booker.stop("Stopped");
+            else if (!busy()) startSaved();
+        });
+    }
+
+    /** Starts Book with the choices saved in its form; with none saved, opens the form. */
+    private void startSaved() {
+        android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        Booker.Plan plan = new Booker.Plan();
+        plan.option = prefs.getString("book_option", "");
+        plan.radio = prefs.getString("book_radio", "");
+        String d = prefs.getString("book_date", "");
+        if (!d.isEmpty() && !Booker.parseDate(d, plan)) d = "";
+        if (plan.option.isEmpty() && d.isEmpty()) {
+            Toast.makeText(this, "Nothing chosen yet - choose in Book first", Toast.LENGTH_SHORT).show();
+            Booker.options(this, handler, this::askBooking);
+            return;
+        }
+        Toast.makeText(this, "Go: " + (plan.option.isEmpty() ? "" : plan.option) + (d.isEmpty() ? "" : " · " + d)
+                + (plan.radio.isEmpty() ? "" : " · " + plan.radio), Toast.LENGTH_SHORT).show();
+        goButton.setText("■\nStop");
+        booker.start(plan);
     }
 
     // ---- Auto-clear: press the OK of every new pop-up the moment it comes up ----------
@@ -449,7 +476,7 @@ public class InspectorService extends AccessibilityService {
         bg.setCornerRadius(dp(16));
         box.setBackground(bg);
         TextView title = new TextView(this);
-        title.setText("Book: fill this page");
+        title.setText("Book: what to fill");
         title.setTextColor(Color.WHITE);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -515,21 +542,28 @@ public class InspectorService extends AccessibilityService {
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.END);
         row.addView(cardButton("Cancel", v -> closeAsk()));
-        row.addView(cardButton("Start", v -> {
-            Booker.Plan plan = new Booker.Plan();
-            plan.option = option.getText().toString().trim();
-            plan.radio = radio.getText().toString().trim();
-            String d = date.getText().toString().trim();
-            if (!d.isEmpty() && !Booker.parseDate(d, plan)) {
-                Toast.makeText(this, "Type the date like 15/10/2026", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            prefs.edit().putString("book_option", plan.option).putString("book_date", d)
-                    .putString("book_radio", plan.radio).apply();
-            closeAsk();
-            bookButton.setText("■\nStop");
-            handler.postDelayed(() -> booker.start(plan), 400); // the keyboard goes down first
-        }));
+        // Save: kept for ▶ Go. Save & Start: kept, and filled now.
+        for (boolean startNow : new boolean[] {false, true}) {
+            row.addView(cardButton(startNow ? "Save & Start" : "Save", v -> {
+                Booker.Plan plan = new Booker.Plan();
+                plan.option = option.getText().toString().trim();
+                plan.radio = radio.getText().toString().trim();
+                String d = date.getText().toString().trim();
+                if (!d.isEmpty() && !Booker.parseDate(d, plan)) {
+                    Toast.makeText(this, "Type the date like 15/10/2026", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                prefs.edit().putString("book_option", plan.option).putString("book_date", d)
+                        .putString("book_radio", plan.radio).apply();
+                closeAsk();
+                if (!startNow) {
+                    Toast.makeText(this, "Saved - press ▶ Go to fill the page", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                bookButton.setText("■\nStop");
+                handler.postDelayed(() -> booker.start(plan), 400); // the keyboard goes down first
+            }));
+        }
         box.addView(row);
 
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
