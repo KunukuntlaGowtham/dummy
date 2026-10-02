@@ -20,7 +20,8 @@ import java.util.regex.Pattern;
 /**
  * Fills the slot page straight through accessibility: picks the option you typed in the
  * dropdown, picks the date in the calendar (moving month by month with its arrows when the
- * date isn't shown), ticks the checkbox, picks the radio button, and presses Continue.
+ * date isn't shown), ticks the checkbox, picks the radio button, and presses Continue. On
+ * the sevak page that follows it ticks the sevaks until Continue turns on and presses it.
  */
 final class Booker {
 
@@ -59,6 +60,7 @@ final class Booker {
         running = true;
         gen++;
         plan = p;
+        sevakPage = false;
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.setLength(0);
@@ -99,6 +101,11 @@ final class Booker {
                 return;
             }
             if (field == null) {
+                if (isSevakPage()) {
+                    log("dropdown: none - this is the sevak page");
+                    sevaks();
+                    return;
+                }
                 stop("✗ No dropdown on this page");
                 return;
             }
@@ -187,6 +194,11 @@ final class Booker {
         }
         Map<AccessibilityNodeInfo, int[]> cells = dayCells();
         if (cells.isEmpty()) {
+            if (isSevakPage()) {
+                log("date: no calendar - this is the sevak page");
+                sevaks();
+                return;
+            }
             if (waits < 10) {
                 later(() -> pickDate(moves, waits + 1), 200);
                 return;
@@ -385,6 +397,9 @@ final class Booker {
         }
         if (!out.isEmpty()) return out;
         for (AccessibilityNodeInfo n : nodes) {
+            // A day cell can be pressed; a plain date in the text (the sevak page's "Seva Date
+            // 17/11/2026") is not a calendar.
+            if (!pressable(n)) continue;
             CharSequence d = n.getContentDescription();
             int[] date = fullDate(d == null ? "" : d.toString());
             if (date == null) date = fullDate(Page.label(n));
@@ -399,11 +414,15 @@ final class Booker {
         if (header == null) return out;
         for (AccessibilityNodeInfo n : nodes) {
             String text = Page.label(n);
-            if (!text.matches("\\d{1,2}") || !(n.isClickable() || n.getParent() != null && n.getParent().isClickable())) continue;
+            if (!text.matches("\\d{1,2}") || !pressable(n)) continue;
             int day = Integer.parseInt(text);
             if (day >= 1 && day <= 31) out.put(n, new int[] {day, header[0], header[1]});
         }
         return out;
+    }
+
+    private static boolean pressable(AccessibilityNodeInfo n) {
+        return n.isClickable() || n.getParent() != null && n.getParent().isClickable();
     }
 
     private static final String[] MONTHS = {"jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
@@ -548,13 +567,20 @@ final class Booker {
     }
 
     private AccessibilityNodeInfo findBox() {
+        java.util.List<AccessibilityNodeInfo> boxes = findBoxes();
+        return boxes.isEmpty() ? null : boxes.get(0);
+    }
+
+    /** The page's checkboxes, in page order (not radios or switches). */
+    private java.util.List<AccessibilityNodeInfo> findBoxes() {
+        java.util.List<AccessibilityNodeInfo> out = new java.util.ArrayList<>();
         for (AccessibilityNodeInfo n : Page.nodes(service)) {
             String cls = String.valueOf(n.getClassName());
             String role = Page.role(n).toLowerCase(Locale.ROOT);
             if (cls.endsWith("RadioButton") || role.contains("radio") || cls.endsWith("Switch")) continue;
-            if (cls.endsWith("CheckBox") || role.contains("checkbox") || n.isCheckable()) return n;
+            if (cls.endsWith("CheckBox") || role.contains("checkbox") || n.isCheckable()) out.add(n);
         }
-        return null;
+        return out;
     }
 
     /** Ticks the checkbox where it is: a click, else a tap on what you see; then {@code then}. */
@@ -819,20 +845,95 @@ final class Booker {
             return;
         }
         AccessibilityNodeInfo b = button;
-        log("continue: pressing it");
+        boolean onSevaks = sevakPage;
+        log("continue: pressing it" + (onSevaks ? " (sevak page)" : ""));
         pageBefore = pageTexts();
         click(b);
-        done.append("✓ Continue pressed\n");
+        done.append(onSevaks ? "✓ Continue pressed (sevak page)\n" : "✓ Continue pressed\n");
         // Done the moment the page changes (next screen, or its message); 2.5 s at most.
         waitFor(() -> !pageTexts().equals(pageBefore), 2500, changed -> {
             said("after Continue");
-            boolean stillHere = false;
-            for (AccessibilityNodeInfo n : Page.nodes(service)) {
-                if (n.isVisibleToUser() && norm(Page.label(n)).equals("continue")) stillHere = true;
+            if (!onSevaks && changed) {
+                // The next screen may be the sevak page (its own Continue): up to 3 s for it.
+                waitFor(this::isSevakPage, 3000, sevaks -> {
+                    if (sevaks) {
+                        done.append("• Moved to the sevak page\n");
+                        sevaks();
+                    } else {
+                        finish(onSevaks);
+                    }
+                });
+                return;
             }
-            done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
-            stop("Done in " + (SystemClock.uptimeMillis() - start) + " ms");
+            finish(onSevaks);
         });
+    }
+
+    private void finish(boolean onSevaks) {
+        boolean stillHere = onSevaks ? isSevakPage() || !findBoxes().isEmpty() && continueShown()
+                : continueShown();
+        done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
+        stop("Done in " + (SystemClock.uptimeMillis() - start) + " ms");
+    }
+
+    private boolean continueShown() {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (n.isVisibleToUser() && norm(Page.label(n)).equals("continue")) return true;
+        }
+        return false;
+    }
+
+    // ---- 6) the sevak page: tick the sevaks until Continue turns on ------------------------
+
+    private boolean sevakPage;
+    private final java.util.Set<String> triedBoxes = new java.util.HashSet<>();
+
+    /** A page with a checkbox not ticked and Continue off: the sevak list after the slot page. */
+    private boolean isSevakPage() {
+        AccessibilityNodeInfo cont = continueButton();
+        if (cont == null || cont.isEnabled() || !dayCells().isEmpty()) return false;
+        for (AccessibilityNodeInfo b : findBoxes()) if (!b.isChecked()) return true;
+        return false;
+    }
+
+    private void sevaks() {
+        sevakPage = true;
+        triedBoxes.clear();
+        restStart = SystemClock.uptimeMillis();
+        log("sevak page: ticking the sevaks until Continue turns on");
+        sevakTick(0);
+    }
+
+    /**
+     * One row at a time, in page order (its box clicked where it is, else its label tapped -
+     * never the row's edit pencil), until Continue turns on: only as many as the page needs.
+     */
+    private void sevakTick(int polls) {
+        AccessibilityNodeInfo cont = continueButton();
+        if (cont != null && cont.isEnabled()) {
+            log("sevak page: Continue on after " + (SystemClock.uptimeMillis() - restStart) + " ms");
+            pressContinue(0);
+            return;
+        }
+        int row = 0;
+        for (AccessibilityNodeInfo b : findBoxes()) {
+            row++;
+            Rect r = visible(b);
+            String key = r == null ? "row" + row : r.toShortString();
+            if (b.isChecked() || !triedBoxes.add(key)) continue;
+            log("sevak page: row " + row);
+            int n = row;
+            tickIt(b, () -> {
+                if (!isChecked(b)) done.append("✗ Sevak row ").append(n).append(" not ticked\n");
+                sevakTick(0);
+            });
+            return;
+        }
+        if (polls >= 60) { // 5 s after the last row
+            stop("✗ Continue stayed off on the sevak page");
+            return;
+        }
+        later(() -> sevakTick(polls + 1), 80);
     }
 
     // ---- what the page says (its error messages) -------------------------------------------

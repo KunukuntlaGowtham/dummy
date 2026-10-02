@@ -356,7 +356,11 @@ final class Scanner {
     private static String describe(AccessibilityNodeInfo n, String cls, String role, String text,
                                    List<String> actions, Rect r) {
         StringBuilder sb = new StringBuilder();
-        sb.append(cls.isEmpty() ? "?" : cls.substring(cls.lastIndexOf('.') + 1));
+        String type = cls.isEmpty() ? "?" : cls.substring(cls.lastIndexOf('.') + 1);
+        sb.append(type);
+        // Chrome calls a text inside a <div> genericContainer and one inside a <span> or <p>
+        // staticText; both are the same TextView, so they print alike.
+        if (type.equals("TextView") && role.equals("genericContainer")) role = "staticText";
         if (!role.isEmpty()) sb.append(" role=").append(role);
         if (!text.isEmpty()) sb.append(" \"").append(cut(text, 40)).append('"');
         CharSequence state = Build.VERSION.SDK_INT >= 30 ? n.getStateDescription() : null;
