@@ -304,7 +304,10 @@ final class Ticker {
                 // The page hides the pop-up's words and buttons but reports its cover over the
                 // page: with the OK's place known, tap it now - no screenshot needed.
                 boolean cover = Page.coverCame(service, before);
-                if (cover && okSpot != null) {
+                // Pop-ups differ (OK, Proceed, Close ... in other places): with screenshots, the
+                // purple button is found on the screen each time; the remembered place is used
+                // only when no screenshot can be taken.
+                if (cover && okSpot != null && !shots) {
                     pressSpot(before, then);
                     return;
                 }

@@ -15,16 +15,16 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Finds a pop-up's purple button (an "OK" the page draws but doesn't report to accessibility)
+ * Finds a pop-up's purple button (OK, Proceed, Close ... - any purple button the page draws but doesn't report to accessibility)
  * on the accessibility screenshot of the screen - used only for pop-ups; everything else goes
- * through accessibility. A match is a pill-shaped purple button with white text on it that the
+ * through accessibility. A match is a filled purple button (any words on it) that the
  * page does NOT report as a button (so the page's own purple Continue is never taken) and that
  * isn't one of our own floating buttons.
  */
 final class PurpleFinder {
 
     private static final java.util.concurrent.Executor WORKER = java.util.concurrent.Executors.newSingleThreadExecutor();
-    private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
 
     /** Android allows about 3 screenshots a second. */
     private static final long MIN_GAP = 340;
@@ -201,7 +201,9 @@ final class PurpleFinder {
             for (int y = minY; y <= maxY; y++) {
                 for (int x = minX; x <= maxX; x++) if (white[y * gw + x]) whites++;
             }
-            if (whites < 3 || whites > bw * bh * 0.45) continue;
+            // Any purple button counts - with words on it (OK, Proceed ...) or an icon or none;
+            // a box mostly white inside is a frame, not a button.
+            if (whites > bw * bh * 0.45) continue;
             Rect r = new Rect(minX * STEP, minY * STEP, (maxX + 1) * STEP, (maxY + 1) * STEP);
             boolean out = false;
             for (Rect e : exclude) {
