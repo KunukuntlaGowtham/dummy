@@ -120,9 +120,21 @@ final class Ticker {
                     tried.add(n);
                     done(b, "ticked ✓ by a click", baseline);
                 } else {
-                    log("row " + b.row + ": the click didn't tick it - tried again the careful way at the end");
-                    slow.add(n);
-                    clearPopups(baseline, 3, this::next);
+                    // Wait for a pop-up: if one comes, the page has answered (e.g. "Unable to add")
+                    // - the box is left as it is and never tried again; only a click that did
+                    // nothing at all is tried once more the careful way at the end.
+                    clearPopups(baseline, looks(), () -> {
+                        if (popupTaps > 0) {
+                            tried.add(n);
+                            notTicked++;
+                            failedRows.add(b.row);
+                            log("row " + b.row + ": not ticked - the page answered with a pop-up; going on, not tried again ✗");
+                        } else {
+                            log("row " + b.row + ": the click didn't tick it - tried once more the careful way at the end");
+                            slow.add(n);
+                        }
+                        next();
+                    });
                 }
             });
             return true;
@@ -340,7 +352,22 @@ final class Ticker {
         log("row " + b.row + ": " + how);
         tickTime = SystemClock.uptimeMillis();
         waitUntil = tickTime + waitMs();
-        clearPopups(before, looks(), this::next);
+        clearPopups(before, looks(), () -> afterPopup(b));
+    }
+
+    /**
+     * After the pop-up: a page that couldn't take the tick ("Unable to add ...") unticks the
+     * box again - counted as not ticked, and never tried again (no loop): on to the next box.
+     */
+    private void afterPopup(Box b) {
+        if (!Page.isChecked(b.node)) {
+            ticked--;
+            tickedRows.remove(b.row);
+            notTicked++;
+            failedRows.add(b.row);
+            log("row " + b.row + ": the page unticked it again (not added) - going on, not tried again ✗");
+        }
+        next();
     }
 
     /** A pop-up came: note how long after the tick, to wait just that long next time. */

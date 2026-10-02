@@ -17,6 +17,7 @@
     &jitter=400     up to this many ms more, at random
     &popup=always   always | sometimes | never
     &a11y=1         make the pop-up visible to accessibility (a proper dialog), to test that path
+    &fail=30        this % of ticks are refused: "Unable to add" pop-up, and the box is unticked
 -->
 <style>
   :root {
@@ -161,6 +162,7 @@
   const JITTER = Math.max(0, parseInt(q.get('jitter') || '400', 10));
   const POPUP = q.get('popup') || 'always';
   const A11Y = q.get('a11y') === '1';
+  const FAIL = Math.max(0, Math.min(100, parseInt(q.get('fail') || '0', 10)));
 
   const names = ['Asha Rao', 'Ravi Kumar', 'Meena Iyer', 'Arjun Das', 'Lakshmi N', 'Kiran Patel',
                  'Divya S', 'Suresh Babu', 'Anil Verma', 'Priya Menon', 'Vikram Shah', 'Neha Gupta'];
@@ -185,7 +187,8 @@
   const status = document.getElementById('status');
   function report(extra) {
     const avg = closeTimes.length ? Math.round(closeTimes.reduce((a, b) => a + b, 0) / closeTimes.length) : '-';
-    status.textContent = 'Ticked ' + ticked + '/' + ROWS + ' · pop-ups shown ' + shown + ', closed ' + closed +
+    status.textContent = 'Ticked ' + ticked + '/' + ROWS + (FAIL ? ' · refused ' + refusedCount : '') +
+      ' · pop-ups shown ' + shown + ', closed ' + closed +
       ' · average close ' + avg + ' ms' + (extra ? ' · ' + extra : '');
   }
 
@@ -203,12 +206,22 @@
     if (!box.checked) return;
     const show = POPUP === 'always' || (POPUP === 'sometimes' && Math.random() < 0.5);
     if (!show) return;
-    // "Saving" the tick, then the pop-up.
-    setTimeout(() => openPopup(box.dataset.row), DELAY + Math.random() * JITTER);
+    // "Saving" the tick, then the pop-up - refused now and then when ?fail= is set.
+    const refused = Math.random() * 100 < FAIL;
+    setTimeout(() => {
+      if (refused) {
+        box.checked = false;
+        ticked = rowsEl.querySelectorAll('input:checked').length;
+        document.getElementById('continue').disabled = ticked === 0;
+        refusedCount++;
+      }
+      openPopup(box.dataset.row, refused);
+    }, DELAY + Math.random() * JITTER);
   });
+  let refusedCount = 0;
 
-  function openPopup(row) {
-    if (popupUp) { queue.push(row); return; }
+  function openPopup(row, refused) {
+    if (popupUp) { queue.push([row, refused]); return; }
     popupUp = true;
     shown++;
     const t0 = performance.now();
@@ -226,8 +239,9 @@
     } else {
       modal.setAttribute('aria-hidden', 'true');
     }
-    modal.innerHTML = '<h3>Row Added</h3><p>Row ' + row + ' was successfully added to the list</p>' +
-      '<button type="button">OK</button>';
+    modal.innerHTML = refused
+      ? '<h3>Add Row</h3><p>Unable to add row ' + row + '. Please try again later.</p><button type="button">Close</button>'
+      : '<h3>Row Added</h3><p>Row ' + row + ' was successfully added to the list</p><button type="button">OK</button>';
     document.body.appendChild(modal);
     modal.querySelector('button').addEventListener('click', () => {
       const ms = Math.round(performance.now() - t0);
@@ -237,7 +251,7 @@
       modal.remove();
       popupUp = false;
       report('last closed ' + ms + ' ms after it showed');
-      if (queue.length) setTimeout(() => openPopup(queue.shift()), 150);
+      if (queue.length) setTimeout(() => openPopup(...queue.shift()), 150);
     });
     report();
   }
