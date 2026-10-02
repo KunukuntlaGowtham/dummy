@@ -289,6 +289,10 @@ final class Automation {
             else if (n.getLiveRegion() != 0 && !l.isEmpty()) what = "live: " + l;
             else if ((role.contains("alert") || role.contains("status")) && !l.isEmpty()) what = role + ": " + l;
             if (what == null) continue;
+            String id = n.getViewIdResourceName();
+            if (id != null && id.contains("route-announcer")) {
+                what = "page name (Next.js page announcer, hidden - not a pop-up): " + l;
+            }
             count++;
             rep.append("    ").append(cut(what, 120)).append('\n');
             if (count == 1) sum.append("💬 ").append(cut(what, 60)).append('\n');

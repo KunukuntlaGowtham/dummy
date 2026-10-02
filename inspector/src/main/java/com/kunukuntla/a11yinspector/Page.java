@@ -143,6 +143,19 @@ final class Page {
         return Integer.MAX_VALUE;
     }
 
+    /**
+     * The label names a close icon: "✕", "×", "x", or words like cross / close / cancel /
+     * dismiss in it ("purple_cross_icon", "close-button", "Close dialog").
+     */
+    static boolean isCloseIcon(String label) {
+        String t = label.trim().toLowerCase(Locale.ROOT);
+        if (t.equals("x") || t.equals("✕") || t.equals("×") || t.equals("✖")) return true;
+        for (String w : t.split("[^a-z]+")) {
+            if (w.equals("cross") || w.equals("close") || w.equals("cancel") || w.equals("dismiss")) return true;
+        }
+        return false;
+    }
+
     /** A clickable element's key: its words and place (to tell new ones from old ones). */
     static String key(AccessibilityNodeInfo n) {
         return label(n) + "@" + bounds(n).toShortString();
@@ -171,6 +184,8 @@ final class Page {
         AccessibilityNodeInfo button;
         /** When it has no button: a node that accepts "dismiss". */
         AccessibilityNodeInfo dismiss;
+        /** Only a lone ✕ / close icon on the page (no dialog): pressed only when you ask (Clear). */
+        boolean crossOnly;
     }
 
     /**
@@ -181,6 +196,7 @@ final class Page {
         List<AccessibilityWindowInfo> ws = windows(service);
         AccessibilityNodeInfo best = null, dismiss = null;
         int bestRank = Integer.MAX_VALUE;
+        boolean bestCross = false;
         String how = "";
         for (AccessibilityWindowInfo w : ws) {
             boolean newWindow = before != null && !before.windows.contains(w.getId()) && ws.size() > 1;
@@ -208,14 +224,20 @@ final class Page {
                 if (r.width() <= 0 || r.height() <= 0) continue;
                 // After an action only what it brought counts; the page's own buttons never do.
                 if (before != null && before.clickables.contains(key(n))) continue;
-                int rank = popupRank(label(n));
+                String l = label(n);
+                int rank = popupRank(l);
+                boolean cross = rank == Integer.MAX_VALUE && isCloseIcon(l);
+                if (cross) rank = 50; // a ✕ / cross / close icon: closes a note, banner or box
                 if (rank == Integer.MAX_VALUE && d == 2) rank = 100; // any button in a dialog
                 if (rank == Integer.MAX_VALUE) continue;
-                if (before == null && d == 0) continue; // an OK on a page with no dialog is the page's
+                // An OK on a page with no dialog is the page's own; a ✕ icon still closes something.
+                if (before == null && d == 0 && !cross) continue;
                 if (rank < bestRank) {
                     best = n;
                     bestRank = rank;
-                    how = newWindow ? "a new window" : d == 2 ? "a dialog" : d == 1 ? "a pane" : "a new button";
+                    bestCross = cross && d == 0 && !newWindow;
+                    how = newWindow ? "a new window" : d == 2 ? "a dialog" : d == 1 ? "a pane"
+                            : cross ? "a box with a ✕ close button" : "a new button";
                 }
             }
         }
@@ -223,6 +245,7 @@ final class Page {
         Popup p = new Popup();
         p.button = best;
         p.dismiss = dismiss;
+        p.crossOnly = best != null && bestCross;
         p.how = best != null ? how : "a dismissable dialog";
         return p;
     }

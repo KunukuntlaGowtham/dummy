@@ -99,7 +99,8 @@ final class RawScan {
         }
         String n = names.toString().toLowerCase(Locale.ROOT);
         List<String> out = new ArrayList<>();
-        if (n.contains("com.facebook.react") || n.contains("expo.")) out.add("React Native");
+        if (n.contains("com.facebook.react") || n.contains("expo.") || n.contains("reactnative")
+                || n.contains("react_native") || n.contains("com.swmansion") || n.contains("com.proyecto26")) out.add("React Native");
         if (n.contains("io.flutter")) out.add("Flutter");
         if (n.contains("capacitor") || n.contains("cordova")) out.add("Capacitor/Cordova (web app)");
         if (n.contains("xamarin") || n.contains("mono.")) out.add("Xamarin");

@@ -104,7 +104,7 @@ final class Ticker {
     private void next() {
         // A pop-up left open (it came late) is cleared before the next box.
         Page.Popup left = Page.popup(service, null);
-        if (left != null && left.button != null && popupTaps < 3) {
+        if (left != null && left.button != null && !left.crossOnly && popupTaps < 3) {
             clearPopups(null, 1, this::next);
             return;
         }
@@ -289,7 +289,9 @@ final class Ticker {
                 gone = p.dismiss;
             }
             // Wait for it to go (up to 1.5 s), then look once more: a second pop-up may follow.
-            waitGone(gone, 0, () -> clearPopups(before == null ? null : new Page.Before(service), 3, then));
+            // A lone ✕ closes one box: done. A dialog may be followed by a second one: look again.
+            if (p.crossOnly) waitGone(gone, 0, then);
+            else waitGone(gone, 0, () -> clearPopups(before == null ? null : new Page.Before(service), 3, then));
         }, 100);
     }
 

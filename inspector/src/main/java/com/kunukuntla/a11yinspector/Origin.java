@@ -52,7 +52,8 @@ final class Origin {
         String c = cls.toLowerCase(Locale.ROOT);
         if (c.contains("androidcomposeview") || c.contains("compose.ui")) return "compose";
         if (c.contains("flutter")) return "flutter";
-        if (c.startsWith("com.facebook.react") || c.contains("reactroot") || c.contains("reactview")) return "react-native";
+        if (c.startsWith("com.facebook.react") || c.contains("reactroot") || c.contains("reactview")
+                || c.contains("reactviewgroup")) return "react-native";
         if (c.contains("unityplayer") || c.contains("unity3d")) return "unity";
         if (c.contains("xamarin") || c.startsWith("crc64")) return "xamarin";
         return parent == null ? "views" : parent;
@@ -68,6 +69,9 @@ final class Origin {
 
     /** Notes one element and the origin it has. */
     void add(AccessibilityNodeInfo n, String cls, String engine) {
+        // The phone's own status bar and system screens are not the page.
+        CharSequence pkg = n.getPackageName();
+        if (pkg != null && "com.android.systemui".contentEquals(pkg)) return;
         counts.merge(engine, 1, Integer::sum);
         Rect r = Page.bounds(n);
         String id = n.getViewIdResourceName();
@@ -124,6 +128,9 @@ final class Origin {
         boolean twa = screenName.toLowerCase(Locale.ROOT).contains("trustedweb");
         String framework = framework(service, pkg);
         String native_ = nativeEngine();
+        // React Native draws with plain Android view groups: known from the app's own parts.
+        if (native_.equals("Android views") && framework.contains("React Native")) native_ = "React Native";
+        if (native_.equals("Android views") && framework.contains("Flutter")) native_ = "Flutter";
 
         String verdict;
         if (browser != null && customTab) {
