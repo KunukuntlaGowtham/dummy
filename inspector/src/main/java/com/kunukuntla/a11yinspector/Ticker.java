@@ -25,6 +25,10 @@ final class Ticker {
 
     interface Listener {
         void done(String summary, String log);
+
+        /** The rows not added so far this run (in the order they failed); empty when a run starts. */
+        default void notAdded(List<String> rows) {
+        }
     }
 
     private final AccessibilityService service;
@@ -261,6 +265,12 @@ final class Ticker {
         behaviour = clear ? null : new Behaviour(spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : null);
         String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString(spotKey, null);
         okSpot = spot == null ? null : Rect.unflattenFromString(spot);
+        if (!clear) missedChanged(); // a new run: nothing missed yet
+    }
+
+    /** Tells the listener the rows not added so far (for the box in the corner). */
+    private void missedChanged() {
+        listener.notAdded(new ArrayList<>(failedRows));
     }
 
     void stop(String why) {
@@ -343,6 +353,7 @@ final class Ticker {
                 notTicked++;
                 failedRows.add("?");
                 log("a checkbox never came on screen - skipped ✗");
+                missedChanged();
                 stillScreens = 0;
                 showTries = 0;
                 later(this::next, 50);
@@ -415,6 +426,7 @@ final class Ticker {
                         notTicked++;
                         failedRows.add(b.row);
                         log("row " + b.row + ": still empty ✗");
+                        missedChanged();
                         clearPopups(before, looks(), this::next);
                     }
                 });
@@ -446,6 +458,7 @@ final class Ticker {
 
     /** Says on screen, as it happens, that a row wasn't added (Tick goes on to the next). */
     private void notAdded(String row) {
+        missedChanged();
         android.widget.Toast.makeText(service, "Row " + row + " not added - going on to the next",
                 android.widget.Toast.LENGTH_SHORT).show();
     }

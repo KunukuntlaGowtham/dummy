@@ -91,6 +91,7 @@ public class InspectorService extends AccessibilityService {
         closeCard();
         closeAsk();
         if (ticker != null) ticker.stop("Stopped");
+        if (missedBox != null) missedBox.hide();
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
         for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton}) {
@@ -180,13 +181,25 @@ public class InspectorService extends AccessibilityService {
     private TextView tickButton, clearButton, bookButton, goButton;
     private Ticker ticker, clearer;
     private Booker booker;
+    /** The rows not added in the Tick run, renumbered as after removing the earlier ones. */
+    private MissedBox missedBox;
     private View ask;
 
     private void showTickButton() {
-        ticker = new Ticker(this, (summary, log) -> {
-            saveReport(log);
-            tickButton.setText("☑\nTick");
-            finished(summary);
+        missedBox = new MissedBox(this, windowManager);
+        ticker = new Ticker(this, new Ticker.Listener() {
+            @Override
+            public void done(String summary, String log) {
+                saveReport(log);
+                tickButton.setText("☑\nTick");
+                finished(summary);
+            }
+
+            @Override
+            public void notAdded(java.util.List<String> rows) {
+                // Live, in the corner: stays after the run, until the next Tick run starts.
+                missedBox.show(rows);
+            }
         });
         tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> {
             closeCard();
