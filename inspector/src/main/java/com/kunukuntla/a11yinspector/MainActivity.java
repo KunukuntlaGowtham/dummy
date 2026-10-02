@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
                 + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
                 + "recording of the app's events. Purple ☑ Tick ticks every checkbox and clears "
                 + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
-                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue.");
+                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setPadding(0, dp(6), 0, dp(12));

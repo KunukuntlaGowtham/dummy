@@ -93,7 +93,7 @@ public class InspectorService extends AccessibilityService {
         if (ticker != null) ticker.stop("Stopped");
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -186,7 +186,7 @@ public class InspectorService extends AccessibilityService {
         ticker = new Ticker(this, (summary, log) -> {
             saveReport(log);
             tickButton.setText("☑\nTick");
-            showCard(summary);
+            finished(summary);
         });
         tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> {
             closeCard();
@@ -200,7 +200,7 @@ public class InspectorService extends AccessibilityService {
         clearer = new Ticker(this, (summary, log) -> {
             saveReport(log);
             clearButton.setText("✖\nClear");
-            showCard(summary);
+            finished(summary);
         });
         clearButton = floating("✖\nClear", 0xEEE65100, 292, v -> {
             closeCard();
@@ -215,7 +215,7 @@ public class InspectorService extends AccessibilityService {
             saveReport(log);
             bookButton.setText("📅\nBook");
             goButton.setText("▶\nGo");
-            showCard(summary);
+            finished(summary);
         });
         // Book: choose what to fill (from the page's own dropdown list) and save it.
         bookButton = floating("📅\nBook", 0xEE1565C0, 358, v -> {
@@ -231,6 +231,30 @@ public class InspectorService extends AccessibilityService {
             closeCard();
             if (booker.isRunning()) booker.stop("Stopped");
             else if (!busy()) startSaved();
+        });
+        showReportButton();
+    }
+
+    // ---- the last run's result: kept for the 📋 Report button, not shown by itself ----
+
+    private String lastSummary = "";
+    private TextView reportButton;
+
+    /** A run ended: its result is kept (📋 Report shows it), only its first line is said. */
+    private void finished(String summary) {
+        lastSummary = summary;
+        String[] lines = summary.split("\n");
+        String head = lines[0] + (lines.length > 1 ? " · " + lines[1] : "");
+        Toast.makeText(this, head + " - 📋 Report for more", Toast.LENGTH_SHORT).show();
+    }
+
+    private void showReportButton() {
+        reportButton = floating("📋\nReport", 0xEE455A64, 490, v -> {
+            if (card != null) {
+                closeCard();
+                return;
+            }
+            showCard(lastSummary.isEmpty() ? "No run yet - Tick, Clear, Book or Go first." : lastSummary);
         });
     }
 

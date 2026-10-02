@@ -94,7 +94,7 @@ final class Booker {
         }
         AccessibilityNodeInfo item = optionItem();
         if (item == null) {
-            if (tries >= 3) {
+            if (tries >= 16) {
                 stop("✗ Option \"" + plan.option + "\" not found in the dropdown");
                 return;
             }
@@ -102,25 +102,19 @@ final class Booker {
                 stop("✗ No dropdown on this page");
                 return;
             }
-            log("dropdown: opening it");
-            click(field);
-            later(() -> pickOption(tries + 1), 400);
+            if (tries == 0 || tries == 8) {
+                log("dropdown: opening it");
+                click(field);
+            }
+            later(() -> pickOption(tries + 1), 80); // the list shows in a moment: look again soon
             return;
         }
         String text = Page.label(item);
         log("dropdown: choosing \"" + text + "\"");
         Rect r = bounds(item);
-        if (r.height() <= 4) {
-            // Further down the list: bring it into view first.
-            item.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-            later(() -> {
-                click(item);
-                waitFor(() -> optionChosen(text), 2000, ok -> afterOption(ok, text));
-            }, 250);
-        } else {
-            click(item);
-            waitFor(() -> optionChosen(text), 2000, ok -> afterOption(ok, text));
-        }
+        // Clicked where it is - also further down the list, out of view.
+        click(item);
+        waitFor(() -> optionChosen(text), 2000, ok -> afterOption(ok, text));
     }
 
     private void afterOption(boolean ok, String text) {
@@ -210,6 +204,7 @@ final class Booker {
                 pageBefore = pageTexts();
                 // Clear of the page's header first, then one way after another until the page
                 // shows it took the day.
+                dayStart = SystemClock.uptimeMillis();
                 inView(cell, 0, r -> chooseDay(0));
                 return;
             }
@@ -285,7 +280,20 @@ final class Booker {
      * 0) a click on the day's cell, 1) a click on the number inside it, 2) a tap on the cell,
      * 3) a longer press on the number. With no change after all four, goes on, unconfirmed.
      */
-    private void chooseDay(int way) {
+    /** The ways in the order tried: the one that worked last time on this calendar first. */
+    private int[] dayWays() {
+        int saved = service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).getInt("book_day_way", 0);
+        int[] out = new int[4];
+        out[0] = saved;
+        for (int w = 0, i = 1; w < 4; w++) if (w != saved) out[i++] = w;
+        return out;
+    }
+
+    private long dayStart;
+
+    private void chooseDay(int step) {
+        int[] ways = dayWays();
+        int way = step < 4 ? ways[step] : 4;
         AccessibilityNodeInfo cell = dayCell();
         if (cell == null) {
             stop("✗ " + dateText() + " went from the calendar");
@@ -305,7 +313,7 @@ final class Booker {
                 break;
             case 1:
                 if (number == cell) {
-                    chooseDay(2);
+                    chooseDay(step + 1);
                     return;
                 }
                 log("date: clicking the number inside the day");
@@ -313,7 +321,7 @@ final class Booker {
                 break;
             case 2:
                 if (r == null) {
-                    chooseDay(3);
+                    chooseDay(step + 1);
                     return;
                 }
                 log("date: tapping the day at " + r.centerX() + "," + r.centerY());
@@ -322,7 +330,7 @@ final class Booker {
             case 3:
                 Rect t = nr != null ? nr : r;
                 if (t == null) {
-                    dayUnconfirmed();
+                    chooseDay(step + 1);
                     return;
                 }
                 log("date: pressing the number at " + t.centerX() + "," + t.centerY() + " a little longer");
@@ -334,15 +342,15 @@ final class Booker {
         }
         waitFor(() -> !pageState().equals(before), 1500, changed -> {
             if (changed) {
-                log("date: the page took it ✓ (way " + (way + 1) + ")");
+                log("date: the page took it ✓ (way " + (way + 1) + ", " + (SystemClock.uptimeMillis() - dayStart) + " ms) - tried first next time");
+                service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).edit()
+                        .putInt("book_day_way", way).apply();
                 done.append("✓ Date: ").append(dateText()).append('\n');
-                later(() -> {
-                    said("after the date");
-                    tickBox(0);
-                }, 400);
+                said("after the date");
+                tickBox(0);
             } else {
                 log("date: nothing changed on the page");
-                chooseDay(way + 1);
+                chooseDay(step + 1);
             }
         });
     }
@@ -489,8 +497,8 @@ final class Booker {
             }
         }
         if (box == null) {
-            if (waits < 40) { // the slots load after the date: up to 8 s
-                later(() -> tickBox(waits + 1), 200);
+            if (waits < 100) { // the slots load after the date: up to 8 s, looked for often
+                later(() -> tickBox(waits + 1), 80);
                 return;
             }
             log("checkbox: none on the page - skipped");
@@ -504,9 +512,8 @@ final class Booker {
             return;
         }
         AccessibilityNodeInfo b = box;
-        b.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         later(() -> {
-            log("checkbox: clicking it");
+            log("checkbox: clicking it (where it is)");
             b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             waitFor(() -> isChecked(b), 800, ok -> {
                 if (!ok) {
@@ -527,7 +534,7 @@ final class Booker {
                 }
                 ticked();
             });
-        }, 200);
+        }, 0);
     }
 
     private void ticked() {
@@ -555,8 +562,9 @@ final class Booker {
         }
         if (best == null) best = roundButton();
         if (best == null) {
-            if (waits < 10) {
-                later(() -> pickRadio(waits + 1), 200);
+            // None asked for: a quick look (pages without radios aren't held up); asked for: up to 2 s.
+            if (waits < (plan.radio.isEmpty() ? 2 : 20)) {
+                later(() -> pickRadio(waits + 1), plan.radio.isEmpty() ? 80 : 100);
                 return;
             }
             log("radio: " + (plan.radio.isEmpty() ? "none on the page" : "no \"" + plan.radio + "\"") + " - skipped");
@@ -578,11 +586,10 @@ final class Booker {
                         + (text.isEmpty() ? "" : " (\"" + text + "\")"));
                 tap(v.centerX(), v.centerY());
                 done.append("✓ Radio (round button)").append(text.isEmpty() ? "" : ": " + text).append('\n');
-                later(() -> pressContinue(0), 400);
+                later(() -> pressContinue(0), 150);
             });
             return;
         }
-        r.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         later(() -> {
             log("radio: choosing \"" + text + "\"");
             r.performAction(AccessibilityNodeInfo.ACTION_CLICK);
@@ -597,7 +604,7 @@ final class Booker {
                     pressContinue(0);
                 });
             });
-        }, 200);
+        }, 0);
     }
 
     static boolean isRadio(AccessibilityNodeInfo n) {
@@ -653,31 +660,28 @@ final class Booker {
             if (n.isClickable() && norm(Page.label(n)).equals("continue")) button = n;
         }
         if (button == null || !button.isEnabled()) {
-            if (waits < 15) {
-                later(() -> pressContinue(waits + 1), 200);
+            if (waits < 40) {
+                later(() -> pressContinue(waits + 1), 80);
                 return;
             }
             stop(button == null ? "✗ No Continue button" : "✗ Continue stayed off (something still missing?)");
             return;
         }
         AccessibilityNodeInfo b = button;
-        b.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-        later(() -> {
-            log("continue: pressing it");
-            pageBefore = pageTexts();
-            click(b);
-            done.append("✓ Continue pressed\n");
-            // Wait for the next screen, or for the page's message saying what is wrong.
-            later(() -> {
-                said("after Continue");
-                boolean stillHere = false;
-                for (AccessibilityNodeInfo n : Page.nodes(service)) {
-                    if (n.isVisibleToUser() && norm(Page.label(n)).equals("continue")) stillHere = true;
-                }
-                done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
-                stop("Done");
-            }, 2500);
-        }, 200);
+        log("continue: pressing it");
+        pageBefore = pageTexts();
+        click(b);
+        done.append("✓ Continue pressed\n");
+        // Done the moment the page changes (next screen, or its message); 2.5 s at most.
+        waitFor(() -> !pageTexts().equals(pageBefore), 2500, changed -> {
+            said("after Continue");
+            boolean stillHere = false;
+            for (AccessibilityNodeInfo n : Page.nodes(service)) {
+                if (n.isVisibleToUser() && norm(Page.label(n)).equals("continue")) stillHere = true;
+            }
+            done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
+            stop("Done in " + (SystemClock.uptimeMillis() - start) + " ms");
+        });
     }
 
     // ---- what the page says (its error messages) -------------------------------------------
