@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Checkbox Pop-up Test</title>
+<!--
+  A test page for the A11y Inspector's Tick: built like the slot page it was made for.
+  - Each row's checkbox is a hidden (0-wide) <input> inside a <label> that draws the box.
+  - Ticking one "saves" for a moment, then shows a pop-up with a purple OK. Like the real page,
+    the pop-up's text and OK are hidden from accessibility (aria-hidden); only an empty cover
+    over the page is reported.
+  - Continue turns on once a box is ticked.
+  Settings in the address (all optional):
+    ?rows=10        how many rows (1-60)
+    &delay=700      ms from the tick to the pop-up
+    &jitter=400     up to this many ms more, at random
+    &popup=always   always | sometimes | never
+    &a11y=1         make the pop-up visible to accessibility (a proper dialog), to test that path
+-->
+<style>
+  :root {
+    --purple: #673293;
+    --purple-dark: #4f2472;
+    --ink: #22313f;
+    --muted: #6b7280;
+    --line: #e5e1ea;
+    --bg: #f6f3f9;
+    --card: #ffffff;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); }
+  body {
+    font-family: Roboto, "Segoe UI", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 15px;
+    min-height: 100vh;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 12px;
+    background: var(--purple); color: #fff;
+    padding: 14px 16px;
+  }
+  header button {
+    background: none; border: 0; padding: 4px; cursor: pointer; display: flex;
+  }
+  header h1 { font-size: 19px; font-weight: 500; }
+  main { padding: 16px 16px 120px; max-width: 640px; margin: 0 auto; }
+  .title { font-size: 24px; font-weight: 600; margin: 4px 0 14px; }
+  .note {
+    display: flex; align-items: center; gap: 12px;
+    background: #fff4f4; border: 1px solid #f3c9c9; border-radius: 12px;
+    padding: 12px 14px; margin-bottom: 16px;
+  }
+  .note strong { flex: 1; color: #b42318; }
+  .note button { background: none; border: 0; cursor: pointer; display: flex; }
+  .card {
+    background: var(--card); border-radius: 14px; padding: 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 16px;
+  }
+  .card h2 { font-size: 17px; display: flex; justify-content: space-between; align-items: center; }
+  .field { margin-top: 12px; }
+  .field .k { color: var(--muted); font-size: 13px; }
+  .field .v { font-size: 16px; font-weight: 500; margin-top: 2px; }
+  .row {
+    display: grid; grid-template-columns: 44px 32px 1fr 36px; align-items: center; gap: 8px;
+    padding: 12px 0; border-top: 1px solid var(--line);
+  }
+  .row:first-of-type { border-top: 0; }
+  /* The box you see is the label; the real checkbox inside it is 0 wide (like the real page). */
+  .tick {
+    position: relative; width: 26px; height: 26px; border: 2px solid var(--purple);
+    border-radius: 6px; display: inline-block; cursor: pointer;
+  }
+  .tick input { position: absolute; width: 0; height: 26px; opacity: 0; margin: 0; }
+  .tick input:checked + span {
+    position: absolute; inset: 0; background: var(--purple);
+    border-radius: 3px;
+  }
+  .tick input:checked + span::after {
+    content: ""; position: absolute; left: 7px; top: 2px; width: 7px; height: 13px;
+    border: solid #fff; border-width: 0 3px 3px 0; transform: rotate(45deg);
+  }
+  .num { font-weight: 600; text-align: center; }
+  .who .n { font-weight: 500; }
+  .who .d { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .edit { width: 32px; height: 32px; border-radius: 50%; cursor: pointer; display: flex;
+          align-items: center; justify-content: center; color: var(--purple); }
+  .actions {
+    position: fixed; left: 0; right: 0; bottom: 0; background: #fff;
+    display: flex; gap: 12px; padding: 12px 16px; box-shadow: 0 -2px 8px rgba(0,0,0,.08);
+  }
+  .actions button {
+    flex: 1; height: 50px; border-radius: 25px; font-size: 17px; font-weight: 600; cursor: pointer;
+  }
+  .back { background: #fff; color: var(--purple); border: 2px solid var(--purple); }
+  .continue { background: var(--purple); color: #fff; border: 0; }
+  .continue:disabled { background: #c9bcd6; cursor: default; }
+  .status {
+    font-size: 13px; color: var(--muted); background: #fff; border-radius: 10px;
+    padding: 10px 12px; margin-top: 8px; line-height: 1.5;
+  }
+  /* The pop-up: an empty cover over the page (reported), and the box (hidden from accessibility). */
+  .cover { position: fixed; inset: 0; background: rgba(40, 30, 50, .45); z-index: 20; }
+  .modal {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 21;
+    width: min(88vw, 480px); background: #fff; border-radius: 22px; padding: 26px 22px 24px;
+    text-align: center;
+  }
+  .modal h3 { font-size: 20px; margin-bottom: 14px; }
+  .modal p { font-size: 17px; line-height: 1.45; margin-bottom: 22px; }
+  .modal button {
+    background: var(--purple); color: #fff; border: 0; border-radius: 30px;
+    width: 46%; height: 56px; font-size: 18px; font-weight: 600; cursor: pointer;
+  }
+  .modal button:active { background: var(--purple-dark); }
+</style>
+</head>
+<body>
+<div id="__next">
+  <div>
+    <header>
+      <button id="back-arrow" aria-label="back_arrow" onclick="history.back()">
+        <svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" stroke="#fff" stroke-width="2.5" fill="none" stroke-linecap="round"/></svg>
+      </button>
+      <h1>Checkbox Test</h1>
+    </header>
+    <main>
+      <div class="title">Checkbox Pop-up Test</div>
+      <div class="note" id="note">
+        <svg width="28" height="28" viewBox="0 0 24 24" role="img" aria-label="Important note icon"><circle cx="12" cy="12" r="10" fill="#d92d20"/><path d="M12 7v6M12 16.5v.5" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg>
+        <strong>Important Note</strong>
+        <button aria-label="purple_cross_icon" onclick="document.getElementById('note').remove()">
+          <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="#673293" stroke-width="2.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+
+      <section class="card">
+        <h2>Test Details</h2>
+        <div class="field"><div class="k">Type</div><div class="v">Test run - many checkboxes</div></div>
+        <div class="field"><div class="k">Date</div><div class="v" id="today"></div></div>
+        <div class="field"><div class="k">Rows</div><div class="v" id="rowcount"></div></div>
+      </section>
+
+      <section class="card" id="rows"></section>
+
+      <div class="status" id="status">Tick the boxes. Each tick shows a pop-up with a purple OK.</div>
+    </main>
+    <div class="actions">
+      <button class="back" onclick="history.back()">Back</button>
+      <button class="continue" id="continue" disabled onclick="cont()">Continue</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const q = new URLSearchParams(location.search);
+  const ROWS = Math.max(1, Math.min(60, parseInt(q.get('rows') || '10', 10)));
+  const DELAY = Math.max(0, parseInt(q.get('delay') || '700', 10));
+  const JITTER = Math.max(0, parseInt(q.get('jitter') || '400', 10));
+  const POPUP = q.get('popup') || 'always';
+  const A11Y = q.get('a11y') === '1';
+
+  const names = ['Asha Rao', 'Ravi Kumar', 'Meena Iyer', 'Arjun Das', 'Lakshmi N', 'Kiran Patel',
+                 'Divya S', 'Suresh Babu', 'Anil Verma', 'Priya Menon', 'Vikram Shah', 'Neha Gupta'];
+  document.getElementById('today').textContent = new Date().toLocaleDateString('en-GB');
+  document.getElementById('rowcount').textContent = ROWS;
+
+  const rowsEl = document.getElementById('rows');
+  for (let i = 1; i <= ROWS; i++) {
+    const r = document.createElement('div');
+    r.className = 'row';
+    r.innerHTML =
+      '<label class="tick"><input type="checkbox" data-row="' + i + '"><span></span></label>' +
+      '<div class="num">' + i + '</div>' +
+      '<div class="who"><div class="n">' + names[(i - 1) % names.length] + '</div>' +
+      '<div class="d">Age ' + (20 + (i * 7) % 40) + ' · ID XXXX' + (1000 + i * 37) + '</div></div>' +
+      '<div class="edit" onclick="alert(\'Edit row ' + i + '\')">✎</div>';
+    rowsEl.appendChild(r);
+  }
+
+  // ---- measuring: how fast each pop-up is closed ----
+  let ticked = 0, shown = 0, closed = 0, closeTimes = [];
+  const status = document.getElementById('status');
+  function report(extra) {
+    const avg = closeTimes.length ? Math.round(closeTimes.reduce((a, b) => a + b, 0) / closeTimes.length) : '-';
+    status.textContent = 'Ticked ' + ticked + '/' + ROWS + ' · pop-ups shown ' + shown + ', closed ' + closed +
+      ' · average close ' + avg + ' ms' + (extra ? ' · ' + extra : '');
+  }
+
+  const cont = () => alert('Continue pressed with ' + ticked + ' ticked');
+  window.cont = cont;
+
+  let popupUp = false;
+  const queue = [];
+  rowsEl.addEventListener('change', e => {
+    const box = e.target;
+    if (box.type !== 'checkbox') return;
+    ticked = rowsEl.querySelectorAll('input:checked').length;
+    document.getElementById('continue').disabled = ticked === 0;
+    report();
+    if (!box.checked) return;
+    const show = POPUP === 'always' || (POPUP === 'sometimes' && Math.random() < 0.5);
+    if (!show) return;
+    // "Saving" the tick, then the pop-up.
+    setTimeout(() => openPopup(box.dataset.row), DELAY + Math.random() * JITTER);
+  });
+
+  function openPopup(row) {
+    if (popupUp) { queue.push(row); return; }
+    popupUp = true;
+    shown++;
+    const t0 = performance.now();
+    // The cover goes inside the page (reported: an empty element over the whole page).
+    const cover = document.createElement('div');
+    cover.className = 'cover';
+    cover.tabIndex = -1;
+    document.getElementById('__next').appendChild(cover);
+    // The box goes outside it; like the real page, hidden from accessibility unless ?a11y=1.
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    if (A11Y) {
+      modal.setAttribute('role', 'dialog');
+      modal.setAttribute('aria-label', 'Row added');
+    } else {
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    modal.innerHTML = '<h3>Row Added</h3><p>Row ' + row + ' was successfully added to the list</p>' +
+      '<button type="button">OK</button>';
+    document.body.appendChild(modal);
+    modal.querySelector('button').addEventListener('click', () => {
+      const ms = Math.round(performance.now() - t0);
+      closeTimes.push(ms);
+      closed++;
+      cover.remove();
+      modal.remove();
+      popupUp = false;
+      report('last closed ' + ms + ' ms after it showed');
+      if (queue.length) setTimeout(() => openPopup(queue.shift()), 150);
+    });
+    report();
+  }
+  report();
+</script>
+</body>
+</html>
