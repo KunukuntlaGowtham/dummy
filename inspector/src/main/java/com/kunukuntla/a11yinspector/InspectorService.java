@@ -275,7 +275,8 @@ public class InspectorService extends AccessibilityService {
         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
         if (ok == null && Page.coverCame(this, autoBaseline)) {
             // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
-            String spot = getSharedPreferences("popup", MODE_PRIVATE).getString("ok_spot", null);
+            android.content.SharedPreferences sp = getSharedPreferences("popup", MODE_PRIVATE);
+            String spot = sp.getString("ok_spot_" + appInFront(), sp.getString("ok_spot", null));
             android.graphics.Rect r = spot == null ? null : android.graphics.Rect.unflattenFromString(spot);
             long now = android.os.SystemClock.uptimeMillis();
             if (r != null && now - autoLastPress >= 700) {

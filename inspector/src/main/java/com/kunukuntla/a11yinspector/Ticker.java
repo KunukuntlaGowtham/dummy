@@ -91,7 +91,15 @@ final class Ticker {
         quietBoxes = 0;
         shots = PurpleFinder.available();
         tickTime = popDelay = waitUntil = 0;
-        String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString("ok_spot", null);
+        spotKey = "ok_spot";
+        for (android.view.accessibility.AccessibilityWindowInfo w : Page.windows(service)) {
+            AccessibilityNodeInfo root = w.getRoot();
+            if (root != null && root.getPackageName() != null) {
+                spotKey = "ok_spot_" + root.getPackageName(); // each app's pop-up sits elsewhere
+                break;
+            }
+        }
+        String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString(spotKey, null);
         okSpot = spot == null ? null : Rect.unflattenFromString(spot);
     }
 
@@ -313,7 +321,12 @@ final class Ticker {
                 };
                 // Not in the tree: the page may draw it without reporting it - look for its purple
                 // button on a screenshot (only for pop-ups; ~3 screenshots a second at most).
-                if (shots && finder.waitMs() == 0) {
+                // With the cover in the tree a screenshot is needed only once it has come; pages
+                // that report no cover get one every second at most (screenshots slow things down).
+                long now = SystemClock.uptimeMillis();
+                boolean shotDue = cover || before == null || now - lastBlindShot >= 1000;
+                if (shots && shotDue && finder.waitMs() == 0) {
+                    if (!cover) lastBlindShot = now;
                     int g = gen;
                     finder.find(r -> {
                         if (!running || g != gen) return;
@@ -352,6 +365,12 @@ final class Ticker {
         }, 50);
     }
 
+    /** Where this app's OK place is kept ("ok_spot_<app>"). */
+    private String spotKey = "ok_spot";
+
+    /** When the last screenshot was taken without a cover in the tree. */
+    private long lastBlindShot;
+
     /** Where the pop-up's OK is (learned from a screenshot once, kept for next time), or null. */
     private Rect okSpot;
 
@@ -364,7 +383,7 @@ final class Ticker {
         quietBoxes = 0;
         okSpot = new Rect(r);
         service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
-                .putString("ok_spot", r.flattenToString()).apply();
+                .putString(spotKey, r.flattenToString()).putString("ok_spot", r.flattenToString()).apply();
         log("pop-up (drawn, not reported): tapping its purple button at " + r.centerX() + "," + r.centerY()
                 + " - its place is remembered");
         tap(r.centerX(), r.centerY());

@@ -23,6 +23,9 @@ import java.util.function.Consumer;
  */
 final class PurpleFinder {
 
+    private static final java.util.concurrent.Executor WORKER = java.util.concurrent.Executors.newSingleThreadExecutor();
+    private static final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
+
     /** Android allows about 3 screenshots a second. */
     private static final long MIN_GAP = 340;
 
@@ -63,11 +66,11 @@ final class PurpleFinder {
         // What the page reports as tappable, and our own windows: read before the picture.
         List<Rect> exclude = excluded();
         try {
-            service.takeScreenshot(Display.DEFAULT_DISPLAY, service.getMainExecutor(),
+            // The picture is searched off the main thread, so taps and checks aren't held up.
+            service.takeScreenshot(Display.DEFAULT_DISPLAY, WORKER,
                     new AccessibilityService.TakeScreenshotCallback() {
                         @Override
                         public void onSuccess(AccessibilityService.ScreenshotResult result) {
-                            busy = false;
                             Rect found = null;
                             HardwareBuffer hb = result.getHardwareBuffer();
                             try {
@@ -81,20 +84,27 @@ final class PurpleFinder {
                                     }
                                 }
                             } catch (RuntimeException e) {
-                                failed.accept("couldn't read the screenshot: " + e.getMessage());
+                                String why = "couldn't read the screenshot: " + e.getMessage();
+                                MAIN.post(() -> failed.accept(why));
                             } finally {
                                 hb.close();
                             }
-                            done.accept(found);
+                            Rect result2 = found;
+                            MAIN.post(() -> {
+                                busy = false;
+                                done.accept(result2);
+                            });
                         }
 
                         @Override
                         public void onFailure(int errorCode) {
-                            busy = false;
-                            failed.accept(errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS
-                                    ? "no screenshot permission - turn the Inspector off and on in Accessibility"
-                                    : "screenshot failed (" + errorCode + ")");
-                            done.accept(null);
+                            MAIN.post(() -> {
+                                busy = false;
+                                failed.accept(errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_NO_ACCESSIBILITY_ACCESS
+                                        ? "no screenshot permission - turn the Inspector off and on in Accessibility"
+                                        : "screenshot failed (" + errorCode + ")");
+                                done.accept(null);
+                            });
                         }
                     });
         } catch (RuntimeException e) {
