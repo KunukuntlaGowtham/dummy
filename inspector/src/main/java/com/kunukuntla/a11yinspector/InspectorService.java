@@ -411,7 +411,7 @@ public class InspectorService extends AccessibilityService {
                     .build(), null, null);
             Toast.makeText(this, "Auto-clear: tapped the pop-up's button", Toast.LENGTH_SHORT).show();
             handler.postDelayed(this::autoCheckSoon, 800);
-        }, why -> autoShotQueued = false), autoFinder.waitMs());
+        }, why -> autoShotQueued = false, autoBaseline), autoFinder.waitMs());
     }
 
     /** Another run is on: say so instead of starting a second one over it. */

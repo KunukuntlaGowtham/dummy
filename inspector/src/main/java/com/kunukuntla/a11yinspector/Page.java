@@ -300,8 +300,10 @@ final class Page {
                 if (before != null && before.clickables.contains(key(n))) continue;
                 String l = label(n);
                 int rank = popupRank(l);
+                // A ✕ / cross / close icon is never a pop-up's button: in this app a pop-up is
+                // closed with its purple button in the middle (a ✕ closes a note on the page).
                 boolean cross = rank == Integer.MAX_VALUE && isCloseIcon(l);
-                if (cross) rank = 50; // a ✕ / cross / close icon: closes a note, banner or box
+                if (cross) continue;
                 if (rank == Integer.MAX_VALUE && d == 2) rank = 100; // any button in a dialog
                 if (rank == Integer.MAX_VALUE) continue;
                 // With no dialog marked (a web page often draws its pop-up as a plain box), only a
