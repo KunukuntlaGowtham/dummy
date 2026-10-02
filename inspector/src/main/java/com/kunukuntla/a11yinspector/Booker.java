@@ -208,17 +208,9 @@ final class Booker {
                     log("date: " + dateText() + " is shown as not open - tapping it anyway to see what the page says");
                 }
                 pageBefore = pageTexts();
-                // A real tap on the day, like a finger (a click on the cell isn't taken as a
-                // choice by this calendar), once the day is clear of the page's header.
-                inView(cell, 0, r -> {
-                    log("date: tapping " + dateText() + " at " + r.centerX() + "," + r.centerY());
-                    tap(r.centerX(), r.centerY());
-                    done.append("✓ Date: ").append(dateText()).append('\n');
-                    later(() -> {
-                        said("after the date");
-                        tickBox(0);
-                    }, 1200);
-                });
+                // Clear of the page's header first, then one way after another until the page
+                // shows it took the day.
+                inView(cell, 0, r -> chooseDay(0));
                 return;
             }
         }
@@ -258,6 +250,108 @@ final class Booker {
                 });
             });
         });
+    }
+
+    /** The day's cell on the calendar now (the page may redraw it), or null. */
+    private AccessibilityNodeInfo dayCell() {
+        for (Map.Entry<AccessibilityNodeInfo, int[]> e : dayCells().entrySet()) {
+            int[] d = e.getValue();
+            if (d[0] == plan.day && d[1] == plan.month && d[2] == plan.year) return e.getKey();
+        }
+        return null;
+    }
+
+    /**
+     * What the page shows now, to see whether choosing the day changed it: every text, and
+     * the state (selected, checked, on/off) of everything that can be pressed.
+     */
+    private java.util.Set<String> pageState() {
+        java.util.Set<String> out = new java.util.HashSet<>();
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String l = Page.label(n);
+            if (!l.isEmpty()) out.add("t:" + l);
+            if (n.isClickable() || n.isCheckable()) {
+                out.add("s:" + l + "|" + n.isSelected() + n.isChecked() + n.isEnabled());
+            }
+            CharSequence st = android.os.Build.VERSION.SDK_INT >= 30 ? n.getStateDescription() : null;
+            if (st != null) out.add("d:" + l + "|" + st);
+        }
+        return out;
+    }
+
+    /**
+     * Chooses the day, one way after another, until the page changes (new texts such as the
+     * slots or the chosen date, the day shown selected, Continue turning on):
+     * 0) a click on the day's cell, 1) a click on the number inside it, 2) a tap on the cell,
+     * 3) a longer press on the number. With no change after all four, goes on, unconfirmed.
+     */
+    private void chooseDay(int way) {
+        AccessibilityNodeInfo cell = dayCell();
+        if (cell == null) {
+            stop("✗ " + dateText() + " went from the calendar");
+            return;
+        }
+        java.util.Set<String> before = pageState();
+        AccessibilityNodeInfo number = cell;
+        for (int i = 0; i < cell.getChildCount(); i++) {
+            AccessibilityNodeInfo c = cell.getChild(i);
+            if (c != null && Page.label(c).equals(String.valueOf(plan.day))) number = c;
+        }
+        Rect r = visible(cell), nr = visible(number);
+        switch (way) {
+            case 0:
+                log("date: clicking the day " + dateText());
+                cell.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                break;
+            case 1:
+                if (number == cell) {
+                    chooseDay(2);
+                    return;
+                }
+                log("date: clicking the number inside the day");
+                number.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                break;
+            case 2:
+                if (r == null) {
+                    chooseDay(3);
+                    return;
+                }
+                log("date: tapping the day at " + r.centerX() + "," + r.centerY());
+                tap(r.centerX(), r.centerY(), 80);
+                break;
+            case 3:
+                Rect t = nr != null ? nr : r;
+                if (t == null) {
+                    dayUnconfirmed();
+                    return;
+                }
+                log("date: pressing the number at " + t.centerX() + "," + t.centerY() + " a little longer");
+                tap(t.centerX(), t.centerY(), 220);
+                break;
+            default:
+                dayUnconfirmed();
+                return;
+        }
+        waitFor(() -> !pageState().equals(before), 1500, changed -> {
+            if (changed) {
+                log("date: the page took it ✓ (way " + (way + 1) + ")");
+                done.append("✓ Date: ").append(dateText()).append('\n');
+                later(() -> {
+                    said("after the date");
+                    tickBox(0);
+                }, 400);
+            } else {
+                log("date: nothing changed on the page");
+                chooseDay(way + 1);
+            }
+        });
+    }
+
+    private void dayUnconfirmed() {
+        log("date: tried 4 ways, the page showed no change - going on");
+        done.append("? Date: ").append(dateText()).append(" (not confirmed - the page showed no change)\n");
+        said("after the date");
+        tickBox(0);
     }
 
     /**
@@ -757,10 +851,14 @@ final class Booker {
     }
 
     private void tap(int x, int y) {
+        tap(x, y, 60);
+    }
+
+    private void tap(int x, int y, long ms) {
         Path p = new Path();
         p.moveTo(Math.max(0, x), Math.max(0, y));
         service.dispatchGesture(new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(p, 0, 60)).build(), null, null);
+                .addStroke(new GestureDescription.StrokeDescription(p, 0, ms)).build(), null, null);
     }
 
     private void later(Runnable r, long ms) {
