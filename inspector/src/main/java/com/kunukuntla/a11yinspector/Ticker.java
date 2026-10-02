@@ -46,6 +46,9 @@ final class Ticker {
     /** Only clearing the pop-ups up now, no ticking. */
     private boolean clearOnly;
 
+    /** How the page reacted this run (null for Clear): kept per app and compared with another app's. */
+    private Behaviour behaviour;
+
     /** Finds a pop-up's purple button on a screenshot, for pop-ups the page doesn't report. */
     private final PurpleFinder finder;
     /** Screenshots work here (turned off after the first failure of a run). */
@@ -77,6 +80,8 @@ final class Ticker {
     private final java.util.Set<Integer> attempted = new java.util.HashSet<>();
     /** The box ticked last (its place) and its row: checked on the next read of the page. */
     private int lastIdx = -1;
+    /** The element of the box ticked last, to see whether the page rebuilt its list. */
+    private AccessibilityNodeInfo lastNode;
     private String lastRow = "";
 
     /** Reads the page once to say what is there, then starts. */
@@ -85,12 +90,15 @@ final class Ticker {
         lastIdx = -1;
         List<AccessibilityNodeInfo> all = Page.nodes(service);
         int boxes = 0, empty = 0;
+        AccessibilityNodeInfo first = null;
         for (AccessibilityNodeInfo n : all) {
             if (!Page.isCheckbox(n)) continue;
+            if (first == null) first = n;
             boxes++;
             if (!n.isChecked() && n.isEnabled()) empty++;
         }
         log("page read: " + boxes + " checkbox(es), " + empty + " empty - each is clicked where it is, on screen or not");
+        if (behaviour != null) behaviour.page(first, continueButton());
         next();
     }
 
@@ -103,6 +111,17 @@ final class Ticker {
         List<AccessibilityNodeInfo> all = Page.nodes(service);
         List<AccessibilityNodeInfo> boxes = new ArrayList<>();
         for (AccessibilityNodeInfo n : all) if (Page.isCheckbox(n)) boxes.add(n);
+        // The box ticked last, gone from the page: the page rebuilt its list after the add.
+        if (lastNode != null && behaviour != null) {
+            boolean still;
+            try {
+                still = lastNode.refresh();
+            } catch (RuntimeException e) {
+                still = false;
+            }
+            if (!still) behaviour.rebuilt();
+        }
+        lastNode = null;
         if (lastIdx >= 0 && lastIdx < boxes.size() && !boxes.get(lastIdx).isChecked()) {
             refused(lastRow, "the page unticked it again (not added)");
         }
@@ -122,11 +141,13 @@ final class Ticker {
             n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             whenCheckedAt(n, idx, 450, ok -> {
                 if (ok) {
+                    lastNode = n;
                     lastIdx = idx;
                     lastRow = row;
                     ticked++;
                     tickedRows.add(row);
                     log("row " + row + ": ticked ✓ by a click");
+                    note("click");
                     tickTime = SystemClock.uptimeMillis();
                     waitUntil = tickTime + waitMs();
                     clearPopups(before, looks(), this::next);
@@ -137,17 +158,20 @@ final class Ticker {
                 if (label != null) label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
                 whenCheckedAt(n, idx, label != null ? 450 : 0, byLabel -> {
                     if (byLabel) {
+                        lastNode = n;
                         lastIdx = idx;
                         lastRow = row;
                         ticked++;
                         tickedRows.add(row);
                         log("row " + row + ": ticked ✓ by a click on its label");
+                        note("label");
                         tickTime = SystemClock.uptimeMillis();
                         waitUntil = tickTime + waitMs();
                         clearPopups(before, looks(), this::next);
                         return;
                     }
                     // Not ticked: if a pop-up comes the page has answered; either way, on to the next.
+                    note("not ticked");
                     clearPopups(before, looks(), () -> {
                         refused(row, popupTaps > 0 ? "not ticked - the page answered with a pop-up"
                                 : "the click didn't tick it");
@@ -169,6 +193,7 @@ final class Ticker {
             if (n.refresh()) return n.isChecked();
         } catch (RuntimeException ignored) {
         }
+        if (behaviour != null) behaviour.rebuilt();
         int i = 0;
         for (AccessibilityNodeInfo m : Page.nodes(service)) {
             if (!Page.isCheckbox(m)) continue;
@@ -192,6 +217,9 @@ final class Ticker {
 
     /** A row not added: noted, said on screen, never tried again. */
     private void refused(String row, String why) {
+        if (behaviour != null) {
+            behaviour.refused(why.contains("unticked") ? "unticks it after its pop-up" : "won't tick");
+        }
         if (tickedRows.remove(row)) ticked--;
         notTicked++;
         failedRows.add(row);
@@ -230,6 +258,7 @@ final class Ticker {
                 break;
             }
         }
+        behaviour = clear ? null : new Behaviour(spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : null);
         String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString(spotKey, null);
         okSpot = spot == null ? null : Rect.unflattenFromString(spot);
     }
@@ -246,8 +275,19 @@ final class Ticker {
                 + (tickedRows.isEmpty() ? "" : " (rows " + String.join(", ", tickedRows) + ")")
                 + "\nNot ticked " + notTicked
                 + "\nPop-ups cleared " + popups;
+        String reacted = "";
+        if (behaviour != null && ticked + notTicked > 0) {
+            StringBuilder lines = new StringBuilder();
+            try {
+                reacted = behaviour.finish(service, continueButton(), lines);
+            } catch (RuntimeException e) {
+                reacted = "\n\nHOW THE PAGE REACTED: not saved (" + e + ")";
+            }
+            summary += lines;
+        }
+        behaviour = null;
         listener.done(summary, "A11y Inspector - " + (clearOnly ? "Clear pop-ups" : "Tick run")
-                + "\n=========================\n" + summary + "\n\nSTEPS\n" + log);
+                + "\n=========================\n" + summary + reacted + "\n\nSTEPS\n" + log);
     }
 
     // ---- one box after another ------------------------------------------------------
@@ -348,6 +388,7 @@ final class Ticker {
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         whenChecked(b.node, 450, checked -> {
             if (checked) {
+                note("click");
                 done(b, "ticked ✓ by a click", before);
                 return;
             }
@@ -359,14 +400,18 @@ final class Ticker {
             }
             whenChecked(b.node, label != null ? 450 : 0, byLabel -> {
                 if (byLabel) {
+                    note("label");
                     done(b, "ticked ✓ by a click on its label", before);
                     return;
                 }
                 log("row " + b.row + ": tapping it at " + b.box.centerX() + "," + b.box.centerY());
                 tap(b.box.centerX(), b.box.centerY());
                 whenChecked(b.node, 500, ok -> {
-                    if (ok) done(b, "ticked ✓ by a tap", before);
-                    else {
+                    if (ok) {
+                        note("tap");
+                        done(b, "ticked ✓ by a tap", before);
+                    } else {
+                        note("not ticked");
                         notTicked++;
                         failedRows.add(b.row);
                         log("row " + b.row + ": still empty ✗");
@@ -441,6 +486,7 @@ final class Ticker {
             notTicked++;
             failedRows.add(b.row);
             log("row " + b.row + ": the page unticked it again (not added) - going on, not tried again ✗");
+            if (behaviour != null) behaviour.refused("unticks it after its pop-up");
             notAdded(b.row);
         }
         next();
@@ -448,11 +494,24 @@ final class Ticker {
 
     /** A pop-up came: note how long after the tick, to wait just that long next time. */
     private void popupCame() {
+        lastDelay = -1;
         if (tickTime == 0) return;
         long d = SystemClock.uptimeMillis() - tickTime;
+        lastDelay = d;
         tickTime = 0;
         popDelay = Math.max(popDelay, d);
         log("pop-up came " + d + " ms after the tick - next boxes watch " + waitMs() + " ms");
+    }
+
+    /** How late the pop-up just seen came after its tick (-1: not after a tick). */
+    private long lastDelay = -1;
+
+    private void note(String way) {
+        if (behaviour != null) behaviour.ticked(way);
+    }
+
+    private void notePopup(String seenAs, String closedBy) {
+        if (behaviour != null) behaviour.popup(seenAs, closedBy, lastDelay);
     }
 
     // ---- pop-ups ---------------------------------------------------------------
@@ -515,6 +574,7 @@ final class Ticker {
                 return;
             }
             popupCame();
+            notePopup("reported (" + p.how + ")", p.button != null ? "pressing its button" : "dismissing it");
             popups++;
             popupTaps++;
             popupsSeen = true;
@@ -550,6 +610,8 @@ final class Ticker {
     /** The pop-up's purple button, seen on the screenshot: tapped, then checked that it went. */
     private void pressPurple(Rect r, Page.Before before, Runnable then) {
         popupCame();
+        notePopup(Page.coverCame(service, before) ? "cover only (words and OK hidden)" : "drawn, not reported (no cover)",
+                "its purple button on a screenshot");
         popups++;
         popupTaps++;
         popupsSeen = true;
@@ -567,6 +629,7 @@ final class Ticker {
     /** The pop-up's cover is in the tree and its OK's place is known: tap it straight away. */
     private void pressSpot(Page.Before before, Runnable then) {
         popupCame();
+        notePopup("cover only (words and OK hidden)", "its remembered OK place");
         popups++;
         popupTaps++;
         popupsSeen = true;
@@ -638,6 +701,14 @@ final class Ticker {
     }
 
     // ---- finding boxes and reading the page ----------------------------------------
+
+    /** The page's Continue button, or null. */
+    private AccessibilityNodeInfo continueButton() {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (n.isClickable() && Page.label(n).trim().equalsIgnoreCase("continue")) return n;
+        }
+        return null;
+    }
 
     private static final class Box {
         final AccessibilityNodeInfo node;
