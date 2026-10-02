@@ -143,6 +143,22 @@ final class Page {
         return Integer.MAX_VALUE;
     }
 
+    /** The element is a checkbox, holds one (a label around it) or sits in one. */
+    static boolean checkboxPart(AccessibilityNodeInfo n) {
+        if (n.isCheckable() || isCheckbox(n)) return true;
+        for (int i = 0; i < n.getChildCount(); i++) {
+            AccessibilityNodeInfo c = n.getChild(i);
+            if (c == null) continue;
+            if (c.isCheckable() || isCheckbox(c)) return true;
+            for (int j = 0; j < c.getChildCount(); j++) {
+                AccessibilityNodeInfo g = c.getChild(j);
+                if (g != null && (g.isCheckable() || isCheckbox(g))) return true;
+            }
+        }
+        AccessibilityNodeInfo p = n.getParent();
+        return p != null && (p.isCheckable() || isCheckbox(p));
+    }
+
     /** A button that only acknowledges a message: OK, Okay, Got it, Close, Done, Understood, Dismiss. */
     static boolean isAcknowledge(String label) {
         String t = label.toLowerCase(Locale.ROOT).replaceAll("[^a-z ]", " ").replaceAll("\\s+", " ").trim();
@@ -181,7 +197,11 @@ final class Page {
         final Set<Integer> windows;
 
         Before(AccessibilityService service) {
-            List<AccessibilityNodeInfo> all = nodes(service);
+            this(service, nodes(service));
+        }
+
+        /** From the page's nodes already read (no second read of the page). */
+        Before(AccessibilityService service, List<AccessibilityNodeInfo> all) {
             for (AccessibilityNodeInfo n : all) if (n.isClickable()) clickables.add(key(n));
             covers = coverKeys(service, all);
             windows = windowIds(service);
@@ -287,8 +307,13 @@ final class Page {
                 // With no dialog marked (a web page often draws its pop-up as a plain box), only a
                 // button that just acknowledges counts - OK, Got it, Close ... or a ✕ icon - never
                 // one that commits something (Continue, Submit, Yes, Confirm ...).
-                boolean ack = isAcknowledge(l);
-                if (before == null && d == 0 && !cross && !ack) continue;
+                boolean ack = isAcknowledge(l) || l.trim().equalsIgnoreCase("yes");
+                // Outside a dialog / pane / new window, only a button whose whole name just
+                // answers the message counts (OK, Yes, Close, Done ... or a ✕) - never one that
+                // only starts with such a word ("Confirm sevak 1" is a checkbox's label).
+                if (d == 0 && !newWindow && !cross && !ack) continue;
+                // A checkbox, or part of one (its label), is never a pop-up's button.
+                if (checkboxPart(n)) continue;
                 if (rank < bestRank) {
                     best = n;
                     bestRank = rank;
