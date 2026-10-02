@@ -240,7 +240,7 @@
       modal.setAttribute('aria-hidden', 'true');
     }
     modal.innerHTML = refused
-      ? '<h3>Add Row</h3><p>Unable to add row ' + row + '. Please try again later.</p><button type="button">Close</button>'
+      ? '<h3>Add Row</h3><p>Unable to add row ' + row + '. Please try again later.</p><button type="button">Yes</button>'
       : '<h3>Row Added</h3><p>Row ' + row + ' was successfully added to the list</p><button type="button">OK</button>';
     document.body.appendChild(modal);
     modal.querySelector('button').addEventListener('click', () => {

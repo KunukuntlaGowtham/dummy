@@ -129,6 +129,7 @@ final class Ticker {
                             notTicked++;
                             failedRows.add(b.row);
                             log("row " + b.row + ": not ticked - the page answered with a pop-up; going on, not tried again ✗");
+            notAdded(b.row);
                         } else {
                             log("row " + b.row + ": the click didn't tick it - tried once more the careful way at the end");
                             slow.add(n);
@@ -183,10 +184,12 @@ final class Ticker {
         running = false;
         gen++;
         log("END: " + why);
-        String summary = clearOnly ? why + "\nPop-ups cleared " + popups : why + "\n" + "Ticked " + ticked
+        String summary = clearOnly ? why + "\nPop-ups cleared " + popups : why + "\n"
+                + (failedRows.isEmpty() ? "✅ All added" : "❌ Not added: row" + (failedRows.size() > 1 ? "s " : " ")
+                        + String.join(", ", failedRows))
+                + "\n☑ Ticked " + ticked
                 + (tickedRows.isEmpty() ? "" : " (rows " + String.join(", ", tickedRows) + ")")
                 + "\nNot ticked " + notTicked
-                + (failedRows.isEmpty() ? "" : " (rows " + String.join(", ", failedRows) + ")")
                 + "\nPop-ups cleared " + popups;
         listener.done(summary, "A11y Inspector - " + (clearOnly ? "Clear pop-ups" : "Tick run")
                 + "\n=========================\n" + summary + "\n\nSTEPS\n" + log);
@@ -330,6 +333,12 @@ final class Ticker {
         }, 40);
     }
 
+    /** Says on screen, as it happens, that a row wasn't added (Tick goes on to the next). */
+    private void notAdded(String row) {
+        android.widget.Toast.makeText(service, "Row " + row + " not added - going on to the next",
+                android.widget.Toast.LENGTH_SHORT).show();
+    }
+
     /** When the last box was ticked (0 once its pop-up came), and how late pop-ups come here. */
     private long tickTime, popDelay, waitUntil;
 
@@ -366,6 +375,7 @@ final class Ticker {
             notTicked++;
             failedRows.add(b.row);
             log("row " + b.row + ": the page unticked it again (not added) - going on, not tried again ✗");
+            notAdded(b.row);
         }
         next();
     }
