@@ -195,6 +195,8 @@ final class Page {
         final Set<String> clickables = new HashSet<>();
         final Set<String> covers;
         final Set<Integer> windows;
+        /** The visible, meaningful alerts / dialogs already up (see {@link #isMeaningfulAlert}). */
+        final Set<String> alerts = new HashSet<>();
 
         Before(AccessibilityService service) {
             this(service, nodes(service));
@@ -202,7 +204,10 @@ final class Page {
 
         /** From the page's nodes already read (no second read of the page). */
         Before(AccessibilityService service, List<AccessibilityNodeInfo> all) {
-            for (AccessibilityNodeInfo n : all) if (n.isClickable()) clickables.add(key(n));
+            for (AccessibilityNodeInfo n : all) {
+                if (n.isClickable()) clickables.add(key(n));
+                if (isMeaningfulAlert(service, n)) alerts.add(key(n));
+            }
             covers = coverKeys(service, all);
             windows = windowIds(service);
         }
@@ -227,6 +232,33 @@ final class Page {
             out.add(times == 1 ? k : k + "#" + times);
         }
         return out;
+    }
+
+    /**
+     * The hidden element Next.js puts on every page to read out the page's name
+     * ({@code __next-route-announcer__}, role alert, 0x0): never a pop-up.
+     */
+    static boolean isRouteAnnouncer(AccessibilityNodeInfo n) {
+        String id = n.getViewIdResourceName();
+        if (id != null && id.contains("route-announcer")) return true;
+        AccessibilityNodeInfo p = n.getParent();
+        String pid = p == null ? null : p.getViewIdResourceName();
+        return pid != null && pid.contains("route-announcer");
+    }
+
+    /**
+     * An alert or dialog that means something on screen: its role says alert / dialog, it is
+     * visible, has a real size (at least 2% of the screen) and isn't the Next.js route
+     * announcer. "role=alert" alone is not a pop-up.
+     */
+    static boolean isMeaningfulAlert(AccessibilityService service, AccessibilityNodeInfo n) {
+        String role = role(n).toLowerCase(Locale.ROOT);
+        if (!role.contains("alert") && !isDialog(n)) return false;
+        if (!n.isVisibleToUser() || isRouteAnnouncer(n)) return false;
+        Rect r = bounds(n);
+        if (r.width() <= 4 || r.height() <= 4) return false;
+        android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
+        return (long) r.width() * r.height() * 50 >= (long) dm.widthPixels * dm.heightPixels;
     }
 
     /** A cover (see {@link #coverKeys}) that wasn't there in {@code before}: a pop-up is up. */
