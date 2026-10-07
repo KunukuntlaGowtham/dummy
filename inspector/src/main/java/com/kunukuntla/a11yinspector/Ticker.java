@@ -88,11 +88,21 @@ final class Ticker {
     private AccessibilityNodeInfo lastNode;
     private String lastRow = "";
 
+    /** The page at the start of the run (no pop-up up): a cover not in it is a pop-up still up. */
+    private Page.Before runStart;
+    /** Pop-ups cleared before the next click (one left up), for this click: at most 2. */
+    private int lingerTries;
+    /** The box ticked last read ☐ once and is being read again (the page may be redrawing it). */
+    private boolean recheckedLast;
+
     /** Reads the page once to say what is there, then starts. */
     private void scanOnce() {
         attempted.clear();
         lastIdx = -1;
+        lingerTries = 0;
+        recheckedLast = false;
         List<AccessibilityNodeInfo> all = Page.nodes(service);
+        runStart = new Page.Before(service, all);
         int boxes = 0, empty = 0;
         AccessibilityNodeInfo first = null;
         for (AccessibilityNodeInfo n : all) {
@@ -115,6 +125,25 @@ final class Ticker {
         List<AccessibilityNodeInfo> all = Page.nodes(service);
         List<AccessibilityNodeInfo> boxes = new ArrayList<>();
         for (AccessibilityNodeInfo n : all) if (Page.isCheckbox(n)) boxes.add(n);
+        // (2) A pop-up still up (it came late, after the watch ended): its cover is in this read
+        // and wasn't there at the start - clear it before the next click, else that click would
+        // land under it. From this read already made: nothing extra to read.
+        if (runStart != null && lingerTries < 2) {
+            for (String k : Page.coverKeys(service, all)) {
+                if (runStart.covers.contains(k)) continue;
+                lingerTries++;
+                log("pop-up still up before the next click (it came late) - clearing it first");
+                tickTime = 0;
+                String cover = k;
+                clearPopups(runStart, looks(), () -> {
+                    // No pop-up there after all: that element is part of the page now - not
+                    // looked at again before every click.
+                    if (popupTaps == 0 && runStart != null) runStart.covers.add(cover);
+                    next();
+                });
+                return true;
+            }
+        }
         // The box ticked last, gone from the page: the page rebuilt its list after the add.
         if (lastNode != null && behaviour != null) {
             boolean still;
@@ -127,14 +156,26 @@ final class Ticker {
         }
         lastNode = null;
         if (lastIdx >= 0 && lastIdx < boxes.size() && !boxes.get(lastIdx).isChecked()) {
+            // (1) After OK the page redraws the row (~80 ms): a box just added can read ☐ for a
+            // moment. Read it once more 150 ms later before calling it not added.
+            if (!recheckedLast) {
+                recheckedLast = true;
+                log("row " + lastRow + " reads ☐ - reading it again in 150 ms (the page may be redrawing it)");
+                later(this::next, 150);
+                return true;
+            }
             refused(lastRow, "the page unticked it again (not added)");
+        } else if (recheckedLast && lastIdx >= 0) {
+            log("row " + lastRow + " reads ☑ on the second read - added ✓");
         }
+        recheckedLast = false;
         lastIdx = -1;
         for (int i = 0; i < boxes.size(); i++) {
             if (attempted.contains(i)) continue;
             AccessibilityNodeInfo n = boxes.get(i);
             if (n.isChecked() || !n.isEnabled()) continue;
             attempted.add(i);
+            lingerTries = 0;
             int idx = i;
             String row = String.valueOf(i + 1);
             Box b = new Box(n, Page.bounds(n), row);
@@ -212,10 +253,18 @@ final class Ticker {
             then.accept(checkedAt(n, idx));
             return;
         }
-        later(() -> {
+        whenCheckedUntil(n, idx, SystemClock.uptimeMillis() + ms, then);
+    }
+
+    /**
+     * Until {@code until} (the clock, not a count of looks: a look the page's events wake
+     * early must not use up the wait - the label click after it could untick the box).
+     */
+    private void whenCheckedUntil(AccessibilityNodeInfo n, int idx, long until, java.util.function.Consumer<Boolean> then) {
+        poll(() -> {
             boolean on = checkedAt(n, idx);
-            if (on || ms <= 40) then.accept(on);
-            else whenCheckedAt(n, idx, ms - 40, then);
+            if (on || SystemClock.uptimeMillis() >= until - 5) then.accept(on);
+            else whenCheckedUntil(n, idx, until, then);
         }, 40);
     }
 
@@ -540,7 +589,8 @@ final class Ticker {
             later(then, 100);
             return;
         }
-        later(() -> {
+        poll(() -> {
+            boolean woken = pollRanWoken; // woken early by the page: doesn't count as a look
             Page.Popup p = Page.popup(service, before);
             if (p == null) {
                 // The page hides the pop-up's words and buttons but reports its cover over the
@@ -555,7 +605,7 @@ final class Ticker {
                 }
                 Runnable lookOn = () -> {
                     if (looksLeft > 1 && (tickTime == 0 || SystemClock.uptimeMillis() < waitUntil)) {
-                        clearPopups(before, looksLeft - 1, then);
+                        clearPopups(before, woken ? looksLeft : looksLeft - 1, then);
                     } else {
                         if (popupTaps == 0) {
                             log("pop-up: none came");
@@ -654,7 +704,13 @@ final class Ticker {
 
     /** Goes on the moment the pop-up's cover has gone; if it stays, finds the OK again on a screenshot. */
     private void waitCoverGone(Page.Before before, long waited, Runnable then) {
-        later(() -> {
+        waitCoverGoneSince(before, SystemClock.uptimeMillis() - waited, then);
+    }
+
+    /** As above, the time since {@code since} by the clock (woken looks don't count as 40 ms). */
+    private void waitCoverGoneSince(Page.Before before, long since, Runnable then) {
+        poll(() -> {
+            long waited = SystemClock.uptimeMillis() - since;
             if (!Page.coverCame(service, before)) {
                 log("pop-up: gone (" + waited + " ms)");
                 then.run();
@@ -663,7 +719,7 @@ final class Ticker {
                 okSpot = null;
                 clearPopups(before, 20, then);
             } else {
-                waitCoverGone(before, waited + 40, then);
+                waitCoverGoneSince(before, since, then);
             }
         }, 40);
     }
@@ -856,6 +912,56 @@ final class Ticker {
 
     private int dp(int v) {
         return Math.round(v * service.getResources().getDisplayMetrics().density);
+    }
+
+    // ---- waits woken by the page's own change events -------------------------------------
+
+    /** The look waiting for its timer (a box turning ☑, a pop-up's cover coming / going). */
+    private Runnable pollTask;
+    /** The page already woke the waiting look: further events of the same burst don't. */
+    private boolean pollWoken;
+    /** The look running now was woken early by the page (not by its timer). */
+    private boolean pollRanWoken;
+
+    /**
+     * Like {@link #later}, for a look that waits for the page to change: it also runs as soon
+     * as the page says it changed ({@link #onPageEvent}), not only when its timer ends.
+     */
+    private void poll(Runnable r, long ms) {
+        int g = gen;
+        Runnable[] self = new Runnable[1];
+        self[0] = () -> {
+            pollRanWoken = pollTask == self[0] && pollWoken;
+            if (pollTask == self[0]) pollTask = null;
+            if (!running || g != gen) return;
+            try {
+                r.run();
+            } catch (RuntimeException e) {
+                stop("Error: " + e);
+            }
+        };
+        pollTask = self[0];
+        pollWoken = false;
+        handler.postDelayed(self[0], ms);
+    }
+
+    /**
+     * The page's accessibility event (from the service): the box changed, the pop-up's cover
+     * came or went ... - the waiting look runs now (10 ms later, so a burst of events counts
+     * once) instead of at its 40 / 50 ms timer.
+     */
+    void onPageEvent(android.view.accessibility.AccessibilityEvent e) {
+        if (!running || pollTask == null || pollWoken) return;
+        int t = e.getEventType();
+        if (t != android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                && t != android.view.accessibility.AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                && t != android.view.accessibility.AccessibilityEvent.TYPE_WINDOWS_CHANGED) return;
+        CharSequence pkg = e.getPackageName();
+        if (pkg != null && service.getPackageName().contentEquals(pkg)) return; // our own windows
+        pollWoken = true;
+        Runnable task = pollTask;
+        handler.removeCallbacks(task);
+        handler.postDelayed(task, 10);
     }
 
     private void later(Runnable r, long ms) {

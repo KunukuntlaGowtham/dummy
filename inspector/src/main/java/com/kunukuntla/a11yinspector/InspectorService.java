@@ -59,6 +59,8 @@ public class InspectorService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         CharSequence evPkg = event.getPackageName();
+        // Tick's waiting look runs the moment the page changes, not at its next timer.
+        if (ticker != null) ticker.onPageEvent(event);
         if (autoClear && evPkg != null && !getPackageName().contentEquals(evPkg)) {
             int t = event.getEventType();
             if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
