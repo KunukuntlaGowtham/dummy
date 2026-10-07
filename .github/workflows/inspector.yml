@@ -2,7 +2,7 @@ name: Build A11y Inspector APK
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "codex/inspector-popup-diagnostics"]
     paths: ["inspector/**", ".github/workflows/inspector.yml"]
   workflow_dispatch:
 
@@ -29,7 +29,7 @@ jobs:
       - name: Build debug APK
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon :inspector:assembleDebug -PversionCode=${{ github.run_number }}
+          ./gradlew --no-daemon :inspector:testDebugUnitTest :inspector:assembleDebug -PversionCode=${{ github.run_number }}
           cp inspector/build/outputs/apk/debug/inspector-debug.apk A11yInspector.apk
           ls -l A11yInspector.apk
 

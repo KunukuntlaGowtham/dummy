@@ -55,12 +55,41 @@ final class Booker {
         return running;
     }
 
+    /**
+     * Go and Tick linked: at the sevak page Book stops and hands over (Tick ticks the sevaks
+     * and clears each pop-up) instead of ticking them itself. Read when it gets there, so it
+     * can be switched on or off while Book runs.
+     */
+    private boolean handOver;
+    /** This run got past the slot page (to the sevak page or the next screen): Tick may go on. */
+    private boolean handedOver;
+
+    void setHandOver(boolean on) {
+        handOver = on;
+    }
+
+    boolean handedOver() {
+        return handedOver;
+    }
+
+    /** On the sevak page: hand over to Tick when linked, else tick the sevaks here as before. */
+    private void atSevakPage(String how) {
+        if (handOver) {
+            handedOver = true;
+            log("sevak page: " + how + " - handing over to Tick (Go and Tick linked)");
+            stop("At the sevak page - Tick goes on from here");
+            return;
+        }
+        sevaks();
+    }
+
     void start(Plan p) {
         if (running) return;
         running = true;
         gen++;
         plan = p;
         sevakPage = false;
+        handedOver = false;
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.setLength(0);
@@ -103,7 +132,7 @@ final class Booker {
             if (field == null) {
                 if (isSevakPage()) {
                     log("dropdown: none - this is the sevak page");
-                    sevaks();
+                    atSevakPage("started on it");
                     return;
                 }
                 stop("✗ No dropdown on this page");
@@ -196,7 +225,7 @@ final class Booker {
         if (cells.isEmpty()) {
             if (isSevakPage()) {
                 log("date: no calendar - this is the sevak page");
-                sevaks();
+                atSevakPage("started on it");
                 return;
             }
             if (waits < 10) {
@@ -858,7 +887,7 @@ final class Booker {
                 waitFor(this::isSevakPage, 3000, sevaks -> {
                     if (sevaks) {
                         done.append("• Moved to the sevak page\n");
-                        sevaks();
+                        atSevakPage("came after Continue");
                     } else {
                         finish(onSevaks);
                     }
@@ -873,6 +902,8 @@ final class Booker {
         boolean stillHere = onSevaks ? isSevakPage() || !findBoxes().isEmpty() && continueShown()
                 : continueShown();
         done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
+        // Past the slot page (the sevak page not seen in 3 s, or another screen): Tick may go on.
+        if (!onSevaks && !stillHere) handedOver = true;
         stop("Done in " + (SystemClock.uptimeMillis() - start) + " ms");
     }
 

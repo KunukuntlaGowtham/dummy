@@ -15,7 +15,8 @@ import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Finds a pop-up's purple button (OK, Proceed, Close ... - any purple button the page draws but doesn't report to accessibility)
+ * Finds a pop-up's purple button in the middle of the screen (OK, Proceed, Close ... - any
+ * words, an icon or none; a button the page draws but doesn't report to accessibility)
  * on the accessibility screenshot of the screen - used only for pop-ups; everything else goes
  * through accessibility. A match is a filled purple button (any words on it) that the
  * page does NOT report as a button (so the page's own purple Continue is never taken) and that
@@ -52,6 +53,15 @@ final class PurpleFinder {
      * when there is none, or when no screenshot could be taken (then {@code failed} is told).
      */
     void find(Consumer<Rect> done, Consumer<String> failed) {
+        find(done, failed, null);
+    }
+
+    /**
+     * As {@link #find(Consumer, Consumer)}; with {@code before} (the page before the tick) only
+     * the page's buttons that were there before are left out - a button the pop-up brought is
+     * taken whatever its words, also when the page reports it.
+     */
+    void find(Consumer<Rect> done, Consumer<String> failed, Page.Before before) {
         if (!available()) {
             failed.accept("screenshots need Android 11+");
             done.accept(null);
@@ -64,7 +74,7 @@ final class PurpleFinder {
         busy = true;
         lastShot = SystemClock.uptimeMillis();
         // What the page reports as tappable, and our own windows: read before the picture.
-        List<Rect> exclude = excluded();
+        List<Rect> exclude = excluded(before);
         try {
             // The picture is searched off the main thread, so taps and checks aren't held up.
             service.takeScreenshot(Display.DEFAULT_DISPLAY, WORKER,
@@ -115,7 +125,7 @@ final class PurpleFinder {
     }
 
     /** The page's own small tappable elements and our overlay windows: never the pop-up's button. */
-    private List<Rect> excluded() {
+    List<Rect> excluded(Page.Before before) {
         List<Rect> out = new ArrayList<>();
         android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
         long quarter = (long) dm.widthPixels * dm.heightPixels / 4;
@@ -123,6 +133,7 @@ final class PurpleFinder {
             if (!n.isClickable() || !n.isVisibleToUser()) continue;
             Rect r = Page.bounds(n);
             if (r.width() <= 0 || r.height() <= 0 || (long) r.width() * r.height() >= quarter) continue;
+            if (before != null && !before.clickables.contains(Page.key(n))) continue; // came with the pop-up
             out.add(r);
         }
         try {
@@ -205,6 +216,11 @@ final class PurpleFinder {
             // a box mostly white inside is a frame, not a button.
             if (whites > bw * bh * 0.45) continue;
             Rect r = new Rect(minX * STEP, minY * STEP, (maxX + 1) * STEP, (maxY + 1) * STEP);
+            // A pop-up's button sits in the middle of the screen: centred across (its middle in
+            // the middle 40%), and not at the top or the bottom edge (where the page's own bars
+            // and buttons are).
+            if (r.centerX() < w * 30 / 100 || r.centerX() > w * 70 / 100) continue;
+            if (r.centerY() < h * 20 / 100 || r.centerY() > h * 85 / 100) continue;
             boolean out = false;
             for (Rect e : exclude) {
                 if (e.contains(r.centerX(), r.centerY())) {
