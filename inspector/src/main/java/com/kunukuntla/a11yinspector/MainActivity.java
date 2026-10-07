@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
                 + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
                 + "recording of the app's events. Deep scan also saves a screenshot in Downloads/A11yInspector; share that PNG with the report. Watch popup 15 s records changes while you open a popup: start with it closed, trigger it, and leave it open. Purple ☑ Tick ticks every checkbox and clears "
                 + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
-                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
+                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). A 📍 badge at the top says which page of the booking is open - Page 1 sevaks list, Page 2 calendar & slot, Page 3 ticking sevaks - and Scan says it on its first line. Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setLineSpacing(dp(2), 1f);
@@ -264,6 +264,30 @@ public class MainActivity extends Activity {
             lp.rightMargin = dp(10);
             row.addView(chip, lp);
         }
+        // Not a round button: the 📍 badge at the top saying which page of the booking is open.
+        TextView pageChip = new TextView(this);
+        pageChip.setTypeface(Typeface.DEFAULT_BOLD);
+        pageChip.setTextSize(13);
+        pageChip.setPadding(dp(12), dp(7), dp(12), dp(7));
+        Runnable paintPage = () -> {
+            boolean on = sp.getBoolean("show_page", true);
+            pageChip.setText((on ? "✓ " : "") + "📍 Page");
+            pageChip.setTextColor(on ? Color.WHITE : GREEN);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(18));
+            bg.setColor(on ? GREEN : 0xFFDDEEDD);
+            pageChip.setBackground(bg);
+            pageChip.setContentDescription("Page badge" + (on ? ", shown" : ", hidden"));
+        };
+        paintPage.run();
+        pageChip.setOnClickListener(v -> {
+            sp.edit().putBoolean("show_page", !sp.getBoolean("show_page", true)).apply();
+            paintPage.run();
+        });
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        plp.rightMargin = dp(10);
+        row.addView(pageChip, plp);
         HorizontalScrollView wide = new HorizontalScrollView(this);
         wide.setHorizontalScrollBarEnabled(false);
         wide.addView(row);

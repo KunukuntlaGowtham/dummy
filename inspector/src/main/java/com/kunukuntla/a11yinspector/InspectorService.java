@@ -69,6 +69,11 @@ public class InspectorService extends AccessibilityService {
             }
         }
         if (evPkg != null && !getPackageName().contentEquals(evPkg)) {
+            int t = event.getEventType();
+            if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                    || t == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+                pageCheckSoon();
+            }
             // Which screen of which app is open (for the app details), and the event recorder.
             if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getClassName() != null
                     && !"com.android.systemui".contentEquals(evPkg)) {
@@ -101,7 +106,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -186,6 +191,96 @@ public class InspectorService extends AccessibilityService {
         });
         windowManager.addView(button, buttonParams);
         showTickButton();
+        showPageBadge();
+    }
+
+    // ---- 📍 which page of the booking is on screen ---------------------------------------
+
+    /** Top of the screen: "📍 Page 3 · Ticking sevaks" - hidden on other pages. Takes no touches. */
+    private TextView pageBadge;
+    private boolean pageCheckQueued;
+    /** The page as last read (OTHER until read, or with the badge off). */
+    private PageKind.Kind pageKind = PageKind.Kind.OTHER;
+
+    private void showPageBadge() {
+        pageBadge = new TextView(this);
+        pageBadge.setTextColor(Color.WHITE);
+        pageBadge.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        pageBadge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        pageBadge.setPadding(dp(12), dp(5), dp(12), dp(5));
+        pageBadge.setElevation(dp(4));
+        pageBadge.setVisibility(View.GONE);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        lp.y = dp(30);
+        try {
+            windowManager.addView(pageBadge, lp);
+        } catch (RuntimeException e) {
+            pageBadge = null;
+            return;
+        }
+        pageCheckSoon();
+    }
+
+    /** The page changed: look which page it is shortly (changes come in bursts). */
+    private void pageCheckSoon() {
+        if (pageCheckQueued || pageBadge == null) return;
+        pageCheckQueued = true;
+        handler.postDelayed(() -> {
+            pageCheckQueued = false;
+            checkPage();
+        }, 350);
+    }
+
+    private void checkPage() {
+        if (destroyed || pageBadge == null) return;
+        if (!getSharedPreferences("settings", MODE_PRIVATE).getBoolean("show_page", true)) {
+            pageBadge.setVisibility(View.GONE);
+            pageKind = PageKind.Kind.OTHER;
+            return;
+        }
+        // While a run goes the page isn't read again: Tick's speed comes first. The badge
+        // keeps the page the run started on.
+        if (scanning || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        PageKind.Facts f;
+        try {
+            f = PageKind.read(this);
+        } catch (RuntimeException e) {
+            return;
+        }
+        PageKind.Kind kind = PageKind.decide(f);
+        pageKind = kind;
+        if (kind == PageKind.Kind.OTHER) {
+            pageBadge.setVisibility(View.GONE);
+            return;
+        }
+        int colour = kind == PageKind.Kind.SEVAK_LIST ? 0xEE1565C0
+                : kind == PageKind.Kind.CALENDAR ? 0xEE00897B
+                : 0xEE2E7D32; // not purple: Tick's screenshots look for the purple OK
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(colour);
+        bg.setCornerRadius(dp(14));
+        bg.setStroke(dp(1), 0x66FFFFFF);
+        pageBadge.setBackground(bg);
+        pageBadge.setText("📍 " + kind.title());
+        pageBadge.setContentDescription(kind.title() + ": " + f.describe());
+        pageBadge.setVisibility(View.VISIBLE);
+    }
+
+    /** One line for reports: which page, and what on it says so. */
+    private String pageLine() {
+        try {
+            PageKind.Facts f = PageKind.read(this);
+            return "📍 " + PageKind.decide(f).title() + " (" + f.describe() + ")\n";
+        } catch (RuntimeException e) {
+            return "";
+        }
     }
 
     // ---- Tick, Clear and Book --------------------------------------------------------
@@ -218,6 +313,13 @@ public class InspectorService extends AccessibilityService {
             if (ticker.isRunning()) {
                 ticker.stop("Stopped");
             } else if (!busy()) {
+                // The badge's last reading: no extra page read before Tick starts.
+                PageKind.Kind kind = pageKind;
+                if (kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.SEVAK_LIST) {
+                    // Only said: Tick still runs (the page may be read wrongly).
+                    Toast.makeText(this, "📍 This looks like " + kind.title() + " - Tick is for Page 3",
+                            Toast.LENGTH_SHORT).show();
+                }
                 tickButton.setText("■\nStop");
                 ticker.start();
             }
@@ -333,7 +435,10 @@ public class InspectorService extends AccessibilityService {
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
-                if (key != null && key.startsWith("show_")) applyShown();
+                if (key != null && key.startsWith("show_")) {
+                    applyShown();
+                    checkPage();
+                }
             };
 
     /** Shows the chosen buttons (all, until you choose), stacked down the left edge in order. */
@@ -857,6 +962,8 @@ public class InspectorService extends AccessibilityService {
         try {
             String pkg = appInFront();
             r = Scanner.scan(this, deep, openScreen.get(pkg));
+            String page = pageLine();
+            r = new Scanner.Result(page + r.summary, page + r.report);
         } catch (RuntimeException e) {
             r = new Scanner.Result("Scan failed: " + e, "Scan failed: " + e);
         }
