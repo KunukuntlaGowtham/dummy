@@ -94,6 +94,10 @@ final class Ticker {
     private int lingerTries;
     /** The box ticked last read ☐ once and is being read again (the page may be redrawing it). */
     private boolean recheckedLast;
+    /** Which click ticks the boxes here (box or label), learned in this run only. */
+    private final ClickMethod clicks = new ClickMethod();
+    /** The learned label click was used for a row already this run (said once in the log). */
+    private boolean learnedUsed;
 
     /** Reads the page once to say what is there, then starts. */
     private void scanOnce() {
@@ -101,6 +105,8 @@ final class Ticker {
         lastIdx = -1;
         lingerTries = 0;
         recheckedLast = false;
+        clicks.reset(); // every run starts with the direct box click; nothing kept from before
+        learnedUsed = false;
         List<AccessibilityNodeInfo> all = Page.nodes(service);
         runStart = new Page.Before(service, all);
         int boxes = 0, empty = 0;
@@ -183,36 +189,44 @@ final class Ticker {
             String name = Page.label(n);
             log("row " + row + ": clicking its checkbox" + (name.isEmpty() ? "" : " \"" + name + "\"")
                     + (n.isVisibleToUser() ? "" : " (off screen)"));
-            n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            // This row's own label (never one kept from an earlier row - the page redraws).
+            AccessibilityNodeInfo label = clickableParent(n);
+            ClickMethod.Way first = clicks.first(label != null);
+            if (first == ClickMethod.Way.LABEL) {
+                log("row " + row + ": clicking its label first (a label click ticked an earlier row this run)"
+                        + (learnedUsed ? "" : " - the learned way, used from now on"));
+                learnedUsed = true;
+                label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            } else {
+                n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            }
             whenCheckedAt(n, idx, 450, ok -> {
                 if (ok) {
-                    lastNode = n;
-                    lastIdx = idx;
-                    lastRow = row;
-                    ticked++;
-                    tickedRows.add(row);
-                    log("row " + row + ": ticked ✓ by a click");
-                    note("click");
-                    tickTime = SystemClock.uptimeMillis();
-                    waitUntil = tickTime + waitMs();
-                    clearPopups(before, looks(), this::next);
+                    fastTicked(n, idx, row, first, label != null, false, before);
                     return;
                 }
-                // Its label, once (a hidden web checkbox can need it).
-                AccessibilityNodeInfo label = clickableParent(n);
-                if (label != null) label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                whenCheckedAt(n, idx, label != null ? 450 : 0, byLabel -> {
-                    if (byLabel) {
-                        lastNode = n;
-                        lastIdx = idx;
-                        lastRow = row;
-                        ticked++;
-                        tickedRows.add(row);
-                        log("row " + row + ": ticked ✓ by a click on its label");
-                        note("label");
-                        tickTime = SystemClock.uptimeMillis();
-                        waitUntil = tickTime + waitMs();
-                        clearPopups(before, looks(), this::next);
+                // The other way, once. Re-read the box and its own label first: the page may
+                // have redrawn the row, and a late tick by the first click must not get a
+                // second click (it would untick the box).
+                AccessibilityNodeInfo current = checkboxAt(n, idx);
+                boolean nowChecked = current != null && current.isChecked();
+                AccessibilityNodeInfo currentLabel = current == null ? null : clickableParent(current);
+                ClickMethod.Way second = current == null ? null
+                        : clicks.fallback(first, currentLabel != null, nowChecked);
+                if (second != null) {
+                    log("row " + row + ": the " + way(first) + " didn't tick it - " + way(second) + " once");
+                    (second == ClickMethod.Way.LABEL ? currentLabel : current)
+                            .performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                } else if (nowChecked) {
+                    log("row " + row + ": reads ☑ now (a late tick by the " + way(first) + ") - no second click");
+                } else {
+                    log("row " + row + ": the " + way(first) + " didn't tick it - "
+                            + (current == null ? "the box went from the page" : "no label to click"));
+                }
+                whenCheckedAt(n, idx, second != null ? 450 : 0, byFallback -> {
+                    if (byFallback) {
+                        fastTicked(n, idx, row, second != null ? second : first, currentLabel != null,
+                                second != null, before);
                         return;
                     }
                     // Not ticked: if a pop-up comes the page has answered; either way, on to the next.
@@ -230,21 +244,54 @@ final class Ticker {
     }
 
     /**
+     * The row's box read ☑ after {@code way}: counted, the way learned (only now - verified,
+     * not because the click was sent), its pop-up cleared.
+     */
+    private void fastTicked(AccessibilityNodeInfo n, int idx, String row, ClickMethod.Way way,
+                            boolean rowHadLabel, boolean byFallback, Page.Before before) {
+        lastNode = n;
+        lastIdx = idx;
+        lastRow = row;
+        ticked++;
+        tickedRows.add(row);
+        log("row " + row + ": ticked ✓ by a " + way(way) + (byFallback ? " (the other way)" : ""));
+        note(way == ClickMethod.Way.LABEL ? "label" : "click");
+        if (clicks.verified(way, rowHadLabel)) {
+            log(way == ClickMethod.Way.LABEL
+                    ? "learned for this run: a label click ticks the boxes here - the label is clicked first from the next row"
+                    : "learned for this run: a click on the box ticks it again - the box is clicked first from the next row");
+        }
+        tickTime = SystemClock.uptimeMillis();
+        waitUntil = tickTime + waitMs();
+        clearPopups(before, looks(), this::next);
+    }
+
+    private static String way(ClickMethod.Way w) {
+        return w == ClickMethod.Way.LABEL ? "click on its label" : "click on the box";
+    }
+
+    /**
      * Whether the box at place {@code idx} is ticked: its element when it is still on the page,
      * else (the page rebuilt its list) the box now at that place.
      */
     private boolean checkedAt(AccessibilityNodeInfo n, int idx) {
+        AccessibilityNodeInfo current = checkboxAt(n, idx);
+        return current != null && current.isChecked();
+    }
+
+    /** The box at place {@code idx} now: its element refreshed, else the one now at that place. */
+    private AccessibilityNodeInfo checkboxAt(AccessibilityNodeInfo n, int idx) {
         try {
-            if (n.refresh()) return n.isChecked();
+            if (n.refresh()) return n;
         } catch (RuntimeException ignored) {
         }
         if (behaviour != null) behaviour.rebuilt();
         int i = 0;
         for (AccessibilityNodeInfo m : Page.nodes(service)) {
             if (!Page.isCheckbox(m)) continue;
-            if (i++ == idx) return m.isChecked();
+            if (i++ == idx) return m;
         }
-        return false;
+        return null;
     }
 
     /** Checks every 40 ms (up to {@code ms}) whether the box at {@code idx} turned ☑. */
