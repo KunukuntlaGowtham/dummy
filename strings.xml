@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">A11y Inspector</string>
+    <string name="a11y_description">Shows Scan, Tick, Clear and Book buttons over any app, using accessibility with screenshots for popup detection and deep-scan evidence. Scan lists everything the app reports on the screen - every element, its text, state and actions, the pop-ups, checkboxes, calendar and dropdown. Tick ticks every checkbox and clears the pop-ups; Clear clears the pop-ups up now; Book picks the option, the date in the calendar, the checkbox, the radio button and Continue.</string>
+</resources>

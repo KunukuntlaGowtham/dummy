@@ -1,0 +1,571 @@
+--- a/.github/workflows/inspector.yml
++++ b/.github/workflows/inspector.yml
+@@ -2,7 +2,7 @@
+ 
+ on:
+   push:
+-    branches: ["main"]
++    branches: ["main", "codex/inspector-popup-diagnostics"]
+     paths: ["inspector/**", ".github/workflows/inspector.yml"]
+   workflow_dispatch:
+ 
+@@ -29,7 +29,7 @@
+       - name: Build debug APK
+         run: |
+           chmod +x gradlew
+-          ./gradlew --no-daemon :inspector:assembleDebug -PversionCode=${{ github.run_number }}
++          ./gradlew --no-daemon :inspector:testDebugUnitTest :inspector:assembleDebug -PversionCode=${{ github.run_number }}
+           cp inspector/build/outputs/apk/debug/inspector-debug.apk A11yInspector.apk
+           ls -l A11yInspector.apk
+ 
+--- a/inspector/build.gradle.kts
++++ b/inspector/build.gradle.kts
+@@ -39,3 +39,8 @@
+         targetCompatibility = JavaVersion.VERSION_17
+     }
+ }
++
++
++dependencies {
++    testImplementation("junit:junit:4.13.2")
++}
+--- a/inspector/src/main/java/com/kunukuntla/a11yinspector/Automation.java
++++ b/inspector/src/main/java/com/kunukuntla/a11yinspector/Automation.java
+@@ -80,7 +80,7 @@
+         }
+         Page.Popup p = Page.popup(service, null);
+         if (p == null) {
+-            rep.append("    Clear would press: nothing (no pop-up up)\n");
++            rep.append("    Clear: no accessible popup button or dismiss action found; a drawn popup may still be present\n");
+         } else {
+             String what = p.button != null ? "\"" + Page.label(p.button) + "\" at " + center(Page.bounds(p.button))
+                     : "dismiss on " + shortClass(p.dismiss);
+@@ -88,7 +88,7 @@
+             sum.append("🪟 Pop-up up: Clear would press ").append(what).append('\n');
+         }
+         if (dialogs == 0 && p == null && ws.size() <= 1) {
+-            rep.append("    none up in accessibility - a pop-up drawn without accessibility (as in Chrome) shows only on a\n"
++            rep.append("    no dialog/button exposed in accessibility - a drawn popup may only be visible on a\n"
+                     + "    screenshot: Tick and Clear look there for its purple button in the middle\n");
+         }
+         rep.append("    After a tick, Tick tells three cases apart: A no pop-up; B a pop-up accessibility shows (dialog,\n"
+--- a/inspector/src/main/java/com/kunukuntla/a11yinspector/InspectorService.java
++++ b/inspector/src/main/java/com/kunukuntla/a11yinspector/InspectorService.java
+@@ -47,6 +47,8 @@
+     private WindowManager.LayoutParams buttonParams;
+     private View card;
+     private boolean scanning;
++    private boolean destroyed;
++    private String popupWatchReport = "";
+ 
+     @Override
+     protected void onServiceConnected() {
+@@ -88,6 +90,7 @@
+ 
+     @Override
+     public void onDestroy() {
++        destroyed = true;
+         closeCard();
+         closeAsk();
+         if (ticker != null) ticker.stop("Stopped");
+@@ -439,7 +442,7 @@
+ 
+     private void autoCheck() {
+         // Tick and Clear clear their own pop-ups: never tap the same one twice.
+-        if (ticker.isRunning() || clearer.isRunning()) return;
++        if (scanning || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
+         if (ok == null && Page.coverCame(this, autoBaseline)) {
+             // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
+@@ -503,7 +506,7 @@
+         autoShotQueued = true;
+         handler.postDelayed(() -> autoFinder.find(r -> {
+             autoShotQueued = false;
+-            if (!autoClear || r == null || ticker.isRunning() || clearer.isRunning()) return;
++            if (!autoClear || scanning || r == null || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+             long now = android.os.SystemClock.uptimeMillis();
+             if (now - autoLastPress < 700) return;
+             autoLastPress = now;
+@@ -520,7 +523,7 @@
+ 
+     /** Another run is on: say so instead of starting a second one over it. */
+     private boolean busy() {
+-        boolean on = ticker.isRunning() || clearer.isRunning() || booker.isRunning();
++        boolean on = scanning || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
+         if (on) Toast.makeText(this, "Stop the running one first", Toast.LENGTH_SHORT).show();
+         return on;
+     }
+@@ -763,7 +766,7 @@
+ 
+     /** Scans the screen in front; {@code deep}: wake the web views first and wait. */
+     private void scan(boolean deep) {
+-        if (scanning) return;
++        if (busy()) return;
+         scanning = true;
+         closeCard();
+         button.setAlpha(0.5f);
+@@ -812,11 +815,13 @@
+     /** Records the app's accessibility events for 15 s while you use it. */
+     private void record() {
+         closeCard();
++        if (busy()) return;
+         recordPkg = appInFront();
+         if (recordPkg.isEmpty()) {
+             Toast.makeText(this, "No app in front to record", Toast.LENGTH_SHORT).show();
+             return;
+         }
++        scanning = true;
+         recorder.start();
+         Toast.makeText(this, "Recording " + recordPkg + " for 15 s - use the app now", Toast.LENGTH_LONG).show();
+         button.setAlpha(0.5f);
+@@ -835,16 +840,41 @@
+         } catch (RuntimeException e) {
+             r = new Scanner.Result("Scan failed: " + e, "Scan failed: " + e);
+         }
+-        done(r.summary, r.report, deep);
++        if (!deep) {
++            done(r.summary, r.report, false);
++            return;
++        }
++        Scanner.Result scan = r;
++        String evidence;
++        try { evidence = PopupDiagnostics.treeEvidence(this); }
++        catch (RuntimeException e) { evidence = "\nPopup diagnostics failed: " + e; }
++        String details = evidence;
++        // Hide our buttons briefly so the screenshot shows the page underneath.
++        View[] overlays = shownButtons();
++        int[] visibility = new int[overlays.length];
++        for (int i = 0; i < overlays.length; i++) {
++            visibility[i] = overlays[i] == null ? View.GONE : overlays[i].getVisibility();
++            if (overlays[i] != null) overlays[i].setVisibility(View.INVISIBLE);
++        }
++        handler.postDelayed(() -> PopupDiagnostics.capture(this, visual -> {
++            if (destroyed) return;
++            for (int i = 0; i < overlays.length; i++)
++                if (overlays[i] != null) overlays[i].setVisibility(visibility[i]);
++            String watch = popupWatchReport;
++            popupWatchReport = "";
++            done(scan.summary + "\nVisual popup evidence collected; see Full report for the PNG or capture error.",
++                    scan.report + details + watch + visual, true);
++        }), 400);
+     }
+ 
+     private void done(String summary, String report, boolean deep) {
+         saveReport(report);
++        lastSummary = summary;
+         scanning = false;
+         button.setAlpha(1f);
+         if (deep) {
+-            showCard(summary, new String[] {"Page code", "Whole page ↓", "Record 15 s"},
+-                    new View.OnClickListener[] {v -> pageCode(), v -> wholePage(), v -> record()});
++            showCard(summary, new String[] {"Page code", "Whole page ↓", "Record 15 s", "Watch popup 15 s"},
++                    new View.OnClickListener[] {v -> pageCode(), v -> wholePage(), v -> record(), v -> watchPopup()});
+         } else {
+             showCard(summary);
+         }
+@@ -870,10 +900,55 @@
+     /** Scrolls the page to the end, screen by screen, listing what each screen brings. */
+     private void wholePage() {
+         closeCard();
++        if (busy()) return;
+         if (wholePage == null) wholePage = new WholePage(this);
+         scanning = true;
+         button.setAlpha(0.5f);
+         wholePage.walk((sum, rep) -> done(sum, rep, false));
++    }
++
++    /** Start before triggering the popup; leave it open for the final screenshot. */
++    private void watchPopup() {
++        if (busy()) return;
++        closeCard();
++        scanning = true;
++        button.setAlpha(0.5f);
++        final String pkg = appInFront();
++        final java.util.Map<String, String> baseline;
++        try { baseline = PopupDiagnostics.snapshot(this); }
++        catch (RuntimeException e) {
++            done("Popup watch failed", "Popup watch failed: " + e, false);
++            return;
++        }
++        Toast.makeText(this, "15 s: trigger the popup now and leave it open. Auto-clear pauses during capture.",
++                Toast.LENGTH_LONG).show();
++        watchPopupStep(pkg, baseline, baseline, new StringBuilder("\nPOPUP WATCH (500 ms samples, 15 s)\n"
++                + "Node IDs are per snapshot/session; index matching on older Android is approximate.\n"), 0);
++    }
++
++    private void watchPopupStep(String pkg, java.util.Map<String, String> baseline,
++                               java.util.Map<String, String> previous, StringBuilder log, int step) {
++        handler.postDelayed(() -> {
++            if (destroyed) return;
++            try {
++                if (!pkg.equals(appInFront())) {
++                    done("Popup watch stopped: app changed", log + "\nApp changed; capture stopped.", false);
++                    return;
++                }
++                java.util.Map<String, String> now = PopupDiagnostics.snapshot(this);
++                String delta = PopupDiagnostics.changes(previous, now);
++                if (!delta.isEmpty() && log.length() < 150000)
++                    log.append("\nAt ").append((step + 1) * 500).append(" ms\n").append(delta);
++                if (step + 1 < 30) watchPopupStep(pkg, baseline, now, log, step + 1);
++                else {
++                    log.append("\nFINAL COMPARED WITH START\n").append(PopupDiagnostics.changes(baseline, now));
++                    popupWatchReport = log.toString();
++                    finish(true);
++                }
++            } catch (RuntimeException e) {
++                done("Popup watch failed", log + "\n" + e, false);
++            }
++        }, 500);
+     }
+ 
+     private List<AccessibilityNodeInfo> roots() {
+@@ -918,10 +993,13 @@
+         row.setGravity(Gravity.END);
+         if (extras.length > 0) {
+             // The deeper looks, on their own row.
+-            LinearLayout more = new LinearLayout(this);
+-            more.setGravity(Gravity.END);
+-            for (int i = 0; i < extras.length; i++) more.addView(cardButton(extraLabels[i], extras[i]));
+-            box.addView(more);
++            for (int i = 0; i < extras.length; i += 2) {
++                LinearLayout more = new LinearLayout(this);
++                more.setGravity(Gravity.END);
++                for (int j = i; j < Math.min(i + 2, extras.length); j++)
++                    more.addView(cardButton(extraLabels[j], extras[j]));
++                box.addView(more);
++            }
+         }
+         row.addView(cardButton("Close", v -> closeCard()));
+         row.addView(cardButton("Full report", v -> {
+--- a/inspector/src/main/java/com/kunukuntla/a11yinspector/MainActivity.java
++++ b/inspector/src/main/java/com/kunukuntla/a11yinspector/MainActivity.java
+@@ -66,7 +66,7 @@
+                 + "(month, open and closed days, arrows), the dropdown, radios and Continue. "
+                 + "Long-press it for a deep scan: web pages woken, every property of every element "
+                 + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
+-                + "recording of the app's events. Purple ☑ Tick ticks every checkbox and clears "
++                + "recording of the app's events. Deep scan also saves a screenshot in Downloads/A11yInspector; share that PNG with the report. Watch popup 15 s records changes while you open a popup: start with it closed, trigger it, and leave it open. Purple ☑ Tick ticks every checkbox and clears "
+                 + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
+                 + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
+         how.setTextColor(0xE6FFFFFF);
+--- /dev/null
++++ b/inspector/src/main/java/com/kunukuntla/a11yinspector/PopupDiagnostics.java
+@@ -0,0 +1,165 @@
++package com.kunukuntla.a11yinspector;
++
++import android.accessibilityservice.AccessibilityService;
++import android.content.ContentValues;
++import android.graphics.Bitmap;
++import android.graphics.Rect;
++import android.hardware.HardwareBuffer;
++import android.net.Uri;
++import android.os.Build;
++import android.os.Handler;
++import android.os.Looper;
++import android.provider.MediaStore;
++import android.view.Display;
++import android.view.accessibility.AccessibilityNodeInfo;
++import android.view.accessibility.AccessibilityWindowInfo;
++
++import java.io.OutputStream;
++import java.util.LinkedHashMap;
++import java.util.List;
++import java.util.Map;
++import java.util.concurrent.Executors;
++import java.util.function.Consumer;
++
++/** Read-only evidence: a tree cannot prove that nothing is drawn over the page. */
++final class PopupDiagnostics {
++    private static final java.util.concurrent.Executor WORKER = Executors.newSingleThreadExecutor();
++
++    static Map<String, String> snapshot(AccessibilityService service) {
++        Map<String, String> out = new LinkedHashMap<>();
++        int index = 0;
++        for (AccessibilityNodeInfo n : Page.nodes(service)) {
++            String uid = Build.VERSION.SDK_INT >= 33 ? n.getUniqueId() : null;
++            String key = n.getWindowId() + ":" + (uid == null ? "index-" + index : "uid-" + uid);
++            index++;
++            out.put(key, n.getClassName() + " role=" + Page.role(n) + " id=" + n.getViewIdResourceName()
++                    + " text=" + Page.label(n) + " bounds=" + Page.bounds(n).toShortString()
++                    + " visible=" + n.isVisibleToUser() + " enabled=" + n.isEnabled()
++                    + " checked=" + n.isChecked() + " selected=" + n.isSelected()
++                    + " clickable=" + n.isClickable() + " children=" + n.getChildCount());
++        }
++        return out;
++    }
++
++    static String changes(Map<String, String> before, Map<String, String> after) {
++        StringBuilder out = new StringBuilder();
++        int count = 0;
++        for (Map.Entry<String, String> e : after.entrySet()) {
++            String old = before.get(e.getKey());
++            if (e.getValue().equals(old)) continue;
++            count++;
++            if (count <= 60) out.append(old == null ? "+ " : "~ ").append(e.getKey()).append(' ')
++                    .append(e.getValue()).append('\n');
++        }
++        for (Map.Entry<String, String> e : before.entrySet()) {
++            if (after.containsKey(e.getKey())) continue;
++            count++;
++            if (count <= 60) out.append("- ").append(e.getKey()).append(' ').append(e.getValue()).append('\n');
++        }
++        if (count > 60) out.append("... ").append(count - 60).append(" further changes omitted\n");
++        return out.toString();
++    }
++
++    static String treeEvidence(AccessibilityService service) {
++        StringBuilder out = new StringBuilder("\nPOPUP DIAGNOSTICS (evidence, not a guarantee)\n");
++        out.append("No dialog/OK node does not mean no popup. WebViews can hide the entire popup.\n")
++                .append("An empty large element is only a possible backdrop; compare before/after and the screenshot.\n");
++        for (AccessibilityWindowInfo w : Page.windows(service)) {
++            out.append("Window ").append(w.getId()).append(" layer=").append(w.getLayer())
++                    .append(" active=").append(w.isActive()).append('\n');
++        }
++        List<AccessibilityNodeInfo> all = Page.nodes(service);
++        out.append("Possible empty backdrop rectangles: ").append(Page.coverKeys(service, all)).append('\n');
++        Page.Popup p = Page.popup(service, null);
++        out.append("Accessible popup target: ").append(p == null ? "none exposed" : p.how + " / "
++                + (p.button == null ? "dismiss action" : Page.label(p.button))).append('\n');
++        out.append("Clickable / dismissable nodes (including unnamed and hidden):\n");
++        int count = 0;
++        for (AccessibilityNodeInfo n : all) {
++            if (!n.isClickable() && !n.isDismissable()) continue;
++            if (++count > 150) { out.append("... truncated at 150 targets\n"); break; }
++            out.append("  ").append(n.getClassName()).append(" role=").append(Page.role(n))
++                    .append(" id=").append(n.getViewIdResourceName()).append(" text=\"")
++                    .append(Page.label(n)).append("\" @").append(Page.bounds(n).toShortString())
++                    .append(" visible=").append(n.isVisibleToUser()).append(" enabled=").append(n.isEnabled())
++                    .append(" actions=").append(n.getActionList()).append('\n');
++        }
++        return out.toString();
++    }
++
++    /** Saves one user-requested screenshot locally; never uploads it or presses anything. */
++    static void capture(AccessibilityService service, Consumer<String> done) {
++        if (Build.VERSION.SDK_INT < 30) {
++            done.accept("\nVISUAL EVIDENCE: screenshot capture requires Android 11+.\n");
++            return;
++        }
++        Handler main = new Handler(Looper.getMainLooper());
++        boolean[] completed = {false}; // accessed only on main
++        Consumer<String> finish = text -> {
++            if (completed[0]) return;
++            completed[0] = true;
++            done.accept(text);
++        };
++        main.postDelayed(() -> finish.accept("\nVISUAL EVIDENCE: screenshot timed out; popup status unknown.\n"), 5000);
++        List<Rect> excluded = new PurpleFinder(service).excluded(null);
++        try {
++            service.takeScreenshot(Display.DEFAULT_DISPLAY, WORKER, new AccessibilityService.TakeScreenshotCallback() {
++                @Override public void onSuccess(AccessibilityService.ScreenshotResult result) {
++                    Bitmap hw = null, bmp = null;
++                    HardwareBuffer buffer = result.getHardwareBuffer();
++                    String text;
++                    try {
++                        hw = Bitmap.wrapHardwareBuffer(buffer, result.getColorSpace());
++                        if (hw == null) throw new IllegalStateException("No readable screenshot");
++                        bmp = hw.copy(Bitmap.Config.ARGB_8888, false);
++                        if (bmp == null) throw new IllegalStateException("No software bitmap");
++                        Rect candidate = PurpleFinder.scan(bmp, excluded);
++                        text = "\nVISUAL EVIDENCE\nScreenshot: " + bmp.getWidth() + "x" + bmp.getHeight()
++                                + "\nPurple-button candidate: " + (candidate == null ? "none matched; other colours/designs may still be a popup"
++                                : candidate.toShortString() + " (colour/shape heuristic, not text recognition)")
++                                + "\n" + save(service, bmp)
++                                + "\nAttach the PNG along with this report. Captured after the tree; animations may differ.\n";
++                    } catch (Exception e) {
++                        text = "\nVISUAL EVIDENCE: unavailable (" + e + "); popup status unknown.\n";
++                    } finally {
++                        if (bmp != null) bmp.recycle();
++                        if (hw != null) hw.recycle();
++                        buffer.close();
++                    }
++                    String message = text;
++                    main.post(() -> finish.accept(message));
++                }
++                @Override public void onFailure(int code) {
++                    main.post(() -> finish.accept("\nVISUAL EVIDENCE: screenshot failed, Android error " + code
++                            + "; popup status unknown. Secure screens may block screenshots.\n"));
++                }
++            });
++        } catch (RuntimeException e) {
++            finish.accept("\nVISUAL EVIDENCE: " + e + "; popup status unknown.\n");
++        }
++    }
++
++    private static String save(AccessibilityService service, Bitmap bmp) throws Exception {
++        String name = "a11y-popup-" + System.currentTimeMillis() + ".png";
++        ContentValues values = new ContentValues();
++        values.put(MediaStore.Downloads.DISPLAY_NAME, name);
++        values.put(MediaStore.Downloads.MIME_TYPE, "image/png");
++        values.put(MediaStore.Downloads.RELATIVE_PATH, "Download/A11yInspector");
++        values.put(MediaStore.Downloads.IS_PENDING, 1);
++        Uri uri = service.getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
++        if (uri == null) throw new java.io.IOException("Couldn't create screenshot file");
++        try {
++            try (OutputStream out = service.getContentResolver().openOutputStream(uri)) {
++                if (out == null || !bmp.compress(Bitmap.CompressFormat.PNG, 100, out))
++                    throw new java.io.IOException("Couldn't write screenshot");
++            }
++            values.clear();
++            values.put(MediaStore.Downloads.IS_PENDING, 0);
++            service.getContentResolver().update(uri, values, null, null);
++            return "PNG saved: Download/A11yInspector/" + name;
++        } catch (Exception e) {
++            service.getContentResolver().delete(uri, null, null);
++            throw e;
++        }
++    }
++}
+--- a/inspector/src/main/java/com/kunukuntla/a11yinspector/PurpleFinder.java
++++ b/inspector/src/main/java/com/kunukuntla/a11yinspector/PurpleFinder.java
+@@ -125,7 +125,7 @@
+     }
+ 
+     /** The page's own small tappable elements and our overlay windows: never the pop-up's button. */
+-    private List<Rect> excluded(Page.Before before) {
++    List<Rect> excluded(Page.Before before) {
+         List<Rect> out = new ArrayList<>();
+         android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
+         long quarter = (long) dm.widthPixels * dm.heightPixels / 4;
+--- a/inspector/src/main/java/com/kunukuntla/a11yinspector/Ticker.java
++++ b/inspector/src/main/java/com/kunukuntla/a11yinspector/Ticker.java
+@@ -251,7 +251,9 @@
+     void clearNow() {
+         begin(true);
+         log("Clear: pressing the OK / Close of every pop-up up now");
+-        later(() -> clearPopups(null, 1, () -> stop(popups == 0 ? "No pop-up up" : "Pop-ups cleared")), 50);
++        later(() -> clearPopups(null, 20, () -> stop(popups == 0
++                ? "No accessible or matching purple popup button found - use a deep scan if one is visible"
++                : "Pop-up clearing finished; see verification in the report")), 50);
+     }
+ 
+     private void begin(boolean clear) {
+@@ -659,7 +661,9 @@
+                     if (popupTaps == 0) {
+                         if (s.hinted()) {
+                             log("pop-up: accessibility hints at one (" + s.text()
+-                                    + ") but no button to close it was found - going on");
++                                    + ") but no button to close it was found");
++                            stop("Possible popup still covers the page - stopped; take a deep scan");
++                            return;
+                         } else {
+                             log("pop-up: state A - none came (watched " + waitMs() + " ms)");
+                         }
+@@ -668,6 +672,11 @@
+                     then.run();
+                 }
+             };
++            // Wait out the screenshot cooldown instead of treating a skipped image as absence.
++            if (clearOnly && shots && finder.waitMs() > 0) {
++                later(() -> clearPopups(before, looksLeft, then), finder.waitMs());
++                return;
++            }
+             // C: a pop-up drawn but not in the tree - its purple button on a screenshot, on every
+             // look the screenshot rate allows (Chrome reports no cover, so none is waited for).
+             if (shots && finder.waitMs() == 0) {
+@@ -756,13 +765,18 @@
+                     v.shot = "purple button at " + r.centerX() + "," + r.centerY();
+                     pressPurple(r, v, before, then);
+                 } else {
++                    if (!shots) {
++                        stop("Popup close could not be visually verified - take a deep scan");
++                        return;
++                    }
+                     log("dismiss result: gone ✓ (accessibility and screenshot)");
+                     secondLook(before, then);
+                 }
+             }, why -> {
+                 shots = false;
+-                log("dismiss result: gone ✓ (accessibility; no screenshot - " + why + ")");
+-                secondLook(before, then);
++                log("dismiss result: screenshot unavailable - " + why);
++                // PurpleFinder calls the result callback once with null after this failure.
++
+             }, before);
+         }, Math.max(80, finder.waitMs()));
+     }
+@@ -783,11 +797,15 @@
+         later(() -> finder.find(r -> {
+             if (!running || g != gen) return;
+             if (r != null) stuck("its purple button is still on the screen at " + r.centerX() + "," + r.centerY());
++            else if (!shots) stop("Popup close could not be visually verified - take a deep scan");
+             else {
+                 log("pop-up: 3 presses after this box - none left (accessibility and screenshot), going on");
+                 then.run();
+             }
+-        }, why -> then.run(), before), finder.waitMs());
++        }, why -> {
++            shots = false;
++            log("verification screenshot unavailable: " + why);
++        }, before), finder.waitMs());
+     }
+ 
+     /** A pop-up that won't close: stop, so no tick lands under it. */
+@@ -861,6 +879,10 @@
+     }
+ 
+     private void checkPurpleGone(Rect was, Runnable then) {
++        if (finder.waitMs() > 0) {
++            later(() -> checkPurpleGone(was, then), finder.waitMs());
++            return;
++        }
+         int g = gen;
+         finder.find(r -> {
+             if (!running || g != gen) return;
+@@ -878,6 +900,9 @@
+                 then.run();
+             }
+         }, why -> {
++            shots = false;
++            log("dismiss result unknown: " + why);
++            stop("Couldn't verify the popup closed - take a deep scan");
+         });
+     }
+ 
+--- a/inspector/src/main/res/values/strings.xml
++++ b/inspector/src/main/res/values/strings.xml
+@@ -1,5 +1,5 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+     <string name="app_name">A11y Inspector</string>
+-    <string name="a11y_description">Shows Scan, Tick, Clear and Book buttons over any app, all working through accessibility (no screenshots). Scan lists everything the app reports on the screen - every element, its text, state and actions, the pop-ups, checkboxes, calendar and dropdown. Tick ticks every checkbox and clears the pop-ups; Clear clears the pop-ups up now; Book picks the option, the date in the calendar, the checkbox, the radio button and Continue.</string>
++    <string name="a11y_description">Shows Scan, Tick, Clear and Book buttons over any app, using accessibility with screenshots for popup detection and deep-scan evidence. Scan lists everything the app reports on the screen - every element, its text, state and actions, the pop-ups, checkboxes, calendar and dropdown. Tick ticks every checkbox and clears the pop-ups; Clear clears the pop-ups up now; Book picks the option, the date in the calendar, the checkbox, the radio button and Continue.</string>
+ </resources>
+--- /dev/null
++++ b/inspector/src/test/java/com/kunukuntla/a11yinspector/PopupDiagnosticsTest.java
+@@ -0,0 +1,35 @@
++package com.kunukuntla.a11yinspector;
++
++import org.junit.Test;
++import java.util.LinkedHashMap;
++import java.util.Map;
++import static org.junit.Assert.*;
++
++public class PopupDiagnosticsTest {
++    @Test public void unchangedTreeProducesNoChanges() {
++        Map<String, String> nodes = new LinkedHashMap<>();
++        nodes.put("23:uid-5", "page");
++        assertEquals("", PopupDiagnostics.changes(nodes, new LinkedHashMap<>(nodes)));
++    }
++
++    @Test public void capturesPopupArrivalCheckboxChangeAndRemoval() {
++        Map<String, String> before = new LinkedHashMap<>(), after = new LinkedHashMap<>();
++        before.put("box", "checked=false");
++        before.put("old", "old node");
++        after.put("box", "checked=true");
++        after.put("cover", "empty backdrop");
++        String diff = PopupDiagnostics.changes(before, after);
++        assertTrue(diff.contains("~ box checked=true"));
++        assertTrue(diff.contains("+ cover empty backdrop"));
++        assertTrue(diff.contains("- old old node"));
++    }
++
++    @Test public void boundsVerboseChangesWithoutLosingOmittedCount() {
++        Map<String, String> after = new LinkedHashMap<>();
++        for (int i = 0; i < 65; i++) after.put("node" + i, "value");
++        String diff = PopupDiagnostics.changes(new LinkedHashMap<>(), after);
++        assertTrue(diff.contains("+ node59 value"));
++        assertFalse(diff.contains("+ node60 value"));
++        assertTrue(diff.contains("5 further changes omitted"));
++    }
++}
