@@ -17,6 +17,7 @@ import java.util.function.Consumer;
 /**
  * The pages after the ticking, by themselves (on / off with the 🤖 Auto round button, "auto_flow"):
  * <ul>
+ *   <li>Page 3 when a Tick run ends with a box still empty: Back to page 2, then page 1.</li>
  *   <li>Page 3, no empty checkbox left, Continue on: Continue is pressed. When the page
  *       stays on page 3 after it (its error), or Continue stays off with every box ticked:
  *       Back to page 2, then Back again to page 1 (the page before page 2, whatever it is).</li>
@@ -65,6 +66,13 @@ final class AutoFlow {
         return busy;
     }
 
+    /** A Tick run has just ended: the next reading of page 3 decides (Continue, or back). */
+    private boolean tickEnded;
+
+    void tickEnded() {
+        tickEnded = true;
+    }
+
     /** The page as read (only while nothing else runs); {@code bookingPkg}: the app of pages 2-3. */
     void onPage(PageKind.Kind kind, PageKind.Facts f, String bookingPkg) {
         if (busy || !enabled(service)) return;
@@ -75,9 +83,15 @@ final class AutoFlow {
             if (!confirmDone) pressConfirm();
             return;
         }
+        boolean afterTick = tickEnded;
+        tickEnded = false;
         if (kind != PageKind.Kind.TICKING || f.boxes == 0) return;
         if (f.empty() > 0) {
             offSince = 0;
+            // Tick has ended and a box is still empty (a row the page refused): start again from page 1.
+            if (afterTick) {
+                backToPage1(f.empty() + (f.empty() == 1 ? " checkbox" : " checkboxes") + " not ticked after Tick");
+            }
             return;
         }
         if (f.contOn) {

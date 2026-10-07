@@ -357,7 +357,10 @@ public class InspectorService extends AccessibilityService {
                 saveReport(log);
                 tickButton.setText("☑\nTick");
                 finished(summary);
-                // Every box ticked: page 3's Continue goes now, not at the next page change.
+                // Page 3 decides now, not at the next page change: Continue when every box
+                // is ticked, back to page 1 when one is still empty.
+                // (Not when you stopped it yourself: then nothing goes back.)
+                if (flow != null && !summary.startsWith("Stopped")) flow.tickEnded();
                 handler.post(InspectorService.this::checkPage);
             }
 
