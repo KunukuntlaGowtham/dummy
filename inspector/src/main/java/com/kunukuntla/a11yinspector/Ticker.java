@@ -151,6 +151,7 @@ final class Ticker {
             String name = Page.label(n);
             lastSignals = "";
             lastShot = "not taken yet";
+            lastChance = false;
             log("row " + row + " [" + app() + "]: checkbox found - " + describeBox(n) + ", state before ☐");
             log("row " + row + ": clicking its checkbox" + (name.isEmpty() ? "" : " \"" + name + "\"")
                     + (n.isVisibleToUser() ? "" : " (off screen)") + " - click method: ACTION_CLICK on the box");
@@ -332,6 +333,8 @@ final class Ticker {
         }
         behaviour = clear ? null : new Behaviour(spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : null);
         String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString(spotKey, null);
+        coverApp = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE)
+                .getBoolean("cover_" + (spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : "?"), false);
         okSpot = spot == null ? null : Rect.unflattenFromString(spot);
         if (!clear) missedChanged(); // a new run: nothing missed yet
     }
@@ -465,6 +468,7 @@ final class Ticker {
         Page.Before before = new Page.Before(service);
         lastSignals = "";
         lastShot = "not taken yet";
+        lastChance = false;
         log("row " + b.row + " [" + app() + "]: checkbox found - " + describeBox(b.node) + ", state before ☐");
         log("row " + b.row + ": clicking its checkbox (at " + b.box.centerX() + "," + b.box.centerY() + ") - click method: ACTION_CLICK on the box");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
@@ -676,6 +680,15 @@ final class Ticker {
         }
     }
 
+    /**
+     * This app reports its pop-up's cover (the TTD app's web view does, Chrome doesn't): then a
+     * screenshot is taken only once the cover came - an early one, before the pop-up is drawn,
+     * would only hold the next one back (~3 screenshots a second). Kept per app.
+     */
+    private boolean coverApp;
+    /** One screenshot at the end of a quiet watch was taken for this box (cover apps). */
+    private boolean lastChance;
+
     /** The signals last logged for this box: a look is logged only when they change. */
     private String lastSignals = "";
     /** The last screenshot's verdict for this box (looks between screenshots carry it on). */
@@ -732,6 +745,12 @@ final class Ticker {
                 closeB(s, before, then);
                 return;
             }
+            if (s.cover && before != null && !coverApp) {
+                coverApp = true;
+                service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
+                        .putBoolean("cover_" + app(), true).apply();
+                log("this app reports its pop-up's cover - from now on a screenshot only once the cover comes");
+            }
             Runnable lookOn = () -> {
                 long now = SystemClock.uptimeMillis();
                 // Accessibility hints at a pop-up (cover, alert, window) but no button showed
@@ -740,6 +759,30 @@ final class Ticker {
                 if ((looksLeft > 1 || hintWait) && (tickTime == 0 || now < waitUntil || hintWait)) {
                     clearPopups(before, Math.max(1, looksLeft - 1), then);
                 } else {
+                    // A cover app, no cover came: one screenshot still, so a pop-up without a
+                    // cover isn't missed (only when nothing came - the rare case there).
+                    if (coverApp && shots && popupTaps == 0 && !lastChance && before != null) {
+                        lastChance = true;
+                        later(() -> {
+                            int g2 = gen;
+                            finder.find(r -> {
+                                if (!running || g2 != gen) return;
+                                if (r != null) {
+                                    s.shot = "purple button at " + r.centerX() + "," + r.centerY();
+                                    logSignals(s);
+                                    pressPurple(r, s, before, then);
+                                } else {
+                                    log("pop-up: state A - none came (no cover, none on the last screenshot)");
+                                    quietBoxes++;
+                                    then.run();
+                                }
+                            }, why -> {
+                                shots = false;
+                                log("pop-up: no screenshots - " + why);
+                            }, before);
+                        }, finder.waitMs());
+                        return;
+                    }
                     if (popupTaps == 0) {
                         if (s.hinted()) {
                             log("pop-up: accessibility hints at one (" + s.text()
@@ -761,7 +804,9 @@ final class Ticker {
             }
             // C: a pop-up drawn but not in the tree - its purple button on a screenshot, on every
             // look the screenshot rate allows (Chrome reports no cover, so none is waited for).
-            if (shots && finder.waitMs() == 0) {
+            // In an app that reports the cover, only once it (or another hint) came.
+            boolean shotWanted = !coverApp || before == null || s.hinted();
+            if (shots && shotWanted && finder.waitMs() == 0) {
                 int g = gen;
                 finder.find(r -> {
                     if (!running || g != gen) return;
@@ -946,10 +991,9 @@ final class Ticker {
     private void waitCoverGone(Page.Before before, long waited, Rect tapped, Runnable then) {
         later(() -> {
             if (!Page.coverCame(service, before)) {
-                log("dismiss result: its cover went (" + waited + " ms)");
-                // The cover went: with screenshots, also check its purple button went.
-                if (tapped != null && shots) checkPurpleGone(tapped, then);
-                else then.run();
+                // The cover went with the pop-up: that is the check - no extra screenshot (speed).
+                log("dismiss result: gone ✓ - its cover went (" + waited + " ms)");
+                then.run();
             } else if (waited >= 1200) {
                 log("dismiss result: still up after 1.2 s - finding its OK again on a screenshot");
                 okSpot = null;
