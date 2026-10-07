@@ -125,7 +125,7 @@ final class PurpleFinder {
     }
 
     /** The page's own small tappable elements and our overlay windows: never the pop-up's button. */
-    private List<Rect> excluded(Page.Before before) {
+    List<Rect> excluded(Page.Before before) {
         List<Rect> out = new ArrayList<>();
         android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
         long quarter = (long) dm.widthPixels * dm.heightPixels / 4;

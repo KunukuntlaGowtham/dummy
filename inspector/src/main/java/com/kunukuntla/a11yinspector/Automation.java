@@ -80,7 +80,7 @@ final class Automation {
         }
         Page.Popup p = Page.popup(service, null);
         if (p == null) {
-            rep.append("    Clear would press: nothing (no pop-up up)\n");
+            rep.append("    Clear: no accessible popup button or dismiss action found; a drawn popup may still be present\n");
         } else {
             String what = p.button != null ? "\"" + Page.label(p.button) + "\" at " + center(Page.bounds(p.button))
                     : "dismiss on " + shortClass(p.dismiss);
@@ -88,7 +88,7 @@ final class Automation {
             sum.append("🪟 Pop-up up: Clear would press ").append(what).append('\n');
         }
         if (dialogs == 0 && p == null && ws.size() <= 1) {
-            rep.append("    none up in accessibility - a pop-up drawn without accessibility (as in Chrome) shows only on a\n"
+            rep.append("    no dialog/button exposed in accessibility - a drawn popup may only be visible on a\n"
                     + "    screenshot: Tick and Clear look there for its purple button in the middle\n");
         }
         rep.append("    After a tick, Tick tells three cases apart: A no pop-up; B a pop-up accessibility shows (dialog,\n"

@@ -251,7 +251,9 @@ final class Ticker {
     void clearNow() {
         begin(true);
         log("Clear: pressing the OK / Close of every pop-up up now");
-        later(() -> clearPopups(null, 1, () -> stop(popups == 0 ? "No pop-up up" : "Pop-ups cleared")), 50);
+        later(() -> clearPopups(null, 20, () -> stop(popups == 0
+                ? "No accessible or matching purple popup button found - use a deep scan if one is visible"
+                : "Pop-up clearing finished; see verification in the report")), 50);
     }
 
     private void begin(boolean clear) {
@@ -659,7 +661,9 @@ final class Ticker {
                     if (popupTaps == 0) {
                         if (s.hinted()) {
                             log("pop-up: accessibility hints at one (" + s.text()
-                                    + ") but no button to close it was found - going on");
+                                    + ") but no button to close it was found");
+                            stop("Possible popup still covers the page - stopped; take a deep scan");
+                            return;
                         } else {
                             log("pop-up: state A - none came (watched " + waitMs() + " ms)");
                         }
@@ -668,6 +672,11 @@ final class Ticker {
                     then.run();
                 }
             };
+            // Wait out the screenshot cooldown instead of treating a skipped image as absence.
+            if (clearOnly && shots && finder.waitMs() > 0) {
+                later(() -> clearPopups(before, looksLeft, then), finder.waitMs());
+                return;
+            }
             // C: a pop-up drawn but not in the tree - its purple button on a screenshot, on every
             // look the screenshot rate allows (Chrome reports no cover, so none is waited for).
             if (shots && finder.waitMs() == 0) {
@@ -756,13 +765,18 @@ final class Ticker {
                     v.shot = "purple button at " + r.centerX() + "," + r.centerY();
                     pressPurple(r, v, before, then);
                 } else {
+                    if (!shots) {
+                        stop("Popup close could not be visually verified - take a deep scan");
+                        return;
+                    }
                     log("dismiss result: gone ✓ (accessibility and screenshot)");
                     secondLook(before, then);
                 }
             }, why -> {
                 shots = false;
-                log("dismiss result: gone ✓ (accessibility; no screenshot - " + why + ")");
-                secondLook(before, then);
+                log("dismiss result: screenshot unavailable - " + why);
+                // PurpleFinder calls the result callback once with null after this failure.
+
             }, before);
         }, Math.max(80, finder.waitMs()));
     }
@@ -783,11 +797,15 @@ final class Ticker {
         later(() -> finder.find(r -> {
             if (!running || g != gen) return;
             if (r != null) stuck("its purple button is still on the screen at " + r.centerX() + "," + r.centerY());
+            else if (!shots) stop("Popup close could not be visually verified - take a deep scan");
             else {
                 log("pop-up: 3 presses after this box - none left (accessibility and screenshot), going on");
                 then.run();
             }
-        }, why -> then.run(), before), finder.waitMs());
+        }, why -> {
+            shots = false;
+            log("verification screenshot unavailable: " + why);
+        }, before), finder.waitMs());
     }
 
     /** A pop-up that won't close: stop, so no tick lands under it. */
@@ -861,6 +879,10 @@ final class Ticker {
     }
 
     private void checkPurpleGone(Rect was, Runnable then) {
+        if (finder.waitMs() > 0) {
+            later(() -> checkPurpleGone(was, then), finder.waitMs());
+            return;
+        }
         int g = gen;
         finder.find(r -> {
             if (!running || g != gen) return;
@@ -878,6 +900,9 @@ final class Ticker {
                 then.run();
             }
         }, why -> {
+            shots = false;
+            log("dismiss result unknown: " + why);
+            stop("Couldn't verify the popup closed - take a deep scan");
         });
     }
 

@@ -47,6 +47,8 @@ public class InspectorService extends AccessibilityService {
     private WindowManager.LayoutParams buttonParams;
     private View card;
     private boolean scanning;
+    private boolean destroyed;
+    private String popupWatchReport = "";
 
     @Override
     protected void onServiceConnected() {
@@ -88,6 +90,7 @@ public class InspectorService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        destroyed = true;
         closeCard();
         closeAsk();
         if (ticker != null) ticker.stop("Stopped");
@@ -439,7 +442,7 @@ public class InspectorService extends AccessibilityService {
 
     private void autoCheck() {
         // Tick and Clear clear their own pop-ups: never tap the same one twice.
-        if (ticker.isRunning() || clearer.isRunning()) return;
+        if (scanning || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
         if (ok == null && Page.coverCame(this, autoBaseline)) {
             // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
@@ -503,7 +506,7 @@ public class InspectorService extends AccessibilityService {
         autoShotQueued = true;
         handler.postDelayed(() -> autoFinder.find(r -> {
             autoShotQueued = false;
-            if (!autoClear || r == null || ticker.isRunning() || clearer.isRunning()) return;
+            if (!autoClear || scanning || r == null || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
             long now = android.os.SystemClock.uptimeMillis();
             if (now - autoLastPress < 700) return;
             autoLastPress = now;
@@ -520,7 +523,7 @@ public class InspectorService extends AccessibilityService {
 
     /** Another run is on: say so instead of starting a second one over it. */
     private boolean busy() {
-        boolean on = ticker.isRunning() || clearer.isRunning() || booker.isRunning();
+        boolean on = scanning || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
         if (on) Toast.makeText(this, "Stop the running one first", Toast.LENGTH_SHORT).show();
         return on;
     }
@@ -763,7 +766,7 @@ public class InspectorService extends AccessibilityService {
 
     /** Scans the screen in front; {@code deep}: wake the web views first and wait. */
     private void scan(boolean deep) {
-        if (scanning) return;
+        if (busy()) return;
         scanning = true;
         closeCard();
         button.setAlpha(0.5f);
@@ -812,11 +815,13 @@ public class InspectorService extends AccessibilityService {
     /** Records the app's accessibility events for 15 s while you use it. */
     private void record() {
         closeCard();
+        if (busy()) return;
         recordPkg = appInFront();
         if (recordPkg.isEmpty()) {
             Toast.makeText(this, "No app in front to record", Toast.LENGTH_SHORT).show();
             return;
         }
+        scanning = true;
         recorder.start();
         Toast.makeText(this, "Recording " + recordPkg + " for 15 s - use the app now", Toast.LENGTH_LONG).show();
         button.setAlpha(0.5f);
@@ -835,16 +840,41 @@ public class InspectorService extends AccessibilityService {
         } catch (RuntimeException e) {
             r = new Scanner.Result("Scan failed: " + e, "Scan failed: " + e);
         }
-        done(r.summary, r.report, deep);
+        if (!deep) {
+            done(r.summary, r.report, false);
+            return;
+        }
+        Scanner.Result scan = r;
+        String evidence;
+        try { evidence = PopupDiagnostics.treeEvidence(this); }
+        catch (RuntimeException e) { evidence = "\nPopup diagnostics failed: " + e; }
+        String details = evidence;
+        // Hide our buttons briefly so the screenshot shows the page underneath.
+        View[] overlays = shownButtons();
+        int[] visibility = new int[overlays.length];
+        for (int i = 0; i < overlays.length; i++) {
+            visibility[i] = overlays[i] == null ? View.GONE : overlays[i].getVisibility();
+            if (overlays[i] != null) overlays[i].setVisibility(View.INVISIBLE);
+        }
+        handler.postDelayed(() -> PopupDiagnostics.capture(this, visual -> {
+            if (destroyed) return;
+            for (int i = 0; i < overlays.length; i++)
+                if (overlays[i] != null) overlays[i].setVisibility(visibility[i]);
+            String watch = popupWatchReport;
+            popupWatchReport = "";
+            done(scan.summary + "\nVisual popup evidence collected; see Full report for the PNG or capture error.",
+                    scan.report + details + watch + visual, true);
+        }), 400);
     }
 
     private void done(String summary, String report, boolean deep) {
         saveReport(report);
+        lastSummary = summary;
         scanning = false;
         button.setAlpha(1f);
         if (deep) {
-            showCard(summary, new String[] {"Page code", "Whole page ↓", "Record 15 s"},
-                    new View.OnClickListener[] {v -> pageCode(), v -> wholePage(), v -> record()});
+            showCard(summary, new String[] {"Page code", "Whole page ↓", "Record 15 s", "Watch popup 15 s"},
+                    new View.OnClickListener[] {v -> pageCode(), v -> wholePage(), v -> record(), v -> watchPopup()});
         } else {
             showCard(summary);
         }
@@ -870,10 +900,55 @@ public class InspectorService extends AccessibilityService {
     /** Scrolls the page to the end, screen by screen, listing what each screen brings. */
     private void wholePage() {
         closeCard();
+        if (busy()) return;
         if (wholePage == null) wholePage = new WholePage(this);
         scanning = true;
         button.setAlpha(0.5f);
         wholePage.walk((sum, rep) -> done(sum, rep, false));
+    }
+
+    /** Start before triggering the popup; leave it open for the final screenshot. */
+    private void watchPopup() {
+        if (busy()) return;
+        closeCard();
+        scanning = true;
+        button.setAlpha(0.5f);
+        final String pkg = appInFront();
+        final java.util.Map<String, String> baseline;
+        try { baseline = PopupDiagnostics.snapshot(this); }
+        catch (RuntimeException e) {
+            done("Popup watch failed", "Popup watch failed: " + e, false);
+            return;
+        }
+        Toast.makeText(this, "15 s: trigger the popup now and leave it open. Auto-clear pauses during capture.",
+                Toast.LENGTH_LONG).show();
+        watchPopupStep(pkg, baseline, baseline, new StringBuilder("\nPOPUP WATCH (500 ms samples, 15 s)\n"
+                + "Node IDs are per snapshot/session; index matching on older Android is approximate.\n"), 0);
+    }
+
+    private void watchPopupStep(String pkg, java.util.Map<String, String> baseline,
+                               java.util.Map<String, String> previous, StringBuilder log, int step) {
+        handler.postDelayed(() -> {
+            if (destroyed) return;
+            try {
+                if (!pkg.equals(appInFront())) {
+                    done("Popup watch stopped: app changed", log + "\nApp changed; capture stopped.", false);
+                    return;
+                }
+                java.util.Map<String, String> now = PopupDiagnostics.snapshot(this);
+                String delta = PopupDiagnostics.changes(previous, now);
+                if (!delta.isEmpty() && log.length() < 150000)
+                    log.append("\nAt ").append((step + 1) * 500).append(" ms\n").append(delta);
+                if (step + 1 < 30) watchPopupStep(pkg, baseline, now, log, step + 1);
+                else {
+                    log.append("\nFINAL COMPARED WITH START\n").append(PopupDiagnostics.changes(baseline, now));
+                    popupWatchReport = log.toString();
+                    finish(true);
+                }
+            } catch (RuntimeException e) {
+                done("Popup watch failed", log + "\n" + e, false);
+            }
+        }, 500);
     }
 
     private List<AccessibilityNodeInfo> roots() {
@@ -918,10 +993,13 @@ public class InspectorService extends AccessibilityService {
         row.setGravity(Gravity.END);
         if (extras.length > 0) {
             // The deeper looks, on their own row.
-            LinearLayout more = new LinearLayout(this);
-            more.setGravity(Gravity.END);
-            for (int i = 0; i < extras.length; i++) more.addView(cardButton(extraLabels[i], extras[i]));
-            box.addView(more);
+            for (int i = 0; i < extras.length; i += 2) {
+                LinearLayout more = new LinearLayout(this);
+                more.setGravity(Gravity.END);
+                for (int j = i; j < Math.min(i + 2, extras.length); j++)
+                    more.addView(cardButton(extraLabels[j], extras[j]));
+                box.addView(more);
+            }
         }
         row.addView(cardButton("Close", v -> closeCard()));
         row.addView(cardButton("Full report", v -> {
