@@ -71,8 +71,29 @@ public class MainActivity extends Activity {
                 + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
-        how.setPadding(0, dp(6), 0, dp(12));
+        how.setLineSpacing(dp(2), 1f);
+        how.setPadding(0, dp(6), 0, dp(4));
+        // The long help folds away: tap "How to use" to open or close it.
+        android.content.SharedPreferences ui = getSharedPreferences("settings", MODE_PRIVATE);
+        TextView howToggle = new TextView(this);
+        howToggle.setTextColor(Color.WHITE);
+        howToggle.setTypeface(Typeface.DEFAULT_BOLD);
+        howToggle.setTextSize(13);
+        howToggle.setPadding(0, dp(10), 0, dp(10));
+        Runnable paintHow = () -> {
+            boolean open = ui.getBoolean("help_open", false);
+            how.setVisibility(open ? View.VISIBLE : View.GONE);
+            howToggle.setText(open ? "▾  How to use (tap to hide)" : "▸  How to use");
+        };
+        howToggle.setOnClickListener(v -> {
+            ui.edit().putBoolean("help_open", !ui.getBoolean("help_open", false)).apply();
+            paintHow.run();
+        });
+        paintHow.run();
+        head.addView(howToggle);
         head.addView(how);
+        View gap = new View(this);
+        head.addView(gap, new LinearLayout.LayoutParams(1, dp(8)));
         status = new TextView(this);
         status.setTextColor(Color.WHITE);
         status.setTypeface(Typeface.DEFAULT_BOLD);
@@ -83,7 +104,7 @@ public class MainActivity extends Activity {
         page.addView(head);
 
         LinearLayout buttons = new LinearLayout(this);
-        buttons.setPadding(dp(12), dp(12), dp(12), dp(4));
+        buttons.setPadding(dp(12), dp(14), dp(12), dp(6));
         buttons.addView(pill("Share", v -> share()));
         buttons.addView(pill("Copy", v -> copy()));
         buttons.addView(pill("Save to Downloads", v -> save()));
@@ -100,7 +121,16 @@ public class MainActivity extends Activity {
         wide.addView(report);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(wide);
-        page.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
+        // The report on a white card, apart from the buttons above it.
+        GradientDrawable sheet = new GradientDrawable();
+        sheet.setColor(Color.WHITE);
+        sheet.setCornerRadius(dp(14));
+        sheet.setStroke(dp(1), 0xFFDCE3DC);
+        scroll.setBackground(sheet);
+        scroll.setClipToOutline(true);
+        LinearLayout.LayoutParams sheetLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1);
+        sheetLp.setMargins(dp(12), dp(10), dp(12), dp(12));
+        page.addView(scroll, sheetLp);
         setContentView(page);
     }
 
@@ -200,7 +230,7 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(12), dp(6), dp(12), dp(4));
         TextView head = new TextView(this);
-        head.setText("On the screen (tap to show / hide):");
+        head.setText("Round buttons on the screen (tap to show / hide):");
         head.setTextColor(0xFF4A4F4A);
         head.setTextSize(13);
         box.addView(head);
@@ -231,7 +261,7 @@ public class MainActivity extends Activity {
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            lp.rightMargin = dp(8);
+            lp.rightMargin = dp(10);
             row.addView(chip, lp);
         }
         HorizontalScrollView wide = new HorizontalScrollView(this);
@@ -255,7 +285,7 @@ public class MainActivity extends Activity {
         b.setOnClickListener(onClick);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.rightMargin = dp(8);
+        lp.rightMargin = dp(10);
         b.setLayoutParams(lp);
         return b;
     }

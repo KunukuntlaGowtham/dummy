@@ -119,7 +119,9 @@ public class InspectorService extends AccessibilityService {
         button = new TextView(this);
         button.setText("🔍\nScan");
         button.setTextColor(Color.WHITE);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
+        button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        button.setLineSpacing(0, 0.9f);
         button.setGravity(Gravity.CENTER);
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.OVAL);
@@ -154,6 +156,7 @@ public class InspectorService extends AccessibilityService {
                     start[1] = buttonParams.y;
                     dragged[0] = false;
                     longDone[0] = false;
+                    v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start();
                     handler.postDelayed(onLong, ViewConfiguration.getLongPressTimeout());
                     return true;
                 case MotionEvent.ACTION_MOVE:
@@ -169,10 +172,12 @@ public class InspectorService extends AccessibilityService {
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     handler.removeCallbacks(onLong);
                     if (!dragged[0] && !longDone[0]) scan(false);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     handler.removeCallbacks(onLong);
                     return true;
                 default:
@@ -321,6 +326,9 @@ public class InspectorService extends AccessibilityService {
         return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton};
     }
 
+    /** Down the screen from one round button to the next: 56 dp button + 16 dp gap. */
+    private static final int BUTTON_STEP = 72;
+
     static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "link"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
@@ -344,7 +352,7 @@ public class InspectorService extends AccessibilityService {
                 if (on) {
                     lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                     lp.x = dp(12);
-                    lp.y = dp(160 + 66 * k);
+                    lp.y = dp(160 + BUTTON_STEP * k);
                 } else {
                     lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                 }
@@ -548,8 +556,11 @@ public class InspectorService extends AccessibilityService {
         TextView b = new TextView(this);
         b.setText(label);
         b.setTextColor(Color.WHITE);
-        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
+        b.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        b.setLineSpacing(0, 0.9f);
         b.setGravity(Gravity.CENTER);
+        b.setContentDescription(label.replace('\n', ' '));
         GradientDrawable bg = new GradientDrawable();
         bg.setShape(GradientDrawable.OVAL);
         bg.setColor(colour);
@@ -581,6 +592,7 @@ public class InspectorService extends AccessibilityService {
                     start[1] = lp.y;
                     dragged[0] = false;
                     longDone[0] = false;
+                    v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start();
                     if (onLong != null) handler.postDelayed(longPress, ViewConfiguration.getLongPressTimeout());
                     return true;
                 case MotionEvent.ACTION_MOVE:
@@ -596,10 +608,12 @@ public class InspectorService extends AccessibilityService {
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     handler.removeCallbacks(longPress);
                     if (!dragged[0] && !longDone[0]) onTap.onClick(v);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     handler.removeCallbacks(longPress);
                     return true;
                 default:
@@ -687,7 +701,11 @@ public class InspectorService extends AccessibilityService {
 
         LinearLayout row = new LinearLayout(this);
         row.setGravity(Gravity.END);
-        row.addView(cardButton("Cancel", v -> closeAsk()));
+        LinearLayout.LayoutParams formRowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        formRowLp.topMargin = dp(10);
+        row.setLayoutParams(formRowLp);
+        row.addView(cardButton("Cancel", v -> closeAsk()), cardButtonLp(true));
         // Save: kept for ▶ Go. Save & Start: kept, and filled now.
         for (boolean startNow : new boolean[] {false, true}) {
             row.addView(cardButton(startNow ? "Save & Start" : "Save", v -> {
@@ -712,7 +730,7 @@ public class InspectorService extends AccessibilityService {
                     booker.setHandOver(linkOn);
                     booker.start(plan);
                 }, 400);
-            }));
+            }, startNow), cardButtonLp(true));
         }
         box.addView(row);
 
@@ -986,31 +1004,40 @@ public class InspectorService extends AccessibilityService {
         text.setText(summary);
         text.setTextColor(Color.WHITE);
         text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        text.setLineSpacing(dp(2), 1f);
+        text.setTextIsSelectable(false);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(text);
         box.addView(scroll, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 Math.min(dp(360), getResources().getDisplayMetrics().heightPixels / 2)));
 
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.END);
+        View line = new View(this);
+        line.setBackgroundColor(0x33FFFFFF);
+        LinearLayout.LayoutParams lineLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1));
+        lineLp.topMargin = dp(10);
+        lineLp.bottomMargin = dp(6);
+        box.addView(line, lineLp);
         if (extras.length > 0) {
-            // The deeper looks, on their own row.
+            // The deeper looks: two to a row, each button the same width, with a gap between.
             for (int i = 0; i < extras.length; i += 2) {
                 LinearLayout more = new LinearLayout(this);
-                more.setGravity(Gravity.END);
-                for (int j = i; j < Math.min(i + 2, extras.length); j++)
-                    more.addView(cardButton(extraLabels[j], extras[j]));
+                for (int j = i; j < i + 2; j++) {
+                    View b = j < extras.length ? cardButton(extraLabels[j], extras[j], false) : new View(this);
+                    more.addView(b, cardButtonLp(true));
+                }
                 box.addView(more);
             }
         }
-        row.addView(cardButton("Close", v -> closeCard()));
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.END);
+        row.addView(cardButton("Close", v -> closeCard(), false), cardButtonLp(false));
         row.addView(cardButton("Full report", v -> {
             closeCard();
             startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        }));
+        }, true), cardButtonLp(false));
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(8);
+        rowLp.topMargin = dp(4);
         box.addView(row, rowLp);
 
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
@@ -1030,13 +1057,38 @@ public class InspectorService extends AccessibilityService {
     }
 
     private TextView cardButton(String label, View.OnClickListener onClick) {
+        return cardButton(label, onClick, false);
+    }
+
+    /** A rounded button on a card: outlined green, or filled green when it's the main one. */
+    private TextView cardButton(String label, View.OnClickListener onClick, boolean main) {
         TextView b = new TextView(this);
         b.setText(label);
-        b.setTextColor(0xFF9AE6A1);
+        b.setTextColor(main ? 0xFF10301A : 0xFF9AE6A1);
+        b.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        b.setPadding(dp(14), dp(8), dp(14), dp(8));
+        b.setGravity(Gravity.CENTER);
+        b.setMinHeight(dp(44));
+        b.setPadding(dp(12), dp(8), dp(12), dp(8));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(22));
+        if (main) bg.setColor(0xFF9AE6A1);
+        else {
+            bg.setColor(0x149AE6A1);
+            bg.setStroke(dp(1), 0x999AE6A1);
+        }
+        b.setBackground(bg);
         b.setOnClickListener(onClick);
         return b;
+    }
+
+    /** Space around a card button, so buttons side by side never touch; {@code fill}: share the row equally. */
+    private LinearLayout.LayoutParams cardButtonLp(boolean fill) {
+        LinearLayout.LayoutParams lp = fill
+                ? new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                : new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(dp(5), dp(5), dp(5), dp(5));
+        return lp;
     }
 
     private void closeCard() {
