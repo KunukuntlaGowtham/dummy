@@ -189,6 +189,7 @@ final class Ticker {
             String name = Page.label(n);
             log("row " + row + ": clicking its checkbox" + (name.isEmpty() ? "" : " \"" + name + "\"")
                     + (n.isVisibleToUser() ? "" : " (off screen)"));
+            lastChance = false;
             // This row's own label (never one kept from an earlier row - the page redraws).
             AccessibilityNodeInfo label = clickableParent(n);
             ClickMethod.Way first = clicks.first(label != null);
@@ -361,6 +362,9 @@ final class Ticker {
         behaviour = clear ? null : new Behaviour(spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : null);
         String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString(spotKey, null);
         okSpot = spot == null ? null : Rect.unflattenFromString(spot);
+        coverApp = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE)
+                .getBoolean("cover_" + spotKey, false);
+        runSpot = null;
         if (!clear) missedChanged(); // a new run: nothing missed yet
     }
 
@@ -643,6 +647,17 @@ final class Ticker {
                 // The page hides the pop-up's words and buttons but reports its cover over the
                 // page: with the OK's place known, tap it now - no screenshot needed.
                 boolean cover = Page.coverCame(service, before);
+                if (cover && before != null && !coverApp) {
+                    coverApp = true;
+                    service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
+                            .putBoolean("cover_" + spotKey, true).apply();
+                    log("this app reports its pop-up's cover - from now on a screenshot only once the cover comes");
+                }
+                // The OK place confirmed this run (a tap there closed the last pop-up): tap it now.
+                if (cover && runSpot != null && before != null) {
+                    pressRunSpot(before, then);
+                    return;
+                }
                 // Pop-ups differ (OK, Proceed, Close ... in other places): with screenshots, the
                 // purple button is found on the screen each time; the remembered place is used
                 // only when no screenshot can be taken.
@@ -654,6 +669,25 @@ final class Ticker {
                     if (looksLeft > 1 && (tickTime == 0 || SystemClock.uptimeMillis() < waitUntil)) {
                         clearPopups(before, woken ? looksLeft : looksLeft - 1, then);
                     } else {
+                        // A cover app and no cover came: one screenshot still, so a pop-up drawn
+                        // without its cover isn't missed (only rows where nothing came pay for it).
+                        if (coverApp && shots && popupTaps == 0 && before != null && !lastChance) {
+                            lastChance = true;
+                            int g2 = gen;
+                            later(() -> finder.find(r -> {
+                                if (!running || g2 != gen) return;
+                                if (r != null) pressPurple(r, before, then);
+                                else {
+                                    log("pop-up: none came (no cover, none on the last screenshot)");
+                                    quietBoxes++;
+                                    then.run();
+                                }
+                            }, why -> {
+                                shots = false;
+                                log("pop-up: no screenshots - " + why);
+                            }, before), finder.waitMs());
+                            return;
+                        }
                         if (popupTaps == 0) {
                             log("pop-up: none came");
                             quietBoxes++;
@@ -666,7 +700,7 @@ final class Ticker {
                 // With the cover in the tree a screenshot is needed only once it has come; pages
                 // that report no cover get one every second at most (screenshots slow things down).
                 long now = SystemClock.uptimeMillis();
-                boolean shotDue = cover || before == null || now - lastBlindShot >= 1000;
+                boolean shotDue = cover || before == null || (!coverApp && now - lastBlindShot >= 1000);
                 if (shots && shotDue && finder.waitMs() == 0) {
                     if (!cover) lastBlindShot = now;
                     int g = gen;
@@ -714,6 +748,21 @@ final class Ticker {
     /** When the last screenshot was taken without a cover in the tree. */
     private long lastBlindShot;
 
+    /**
+     * This app reports its pop-up's cover in the tree (the TTD app's web view does; kept per
+     * app): no screenshot before the cover comes - an early one, before the pop-up is drawn,
+     * only holds the next one back (~3 screenshots a second).
+     */
+    private boolean coverApp;
+    /** One screenshot at the end of a quiet watch was taken for this row (cover apps). */
+    private boolean lastChance;
+    /**
+     * Where OK was tapped this run and the pop-up's cover then went: the next cover gets a tap
+     * there straight away, no screenshot. Found again on a screenshot when a tap there doesn't
+     * close it. Not kept across runs.
+     */
+    private Rect runSpot;
+
     /** Where the pop-up's OK is (learned from a screenshot once, kept for next time), or null. */
     private Rect okSpot;
 
@@ -732,8 +781,51 @@ final class Ticker {
         log("pop-up (drawn, not reported): tapping its purple button at " + r.centerX() + "," + r.centerY()
                 + " - its place is remembered");
         tap(r.centerX(), r.centerY());
-        if (Page.coverCame(service, before)) waitCoverGone(before, 0, then);
-        else later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
+        if (Page.coverCame(service, before)) {
+            waitCoverGoneSince(before, SystemClock.uptimeMillis(), r, then);
+        } else {
+            later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
+        }
+    }
+
+    /** The cover came and OK's place is confirmed this run: tap it straight away, check it went. */
+    private void pressRunSpot(Page.Before before, Runnable then) {
+        popupCame();
+        notePopup("cover only (words and OK hidden)", "the OK place found earlier this run");
+        popups++;
+        popupTaps++;
+        popupsSeen = true;
+        quietBoxes = 0;
+        log("pop-up: its cover came - tapping OK where it was this run (" + runSpot.centerX() + ","
+                + runSpot.centerY() + "), no screenshot");
+        tap(runSpot.centerX(), runSpot.centerY());
+        waitSpotGone(before, SystemClock.uptimeMillis(), 1, then);
+    }
+
+    /**
+     * After a tap at the run's OK place: on the moment the cover goes. Still up after 350 ms:
+     * one more tap there (the pop-up may still have been drawing); then OK is found on a
+     * screenshot again (another pop-up, OK elsewhere) and the kept place is dropped.
+     */
+    private void waitSpotGone(Page.Before before, long since, int taps, Runnable then) {
+        poll(() -> {
+            long waited = SystemClock.uptimeMillis() - since;
+            if (!Page.coverCame(service, before)) {
+                log("pop-up: gone (" + waited + " ms after the tap)");
+                then.run();
+            } else if (waited < 350) {
+                waitSpotGone(before, since, taps, then);
+            } else if (taps < 2 && runSpot != null) {
+                log("pop-up: still up - tapping its OK place once more");
+                popupTaps++;
+                tap(runSpot.centerX(), runSpot.centerY());
+                waitSpotGone(before, SystemClock.uptimeMillis(), taps + 1, then);
+            } else {
+                log("pop-up: still up after taps at the kept place - finding its OK on a screenshot");
+                runSpot = null;
+                clearPopups(before, 20, then);
+            }
+        }, 40);
     }
 
     /** The pop-up's cover is in the tree and its OK's place is known: tap it straight away. */
@@ -756,17 +848,29 @@ final class Ticker {
 
     /** As above, the time since {@code since} by the clock (woken looks don't count as 40 ms). */
     private void waitCoverGoneSince(Page.Before before, long since, Runnable then) {
+        waitCoverGoneSince(before, since, null, then);
+    }
+
+    /**
+     * {@code tapped}: where OK was just tapped (found on a screenshot) - when the cover goes,
+     * that place is kept for this run (only then: the tap there is what closed it).
+     */
+    private void waitCoverGoneSince(Page.Before before, long since, Rect tapped, Runnable then) {
         poll(() -> {
             long waited = SystemClock.uptimeMillis() - since;
             if (!Page.coverCame(service, before)) {
                 log("pop-up: gone (" + waited + " ms)");
+                if (tapped != null) {
+                    if (runSpot == null) log("pop-up: its OK place is kept for this run - next pop-ups get a tap there, no screenshot");
+                    runSpot = new Rect(tapped);
+                }
                 then.run();
             } else if (waited >= 1200) {
                 log("pop-up: still up - finding its OK again on a screenshot");
                 okSpot = null;
                 clearPopups(before, 20, then);
             } else {
-                waitCoverGoneSince(before, since, then);
+                waitCoverGoneSince(before, since, tapped, then);
             }
         }, 40);
     }
