@@ -130,7 +130,10 @@ final class Ticker {
         if (lastIdx >= 0) {
             int left = 0;
             for (AccessibilityNodeInfo m : boxes) if (!m.isChecked() && m.isEnabled()) left++;
-            AccessibilityNodeInfo cont = continueButton();
+            AccessibilityNodeInfo cont = null; // from this read of the page - no second read
+            for (AccessibilityNodeInfo m : all) {
+                if (m.isClickable() && Page.label(m).trim().equalsIgnoreCase("continue")) cont = m;
+            }
             log("row " + lastRow + " final page state: box " + (lastIdx < boxes.size() && boxes.get(lastIdx).isChecked() ? "☑" : "☐")
                     + ", Continue " + (cont == null ? "none" : cont.isEnabled() ? "on" : "off")
                     + ", empty boxes left " + left);
@@ -200,24 +203,32 @@ final class Ticker {
     private static final int NOTHING = 0, TICKED = 1, ANSWERED = 2;
 
     /**
-     * Waits (every 60 ms, up to {@code ms}) until the box reads ☑ (TICKED) or the page has
+     * Waits (every 40 ms, up to {@code ms}) until the box reads ☑ (TICKED) or the page has
      * answered the click without it - a pop-up or its cover came (ANSWERED); else NOTHING.
+     * Only the box is re-read (one quick call, as in build 48); the whole page is read for an
+     * answer only once 450 ms have passed without ☑ - normal ticks never pay for it.
      */
     private void whenTickedOrAnswered(AccessibilityNodeInfo n, int idx, Page.Before before, long ms,
+                                      java.util.function.Consumer<Integer> then) {
+        whenTickedOrAnswered(n, idx, before, 0, ms, then);
+    }
+
+    private void whenTickedOrAnswered(AccessibilityNodeInfo n, int idx, Page.Before before, long waited, long ms,
                                       java.util.function.Consumer<Integer> then) {
         if (checkedAt(n, idx)) {
             then.accept(TICKED);
             return;
         }
-        if (answered(before)) {
+        boolean late = waited >= Math.min(450, ms);
+        if (late && answered(before)) {
             then.accept(ANSWERED);
             return;
         }
-        if (ms <= 0) {
+        if (waited >= ms) {
             then.accept(NOTHING);
             return;
         }
-        later(() -> whenTickedOrAnswered(n, idx, before, ms - 60, then), 60);
+        later(() -> whenTickedOrAnswered(n, idx, before, waited + 40, ms, then), 40);
     }
 
     /** The page answered since {@code before}: its pop-up's cover, or a pop-up accessibility shows. */
@@ -968,9 +979,10 @@ final class Ticker {
         log("dismiss: tap on its purple button at " + r.centerX() + "," + r.centerY()
                 + " (where this screenshot shows it; also remembered for when no screenshot can be taken)");
         tap(r.centerX(), r.centerY());
-        Runnable after = () -> secondLook(before, then);
-        if (cover) waitCoverGone(before, 0, r, after);
-        else later(() -> checkPurpleGone(r, after), Math.max(350, finder.waitMs()));
+        // With a cover its going is the check (straight on, as in build 48); without one (Chrome)
+        // the screenshot checks it went, then one quick look for a second pop-up.
+        if (cover) waitCoverGone(before, 0, r, then);
+        else later(() -> checkPurpleGone(r, () -> secondLook(before, then)), Math.max(350, finder.waitMs()));
     }
 
     /** The pop-up's cover is in the tree and its OK's place is known: tap it straight away. */
@@ -984,7 +996,7 @@ final class Ticker {
         log("pop-up: accessibility hints at one and no screenshot can be taken - dismiss: tap at the OK's"
                 + " remembered place " + okSpot.centerX() + "," + okSpot.centerY() + " (last resort)");
         tap(okSpot.centerX(), okSpot.centerY());
-        waitCoverGone(before, 0, null, () -> secondLook(before, then));
+        waitCoverGone(before, 0, null, then);
     }
 
     /** Goes on the moment the pop-up's cover has gone; if it stays, finds the OK again on a screenshot. */
