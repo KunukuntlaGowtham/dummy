@@ -101,7 +101,6 @@ final class Ticker {
             boxes++;
             if (!n.isChecked() && n.isEnabled()) empty++;
         }
-        log("environment: " + app() + " - " + environment(all));
         log("page read: " + boxes + " checkbox(es), " + empty + " empty - each is clicked where it is, on screen or not");
         if (behaviour != null) behaviour.page(first, continueButton());
         next();
@@ -127,17 +126,6 @@ final class Ticker {
             if (!still) behaviour.rebuilt();
         }
         lastNode = null;
-        if (lastIdx >= 0) {
-            int left = 0;
-            for (AccessibilityNodeInfo m : boxes) if (!m.isChecked() && m.isEnabled()) left++;
-            AccessibilityNodeInfo cont = null; // from this read of the page - no second read
-            for (AccessibilityNodeInfo m : all) {
-                if (m.isClickable() && Page.label(m).trim().equalsIgnoreCase("continue")) cont = m;
-            }
-            log("row " + lastRow + " final page state: box " + (lastIdx < boxes.size() && boxes.get(lastIdx).isChecked() ? "☑" : "☐")
-                    + ", Continue " + (cont == null ? "none" : cont.isEnabled() ? "on" : "off")
-                    + ", empty boxes left " + left);
-        }
         if (lastIdx >= 0 && lastIdx < boxes.size() && !boxes.get(lastIdx).isChecked()) {
             refused(lastRow, "the page unticked it again (not added)");
         }
@@ -152,41 +140,41 @@ final class Ticker {
             Box b = new Box(n, Page.bounds(n), row);
             Page.Before before = new Page.Before(service, all);
             String name = Page.label(n);
-            lastSignals = "";
-            lastShot = "not taken yet";
-            lastChance = false;
-            log("row " + row + " [" + app() + "]: checkbox found - " + describeBox(n) + ", state before ☐");
             log("row " + row + ": clicking its checkbox" + (name.isEmpty() ? "" : " \"" + name + "\"")
-                    + (n.isVisibleToUser() ? "" : " (off screen)") + " - click method: ACTION_CLICK on the box");
+                    + (n.isVisibleToUser() ? "" : " (off screen)"));
             n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            // The page answers every tap on a box - tick or untick - with a pop-up (its cover
-            // comes within ~0.5 s), and the box may read ☑ only a moment later. So once the page
-            // has answered, the box gets no second click: that would untick it.
-            whenTickedOrAnswered(n, idx, before, 700, r -> {
-                if (r == TICKED) {
-                    fastTicked(n, idx, row, "click", before);
+            whenCheckedAt(n, idx, 450, ok -> {
+                if (ok) {
+                    lastNode = n;
+                    lastIdx = idx;
+                    lastRow = row;
+                    ticked++;
+                    tickedRows.add(row);
+                    log("row " + row + ": ticked ✓ by a click");
+                    note("click");
+                    tickTime = SystemClock.uptimeMillis();
+                    waitUntil = tickTime + waitMs();
+                    clearPopups(before, looks(), this::next);
                     return;
                 }
-                if (r == ANSWERED) {
-                    answeredNotTicked(n, idx, row, "click", before);
-                    return;
-                }
-                // No answer at all: the click didn't reach the box - its label, once.
+                // Its label, once (a hidden web checkbox can need it).
                 AccessibilityNodeInfo label = clickableParent(n);
-                log("row " + row + ": state after the click ☐, and the page didn't answer - " + (label != null
-                        ? "click method: ACTION_CLICK on its label" : "no tappable label around it"));
                 if (label != null) label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                whenTickedOrAnswered(n, idx, before, label != null ? 700 : 0, r2 -> {
-                    if (r2 == TICKED) {
-                        fastTicked(n, idx, row, "label", before);
-                        return;
-                    }
-                    if (r2 == ANSWERED) {
-                        answeredNotTicked(n, idx, row, "label", before);
+                whenCheckedAt(n, idx, label != null ? 450 : 0, byLabel -> {
+                    if (byLabel) {
+                        lastNode = n;
+                        lastIdx = idx;
+                        lastRow = row;
+                        ticked++;
+                        tickedRows.add(row);
+                        log("row " + row + ": ticked ✓ by a click on its label");
+                        note("label");
+                        tickTime = SystemClock.uptimeMillis();
+                        waitUntil = tickTime + waitMs();
+                        clearPopups(before, looks(), this::next);
                         return;
                     }
                     // Not ticked: if a pop-up comes the page has answered; either way, on to the next.
-                    log("row " + row + ": state after ☐ - not ticked");
                     note("not ticked");
                     clearPopups(before, looks(), () -> {
                         refused(row, popupTaps > 0 ? "not ticked - the page answered with a pop-up"
@@ -198,85 +186,6 @@ final class Ticker {
             return true;
         }
         return false;
-    }
-
-    private static final int NOTHING = 0, TICKED = 1, ANSWERED = 2;
-
-    /**
-     * Waits (every 40 ms, up to {@code ms}) until the box reads ☑ (TICKED) or the page has
-     * answered the click without it - a pop-up or its cover came (ANSWERED); else NOTHING.
-     * Only the box is re-read (one quick call, as in build 48); the whole page is read for an
-     * answer only once 450 ms have passed without ☑ - normal ticks never pay for it.
-     */
-    private void whenTickedOrAnswered(AccessibilityNodeInfo n, int idx, Page.Before before, long ms,
-                                      java.util.function.Consumer<Integer> then) {
-        whenTickedOrAnswered(n, idx, before, 0, ms, then);
-    }
-
-    private void whenTickedOrAnswered(AccessibilityNodeInfo n, int idx, Page.Before before, long waited, long ms,
-                                      java.util.function.Consumer<Integer> then) {
-        if (checkedAt(n, idx)) {
-            then.accept(TICKED);
-            return;
-        }
-        boolean late = waited >= Math.min(450, ms);
-        if (late && answered(before)) {
-            then.accept(ANSWERED);
-            return;
-        }
-        if (waited >= ms) {
-            then.accept(NOTHING);
-            return;
-        }
-        later(() -> whenTickedOrAnswered(n, idx, before, waited + 40, ms, then), 40);
-    }
-
-    /** The page answered since {@code before}: its pop-up's cover, or a pop-up accessibility shows. */
-    private boolean answered(Page.Before before) {
-        return Page.coverCame(service, before) || Page.popup(service, before) != null;
-    }
-
-    /** The box reads ☑ after the click ({@code way}): counted, then its pop-up is cleared. */
-    private void fastTicked(AccessibilityNodeInfo n, int idx, String row, String way, Page.Before before) {
-        lastNode = n;
-        lastIdx = idx;
-        lastRow = row;
-        ticked++;
-        tickedRows.add(row);
-        log("row " + row + ": state after ☑ - ticked ✓ by a click" + (way.equals("label") ? " on its label" : ""));
-        note(way);
-        tickTime = SystemClock.uptimeMillis();
-        waitUntil = tickTime + waitMs();
-        hintUntil = tickTime + 3000;
-        clearPopups(before, looks(), this::next);
-    }
-
-    /**
-     * The page answered the click (its pop-up came) but the box doesn't read ☑ yet: no second
-     * click - it would untick the box. The pop-up is cleared, then the box is read once more.
-     */
-    private void answeredNotTicked(AccessibilityNodeInfo n, int idx, String row, String way, Page.Before before) {
-        log("row " + row + ": the page answered the " + way + " (its pop-up came) but the box still reads ☐ -"
-                + " no second click (it would untick it); clearing the pop-up, then reading the box");
-        tickTime = SystemClock.uptimeMillis();
-        waitUntil = tickTime + waitMs();
-        hintUntil = tickTime + 3000;
-        clearPopups(before, looks(), () -> {
-            if (checkedAt(n, idx)) {
-                lastNode = n;
-                lastIdx = idx;
-                lastRow = row;
-                ticked++;
-                tickedRows.add(row);
-                log("row " + row + ": state after ☑ - ticked ✓ by the " + way + " (read after its pop-up)");
-                note(way);
-            } else {
-                log("row " + row + ": state after ☐ - the page answered but didn't tick it");
-                note("not ticked");
-                refused(row, "not ticked - the page answered with a pop-up");
-            }
-            next();
-        });
     }
 
     /**
@@ -297,6 +206,19 @@ final class Ticker {
         return false;
     }
 
+    /** Checks every 40 ms (up to {@code ms}) whether the box at {@code idx} turned ☑. */
+    private void whenCheckedAt(AccessibilityNodeInfo n, int idx, long ms, java.util.function.Consumer<Boolean> then) {
+        if (ms <= 0) {
+            then.accept(checkedAt(n, idx));
+            return;
+        }
+        later(() -> {
+            boolean on = checkedAt(n, idx);
+            if (on || ms <= 40) then.accept(on);
+            else whenCheckedAt(n, idx, ms - 40, then);
+        }, 40);
+    }
+
     /** A row not added: noted, said on screen, never tried again. */
     private void refused(String row, String why) {
         if (behaviour != null) {
@@ -312,9 +234,7 @@ final class Ticker {
     void clearNow() {
         begin(true);
         log("Clear: pressing the OK / Close of every pop-up up now");
-        later(() -> clearPopups(null, 20, () -> stop(popups == 0
-                ? "No accessible or matching purple popup button found - use a deep scan if one is visible"
-                : "Pop-up clearing finished; see verification in the report")), 50);
+        later(() -> clearPopups(null, 1, () -> stop(popups == 0 ? "No pop-up up" : "Pop-ups cleared")), 50);
     }
 
     private void begin(boolean clear) {
@@ -344,8 +264,6 @@ final class Ticker {
         }
         behaviour = clear ? null : new Behaviour(spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : null);
         String spot = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).getString(spotKey, null);
-        coverApp = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE)
-                .getBoolean("cover_" + (spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : "?"), false);
         okSpot = spot == null ? null : Rect.unflattenFromString(spot);
         if (!clear) missedChanged(); // a new run: nothing missed yet
     }
@@ -477,21 +395,12 @@ final class Ticker {
      */
     private void tickBox(Box b) {
         Page.Before before = new Page.Before(service);
-        lastSignals = "";
-        lastShot = "not taken yet";
-        lastChance = false;
-        log("row " + b.row + " [" + app() + "]: checkbox found - " + describeBox(b.node) + ", state before ☐");
-        log("row " + b.row + ": clicking its checkbox (at " + b.box.centerX() + "," + b.box.centerY() + ") - click method: ACTION_CLICK on the box");
+        log("row " + b.row + ": clicking its checkbox (at " + b.box.centerX() + "," + b.box.centerY() + ")");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-        whenChecked(b.node, 700, checked -> {
+        whenChecked(b.node, 450, checked -> {
             if (checked) {
                 note("click");
                 done(b, "ticked ✓ by a click", before);
-                return;
-            }
-            // The page answered (its pop-up came): no second click - it would untick the box.
-            if (answered(before)) {
-                carefulAnswered(b, "click", before);
                 return;
             }
             AccessibilityNodeInfo label = clickableParent(b.node);
@@ -500,14 +409,10 @@ final class Ticker {
                         + " - clicking its label");
                 label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             }
-            whenChecked(b.node, label != null ? 700 : 0, byLabel -> {
+            whenChecked(b.node, label != null ? 450 : 0, byLabel -> {
                 if (byLabel) {
                     note("label");
                     done(b, "ticked ✓ by a click on its label", before);
-                    return;
-                }
-                if (label != null && answered(before)) {
-                    carefulAnswered(b, "label", before);
                     return;
                 }
                 log("row " + b.row + ": tapping it at " + b.box.centerX() + "," + b.box.centerY());
@@ -526,30 +431,6 @@ final class Ticker {
                     }
                 });
             });
-        });
-    }
-
-    /** The careful way: the page answered but the box reads ☐ - pop-up cleared, box read again. */
-    private void carefulAnswered(Box b, String way, Page.Before before) {
-        log("row " + b.row + ": the page answered the " + way + " (its pop-up came) but the box still reads ☐ -"
-                + " no second click (it would untick it); clearing the pop-up, then reading the box");
-        tickTime = SystemClock.uptimeMillis();
-        waitUntil = tickTime + waitMs();
-        hintUntil = tickTime + 3000;
-        clearPopups(before, looks(), () -> {
-            if (Page.isChecked(b.node)) {
-                ticked++;
-                tickedRows.add(b.row);
-                note(way);
-                log("row " + b.row + ": state after ☑ - ticked ✓ by the " + way + " (read after its pop-up)");
-            } else {
-                note("not ticked");
-                notTicked++;
-                failedRows.add(b.row);
-                log("row " + b.row + ": state after ☐ - the page answered but didn't tick it ✗");
-                missedChanged();
-            }
-            next();
         });
     }
 
@@ -604,7 +485,6 @@ final class Ticker {
         log("row " + b.row + ": " + how);
         tickTime = SystemClock.uptimeMillis();
         waitUntil = tickTime + waitMs();
-        hintUntil = tickTime + 3000;
         clearPopups(before, looks(), () -> afterPopup(b));
     }
 
@@ -649,340 +529,114 @@ final class Ticker {
 
     // ---- pop-ups ---------------------------------------------------------------
 
-    // ---- after a tick: is there a pop-up, and which kind -------------------------------------
-    //
-    //   A  no pop-up: nothing came within the short watch after the tick - go on.
-    //   B  a pop-up accessibility shows: a dialog, a new window, a titled pane, or a new
-    //      OK-like button - closed with its button (ACTION_CLICK) or "dismiss".
-    //   C  a pop-up you see that accessibility doesn't show - Chrome reports no node for its
-    //      OK, not even its cover - found by its purple button on a screenshot, tapped there.
-    //
-    // Accessibility is read first on every look (semantic actions first); a screenshot is
-    // taken on every look it is allowed (~3 a second, only in this short watch), because in
-    // Chrome nothing in the tree says a pop-up is up. Every way of closing is checked after:
-    // the run goes on only once the pop-up has gone (else it stops after 3 tries).
-    // The Next.js route announcer (a hidden role=alert, 0x0) is never taken for a pop-up.
-
-    /** What one look at the page saw. */
-    private static final class Signals {
-        /** B: the pop-up accessibility shows, with its button (or "dismiss"). */
-        Page.Popup a11y;
-        /** A visible, meaningful alert / dialog that came (never the route announcer). */
-        AccessibilityNodeInfo alert;
-        /** An empty cover over the page came; a new window came. */
-        boolean cover, newWindow;
-        /** Clickable elements that weren't there before the tick. */
-        int newClickables;
-        /** The screenshot: not taken, none in the middle, or where the purple button is. */
-        String shot = "not taken";
-
-        /** Accessibility hints that a pop-up is up, without giving a button to close it. */
-        boolean hinted() {
-            return cover || alert != null || newWindow;
-        }
-
-        String text() {
-            return "accessibility pop-up " + (a11y == null ? "none" : a11y.how)
-                    + " · alert " + (alert == null ? "none" : "\"" + Page.label(alert) + "\" " + Page.bounds(alert).toShortString())
-                    + " · cover " + (cover ? "came" : "none")
-                    + " · new window " + (newWindow ? "yes" : "no")
-                    + " · new clickables " + newClickables
-                    + " · screenshot " + shot;
-        }
-    }
-
     /**
-     * This app reports its pop-up's cover (the TTD app's web view does, Chrome doesn't): then a
-     * screenshot is taken only once the cover came - an early one, before the pop-up is drawn,
-     * would only hold the next one back (~3 screenshots a second). Kept per app.
-     */
-    private boolean coverApp;
-    /** One screenshot at the end of a quiet watch was taken for this box (cover apps). */
-    private boolean lastChance;
-
-    /** The signals last logged for this box: a look is logged only when they change. */
-    private String lastSignals = "";
-    /** The last screenshot's verdict for this box (looks between screenshots carry it on). */
-    private String lastShot = "not taken yet";
-    /** Up to when a pop-up accessibility hints at (cover / alert / window) is waited for. */
-    private long hintUntil;
-
-    private void logSignals(Signals s) {
-        String t = s.text();
-        if (t.equals(lastSignals)) return;
-        lastSignals = t;
-        log("pop-up signals: " + t);
-    }
-
-    /** One look through accessibility: what came since {@code before} (null: Clear, no baseline). */
-    private Signals look(Page.Before before) {
-        Signals s = new Signals();
-        s.a11y = Page.popup(service, before);
-        if (before == null) return s;
-        List<AccessibilityNodeInfo> all = Page.nodes(service);
-        for (AccessibilityNodeInfo n : all) {
-            if (n.isClickable() && n.isVisibleToUser() && !before.clickables.contains(Page.key(n))) s.newClickables++;
-            if (s.alert == null && Page.isMeaningfulAlert(service, n) && !before.alerts.contains(Page.key(n))) s.alert = n;
-        }
-        for (String k : Page.coverKeys(service, all)) {
-            if (!before.covers.contains(k)) {
-                s.cover = true;
-                break;
-            }
-        }
-        for (int id : Page.windowIds(service)) {
-            if (!before.windows.contains(id)) {
-                s.newWindow = true;
-                break;
-            }
-        }
-        return s;
-    }
-
-    /**
-     * Watches for a pop-up that came up since {@code before} (any pop-up, when null): every
-     * look reads accessibility (B) and, when allowed, a screenshot (C); with neither, looks
-     * again until the watch ends (A). {@code looksLeft}: looks still to take.
+     * Looks (every 100 ms, {@code looksLeft} times) for a pop-up that came up since
+     * {@code before} (any pop-up up, when null): presses its OK / Yes / Close ... button, or
+     * dismisses it, waits for it to go, and looks again for a second one. With none, carries on.
      */
     private void clearPopups(Page.Before before, int looksLeft, Runnable then) {
         if (popupTaps >= 3) {
-            stillUpAfterTries(before, then);
-            return;
-        }
-        later(() -> {
-            Signals s = look(before);
-            if (s.a11y != null) {
-                logSignals(s);
-                closeB(s, before, then);
-                return;
-            }
-            if (s.cover && before != null && !coverApp) {
-                coverApp = true;
-                service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
-                        .putBoolean("cover_" + app(), true).apply();
-                log("this app reports its pop-up's cover - from now on a screenshot only once the cover comes");
-            }
-            Runnable lookOn = () -> {
-                long now = SystemClock.uptimeMillis();
-                // Accessibility hints at a pop-up (cover, alert, window) but no button showed
-                // yet: keep looking (up to 3 s after the tick) for it on a screenshot.
-                boolean hintWait = s.hinted() && now < hintUntil;
-                if ((looksLeft > 1 || hintWait) && (tickTime == 0 || now < waitUntil || hintWait)) {
-                    clearPopups(before, Math.max(1, looksLeft - 1), then);
-                } else {
-                    // A cover app, no cover came: one screenshot still, so a pop-up without a
-                    // cover isn't missed (only when nothing came - the rare case there).
-                    if (coverApp && shots && popupTaps == 0 && !lastChance && before != null) {
-                        lastChance = true;
-                        later(() -> {
-                            int g2 = gen;
-                            finder.find(r -> {
-                                if (!running || g2 != gen) return;
-                                if (r != null) {
-                                    s.shot = "purple button at " + r.centerX() + "," + r.centerY();
-                                    logSignals(s);
-                                    pressPurple(r, s, before, then);
-                                } else {
-                                    log("pop-up: state A - none came (no cover, none on the last screenshot)");
-                                    quietBoxes++;
-                                    then.run();
-                                }
-                            }, why -> {
-                                shots = false;
-                                log("pop-up: no screenshots - " + why);
-                            }, before);
-                        }, finder.waitMs());
-                        return;
-                    }
-                    if (popupTaps == 0) {
-                        if (s.hinted()) {
-                            log("pop-up: accessibility hints at one (" + s.text()
-                                    + ") but no button to close it was found");
-                            stop("Possible popup still covers the page - stopped; take a deep scan");
-                            return;
-                        } else {
-                            log("pop-up: state A - none came (watched " + waitMs() + " ms)");
-                        }
-                        quietBoxes++;
-                    }
-                    then.run();
-                }
-            };
-            // Wait out the screenshot cooldown instead of treating a skipped image as absence.
-            if (clearOnly && shots && finder.waitMs() > 0) {
-                later(() -> clearPopups(before, looksLeft, then), finder.waitMs());
-                return;
-            }
-            // C: a pop-up drawn but not in the tree - its purple button on a screenshot, on every
-            // look the screenshot rate allows (Chrome reports no cover, so none is waited for).
-            // In an app that reports the cover, only once it (or another hint) came.
-            boolean shotWanted = !coverApp || before == null || s.hinted();
-            if (shots && shotWanted && finder.waitMs() == 0) {
-                int g = gen;
-                finder.find(r -> {
-                    if (!running || g != gen) return;
-                    if (r != null) s.shot = "purple button at " + r.centerX() + "," + r.centerY();
-                    else if (shots) s.shot = "no purple button in the middle";
-                    lastShot = s.shot;
-                    logSignals(s);
-                    if (r != null) pressPurple(r, s, before, then);
-                    else lookOn.run();
-                }, why -> {
-                    shots = false;
-                    s.shot = "unavailable (" + why + ")";
-                    log("pop-up: no screenshots - " + why);
-                }, before);
-                return;
-            }
-            s.shot = shots ? lastShot : "unavailable";
-            logSignals(s);
-            // No screenshots at all: a pop-up accessibility hints at is closed at the OK's
-            // remembered place - only as the last resort.
-            if (!shots && s.hinted() && okSpot != null) {
-                pressSpot(before, then);
-                return;
-            }
-            lookOn.run();
-        }, 50);
-    }
-
-    /** B: the pop-up accessibility shows - its button pressed (or dismissed), then checked gone. */
-    private void closeB(Signals s, Page.Before before, Runnable then) {
-        Page.Popup p = s.a11y;
-        log("pop-up: state B - accessibility shows it (" + p.how + ")");
-        popupCame();
-        notePopup("reported (" + p.how + ")", p.button != null ? "pressing its button" : "dismissing it");
-        popups++;
-        popupTaps++;
-        popupsSeen = true;
-        quietBoxes = 0;
-        AccessibilityNodeInfo gone;
-        if (p.button != null) {
-            Rect r = Page.bounds(p.button);
-            log("pop-up candidate: button \"" + Page.label(p.button) + "\" " + r.toShortString());
-            boolean sent = p.button.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            log("dismiss: ACTION_CLICK on \"" + Page.label(p.button) + "\" - "
-                    + (sent ? "sent" : "refused, tapping it where it is (" + r.centerX() + "," + r.centerY() + ")"));
-            if (!sent) tap(r.centerX(), r.centerY());
-            gone = p.button;
-        } else {
-            log("pop-up candidate: a dismissable " + String.valueOf(p.dismiss.getClassName()));
-            boolean sent = p.dismiss.performAction(AccessibilityNodeInfo.ACTION_DISMISS);
-            log("dismiss: ACTION_DISMISS - " + (sent ? "sent" : "refused"));
-            gone = p.dismiss;
-        }
-        // Sending the action isn't enough: wait for its button to go, then check it really went.
-        waitGone(gone, 0, () -> verifyGone(before, then));
-    }
-
-    /**
-     * After closing: the pop-up is gone only when accessibility no longer shows it (nor its
-     * cover) and - with screenshots - no purple button is left in the middle. Else it is looked
-     * at again (up to 3 tries in all).
-     */
-    private void verifyGone(Page.Before before, Runnable then) {
-        later(() -> {
-            Signals v = look(before);
-            if (v.a11y != null || v.cover) {
-                log("dismiss result: still up (" + (v.a11y != null ? "accessibility still shows " + v.a11y.how
-                        : "its cover is still there") + ")");
-                clearPopups(before, 10, then);
-                return;
-            }
-            if (!shots) {
-                log("dismiss result: gone ✓ (accessibility)");
-                secondLook(before, then);
-                return;
-            }
-            int g = gen;
-            finder.find(r -> {
-                if (!running || g != gen) return;
-                if (r != null) {
-                    log("dismiss result: accessibility shows nothing, but a purple button is still in the middle at "
-                            + r.centerX() + "," + r.centerY() + " - state C");
-                    v.shot = "purple button at " + r.centerX() + "," + r.centerY();
-                    pressPurple(r, v, before, then);
-                } else {
-                    if (!shots) {
-                        stop("Popup close could not be visually verified - take a deep scan");
-                        return;
-                    }
-                    log("dismiss result: gone ✓ (accessibility and screenshot)");
-                    secondLook(before, then);
-                }
-            }, why -> {
-                shots = false;
-                log("dismiss result: screenshot unavailable - " + why);
-                // PurpleFinder calls the result callback once with null after this failure.
-
-            }, before);
-        }, Math.max(80, finder.waitMs()));
-    }
-
-    /** 3 presses after this box already: go on only if the pop-up has really gone, else stop. */
-    private void stillUpAfterTries(Page.Before before, Runnable then) {
-        Signals s = look(before);
-        if (s.a11y != null || s.cover) {
-            stuck(s.a11y != null ? "accessibility still shows " + s.a11y.how : "its cover is still there");
-            return;
-        }
-        if (!shots) {
-            log("pop-up: 3 presses after this box - accessibility shows none up, going on");
+            log("pop-up: 3 presses after this box already - going on");
             later(then, 100);
             return;
         }
-        int g = gen;
-        later(() -> finder.find(r -> {
-            if (!running || g != gen) return;
-            if (r != null) stuck("its purple button is still on the screen at " + r.centerX() + "," + r.centerY());
-            else if (!shots) stop("Popup close could not be visually verified - take a deep scan");
-            else {
-                log("pop-up: 3 presses after this box - none left (accessibility and screenshot), going on");
-                then.run();
+        later(() -> {
+            Page.Popup p = Page.popup(service, before);
+            if (p == null) {
+                // The page hides the pop-up's words and buttons but reports its cover over the
+                // page: with the OK's place known, tap it now - no screenshot needed.
+                boolean cover = Page.coverCame(service, before);
+                // Pop-ups differ (OK, Proceed, Close ... in other places): with screenshots, the
+                // purple button is found on the screen each time; the remembered place is used
+                // only when no screenshot can be taken.
+                if (cover && okSpot != null && !shots) {
+                    pressSpot(before, then);
+                    return;
+                }
+                Runnable lookOn = () -> {
+                    if (looksLeft > 1 && (tickTime == 0 || SystemClock.uptimeMillis() < waitUntil)) {
+                        clearPopups(before, looksLeft - 1, then);
+                    } else {
+                        if (popupTaps == 0) {
+                            log("pop-up: none came");
+                            quietBoxes++;
+                        }
+                        then.run();
+                    }
+                };
+                // Not in the tree: the page may draw it without reporting it - look for its purple
+                // button on a screenshot (only for pop-ups; ~3 screenshots a second at most).
+                // With the cover in the tree a screenshot is needed only once it has come; pages
+                // that report no cover get one every second at most (screenshots slow things down).
+                long now = SystemClock.uptimeMillis();
+                boolean shotDue = cover || before == null || now - lastBlindShot >= 1000;
+                if (shots && shotDue && finder.waitMs() == 0) {
+                    if (!cover) lastBlindShot = now;
+                    int g = gen;
+                    finder.find(r -> {
+                        if (!running || g != gen) return;
+                        if (r != null) pressPurple(r, before, then);
+                        else lookOn.run();
+                    }, why -> {
+                        shots = false;
+                        log("pop-up: no screenshots - " + why);
+                    }, before);
+                    return;
+                }
+                lookOn.run();
+                return;
             }
-        }, why -> {
-            shots = false;
-            log("verification screenshot unavailable: " + why);
-        }, before), finder.waitMs());
-    }
-
-    /** A pop-up that won't close: stop, so no tick lands under it. */
-    private void stuck(String why) {
-        log("pop-up: still up after 3 tries (" + why + ") ✗");
-        stop("✗ A pop-up stayed up after 3 tries - stopped, so no tick lands under it");
+            popupCame();
+            notePopup("reported (" + p.how + ")", p.button != null ? "pressing its button" : "dismissing it");
+            popups++;
+            popupTaps++;
+            popupsSeen = true;
+            quietBoxes = 0;
+            AccessibilityNodeInfo gone;
+            if (p.button != null) {
+                Rect r = Page.bounds(p.button);
+                log("pop-up (" + p.how + "): pressing \"" + Page.label(p.button) + "\" at "
+                        + r.centerX() + "," + r.centerY());
+                if (!p.button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(r.centerX(), r.centerY());
+                gone = p.button;
+            } else {
+                log("pop-up (" + p.how + "): dismissing it");
+                p.dismiss.performAction(AccessibilityNodeInfo.ACTION_DISMISS);
+                gone = p.dismiss;
+            }
+            // Wait for it to go (up to 1.5 s), then look once more: a second pop-up may follow.
+            // A lone ✕ closes one box: done. A dialog may be followed by a second one: look again.
+            if (p.crossOnly) waitGone(gone, 0, then);
+            else waitGone(gone, 0, () -> secondLook(before, then));
+        }, 50);
     }
 
     /** Where this app's OK place is kept ("ok_spot_<app>"). */
     private String spotKey = "ok_spot";
 
+    /** When the last screenshot was taken without a cover in the tree. */
+    private long lastBlindShot;
+
     /** Where the pop-up's OK is (learned from a screenshot once, kept for next time), or null. */
     private Rect okSpot;
 
     /** The pop-up's purple button, seen on the screenshot: tapped, then checked that it went. */
-    private void pressPurple(Rect r, Signals s, Page.Before before, Runnable then) {
-        boolean cover = Page.coverCame(service, before);
-        log("pop-up: state C - seen on the screenshot, not in accessibility ("
-                + (cover ? "its cover is in the tree, its words and OK aren't" : "nothing of it in the tree") + ")");
-        log("pop-up candidate: purple button " + r.toShortString() + " (found on this screenshot)");
-        if (popupTaps == 0) {
-            popupCame();
-            notePopup(cover ? "cover only (words and OK hidden)" : "drawn, not reported (no cover)",
-                    "its purple button on a screenshot");
-            popups++;
-            popupsSeen = true;
-        }
+    private void pressPurple(Rect r, Page.Before before, Runnable then) {
+        popupCame();
+        notePopup(Page.coverCame(service, before) ? "cover only (words and OK hidden)" : "drawn, not reported (no cover)",
+                "its purple button on a screenshot");
+        popups++;
         popupTaps++;
+        popupsSeen = true;
         quietBoxes = 0;
         okSpot = new Rect(r);
         service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
                 .putString(spotKey, r.flattenToString()).putString("ok_spot", r.flattenToString()).apply();
-        log("dismiss: tap on its purple button at " + r.centerX() + "," + r.centerY()
-                + " (where this screenshot shows it; also remembered for when no screenshot can be taken)");
+        log("pop-up (drawn, not reported): tapping its purple button at " + r.centerX() + "," + r.centerY()
+                + " - its place is remembered");
         tap(r.centerX(), r.centerY());
-        // With a cover its going is the check (straight on, as in build 48); without one (Chrome)
-        // the screenshot checks it went, then one quick look for a second pop-up.
-        if (cover) waitCoverGone(before, 0, r, then);
-        else later(() -> checkPurpleGone(r, () -> secondLook(before, then)), Math.max(350, finder.waitMs()));
+        if (Page.coverCame(service, before)) waitCoverGone(before, 0, then);
+        else later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
     }
 
     /** The pop-up's cover is in the tree and its OK's place is known: tap it straight away. */
@@ -993,54 +647,43 @@ final class Ticker {
         popupTaps++;
         popupsSeen = true;
         quietBoxes = 0;
-        log("pop-up: accessibility hints at one and no screenshot can be taken - dismiss: tap at the OK's"
-                + " remembered place " + okSpot.centerX() + "," + okSpot.centerY() + " (last resort)");
+        log("pop-up: its cover came - tapping OK at " + okSpot.centerX() + "," + okSpot.centerY());
         tap(okSpot.centerX(), okSpot.centerY());
-        waitCoverGone(before, 0, null, then);
+        waitCoverGone(before, 0, then);
     }
 
     /** Goes on the moment the pop-up's cover has gone; if it stays, finds the OK again on a screenshot. */
-    private void waitCoverGone(Page.Before before, long waited, Rect tapped, Runnable then) {
+    private void waitCoverGone(Page.Before before, long waited, Runnable then) {
         later(() -> {
             if (!Page.coverCame(service, before)) {
-                // The cover went with the pop-up: that is the check - no extra screenshot (speed).
-                log("dismiss result: gone ✓ - its cover went (" + waited + " ms)");
+                log("pop-up: gone (" + waited + " ms)");
                 then.run();
             } else if (waited >= 1200) {
-                log("dismiss result: still up after 1.2 s - finding its OK again on a screenshot");
+                log("pop-up: still up - finding its OK again on a screenshot");
                 okSpot = null;
                 clearPopups(before, 20, then);
             } else {
-                waitCoverGone(before, waited + 40, tapped, then);
+                waitCoverGone(before, waited + 40, then);
             }
         }, 40);
     }
 
     private void checkPurpleGone(Rect was, Runnable then) {
-        if (finder.waitMs() > 0) {
-            later(() -> checkPurpleGone(was, then), finder.waitMs());
-            return;
-        }
         int g = gen;
         finder.find(r -> {
             if (!running || g != gen) return;
             boolean still = r != null && Math.abs(r.centerX() - was.centerX()) < was.width() / 2
                     && Math.abs(r.centerY() - was.centerY()) < was.height();
             if (still && popupTaps < 3) {
-                log("dismiss result: its purple button is still there - tapping again at " + r.centerX() + "," + r.centerY());
+                log("pop-up: still there - tapping again");
                 popupTaps++;
                 tap(r.centerX(), r.centerY());
                 later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
-            } else if (still) {
-                stuck("its purple button is still on the screen at " + r.centerX() + "," + r.centerY());
             } else {
-                log("dismiss result: gone ✓ (the screenshot shows no purple button there)");
+                if (still) log("pop-up: still there after 3 taps - going on");
                 then.run();
             }
         }, why -> {
-            shots = false;
-            log("dismiss result unknown: " + why);
-            stop("Couldn't verify the popup closed - take a deep scan");
         });
     }
 
@@ -1071,34 +714,6 @@ final class Ticker {
     }
 
     // ---- finding boxes and reading the page ----------------------------------------
-
-    /** The app in front (its package). */
-    private String app() {
-        return spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : "?";
-    }
-
-    /** Where the page comes from: a web view in it (Chrome, an app's own web view) or not. */
-    private static String environment(List<AccessibilityNodeInfo> all) {
-        int web = 0;
-        boolean webView = false;
-        for (AccessibilityNodeInfo n : all) {
-            if (String.valueOf(n.getClassName()).contains("WebView")) webView = true;
-            if (!Page.role(n).isEmpty()) web++;
-        }
-        return (webView ? "a web view" : "no web view") + ", " + web + " web element(s) reported";
-    }
-
-    /** A checkbox in a few words: hidden or shown, its place, its label. */
-    private static String describeBox(AccessibilityNodeInfo n) {
-        Rect r = Page.bounds(n);
-        boolean hidden = r.width() <= 4 || r.height() <= 4;
-        AccessibilityNodeInfo p = n.getParent();
-        String role = p == null ? "" : Page.role(p);
-        return (hidden ? "hidden (" + r.width() + "x" + r.height() + ")" : "shown " + r.width() + "x" + r.height())
-                + " @" + r.toShortString()
-                + (role.toLowerCase(java.util.Locale.ROOT).contains("label") ? ", in a label" + (p.isClickable() ? " (tappable)" : "") : "")
-                + (Page.label(n).isEmpty() ? ", no name" : ", \"" + Page.label(n) + "\"");
-    }
 
     /** The page's Continue button, or null. */
     private AccessibilityNodeInfo continueButton() {

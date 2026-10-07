@@ -91,10 +91,9 @@ final class Automation {
             rep.append("    no dialog/button exposed in accessibility - a drawn popup may only be visible on a\n"
                     + "    screenshot: Tick and Clear look there for its purple button in the middle\n");
         }
-        rep.append("    After a tick, Tick tells three cases apart: A no pop-up; B a pop-up accessibility shows (dialog,\n"
-                + "    new window, pane, new OK-like button) - its button pressed through accessibility; C a pop-up\n"
-                + "    seen only on the screenshot - its purple button tapped there. Each is checked gone after.\n"
-                + "    The Next.js route announcer (hidden role=alert) is never taken for a pop-up.\n");
+        rep.append("    Tick sees a pop-up as: a new window, a dialog, or a new OK / Yes / Close ... button after "
+                + "a tick - and presses that button through accessibility; a pop-up the page doesn't report\n"
+                + "    (only its cover in the tree) by its purple button on a screenshot.\n");
     }
 
     private static void buttonsIn(AccessibilityNodeInfo n, List<String> out, int depth) {
