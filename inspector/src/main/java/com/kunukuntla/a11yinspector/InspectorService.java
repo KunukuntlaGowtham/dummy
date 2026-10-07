@@ -73,6 +73,8 @@ public class InspectorService extends AccessibilityService {
             if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                     || t == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
                 pageCheckSoon();
+                // Right after page 3's Continue: page 4's Confirm pressed the moment it comes.
+                if (flow != null) flow.onEvent(evPkg.toString());
             }
             // Which screen of which app is open (for the app details), and the event recorder.
             if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getClassName() != null
@@ -225,6 +227,24 @@ public class InspectorService extends AccessibilityService {
             pageBadge = null;
             return;
         }
+        flow = new AutoFlow(this, handler, new AutoFlow.Host() {
+            @Override
+            public void recheck() {
+                checkPage();
+            }
+
+            @Override
+            public void page1(PageKind.Facts f) {
+                rememberPage1(f);
+                lastFacts = f;
+                lastKind = PageKind.Kind.SEVAK_LIST;
+            }
+
+            @Override
+            public void say(String message) {
+                Toast.makeText(InspectorService.this, message, Toast.LENGTH_SHORT).show();
+            }
+        });
         pageCheckSoon();
     }
 
@@ -238,10 +258,18 @@ public class InspectorService extends AccessibilityService {
         }, 350);
     }
 
+    // Auto: page 3's Continue (or Back to pages 2 and 1), page 4's Confirm.
+    private AutoFlow flow;
+    /** The last reading (for page 1: the page read just before page 2 came). */
+    private PageKind.Facts lastFacts;
+    private PageKind.Kind lastKind = PageKind.Kind.OTHER;
+
     private void checkPage() {
         if (destroyed || pageBadge == null) return;
-        if (!getSharedPreferences("settings", MODE_PRIVATE).getBoolean("show_page", true)) {
-            pageBadge.setVisibility(View.GONE);
+        android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
+        boolean show = sp.getBoolean("show_page", true), auto = AutoFlow.enabled(this);
+        if (!show) pageBadge.setVisibility(View.GONE);
+        if (!show && !auto) {
             pageKind = PageKind.Kind.OTHER;
             return;
         }
@@ -254,30 +282,59 @@ public class InspectorService extends AccessibilityService {
         } catch (RuntimeException e) {
             return;
         }
-        PageKind.Kind kind = PageKind.decide(f);
+        PageKind.Kind kind = kindOf(f);
+        // Page 1 is the page before page 2, whatever it is: kept when page 2 comes after it.
+        if (kind == PageKind.Kind.CALENDAR && lastFacts != null && lastFacts.pkg.equals(f.pkg)
+                && (lastKind == PageKind.Kind.OTHER || lastKind == PageKind.Kind.SEVAK_LIST)) {
+            rememberPage1(lastFacts);
+        }
+        if (kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.TICKING) {
+            if (!f.pkg.equals(sp.getString("booking_pkg", ""))) sp.edit().putString("booking_pkg", f.pkg).apply();
+        }
+        lastFacts = f;
+        lastKind = kind;
         pageKind = kind;
+        if (auto && flow != null) flow.onPage(kind, f, sp.getString("booking_pkg", ""));
+        if (!show) return;
         if (kind == PageKind.Kind.OTHER) {
             pageBadge.setVisibility(View.GONE);
             return;
         }
         int colour = kind == PageKind.Kind.SEVAK_LIST ? 0xEE1565C0
                 : kind == PageKind.Kind.CALENDAR ? 0xEE00897B
+                : kind == PageKind.Kind.CONFIRM ? 0xEEE65100
                 : 0xEE2E7D32; // not purple: Tick's screenshots look for the purple OK
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(colour);
         bg.setCornerRadius(dp(14));
         bg.setStroke(dp(1), 0x66FFFFFF);
         pageBadge.setBackground(bg);
-        pageBadge.setText("📍 " + kind.title());
+        pageBadge.setText("📍 " + kind.title() + (auto ? " · auto" : ""));
         pageBadge.setContentDescription(kind.title() + ": " + f.describe());
         pageBadge.setVisibility(View.VISIBLE);
+    }
+
+    /** Pages 2-4 by what they have; page 1 by its words (the page kept as the one before page 2). */
+    private PageKind.Kind kindOf(PageKind.Facts f) {
+        PageKind.Kind kind = PageKind.decide(f);
+        if (kind != PageKind.Kind.OTHER) return kind;
+        String kept = getSharedPreferences("settings", MODE_PRIVATE).getString("page1_" + f.pkg, "");
+        if (kept.isEmpty()) return kind;
+        java.util.Set<String> words = new java.util.HashSet<>(java.util.Arrays.asList(kept.split("\u0001")));
+        return PageKind.samePage(words, f.texts) ? PageKind.Kind.SEVAK_LIST : kind;
+    }
+
+    private void rememberPage1(PageKind.Facts f) {
+        if (f.texts.size() < 3 || f.pkg.isEmpty()) return;
+        getSharedPreferences("settings", MODE_PRIVATE).edit()
+                .putString("page1_" + f.pkg, String.join("\u0001", f.texts)).apply();
     }
 
     /** One line for reports: which page, and what on it says so. */
     private String pageLine() {
         try {
             PageKind.Facts f = PageKind.read(this);
-            return "📍 " + PageKind.decide(f).title() + " (" + f.describe() + ")\n";
+            return "📍 " + kindOf(f).title() + " (" + f.describe() + ")\n";
         } catch (RuntimeException e) {
             return "";
         }
@@ -300,6 +357,8 @@ public class InspectorService extends AccessibilityService {
                 saveReport(log);
                 tickButton.setText("☑\nTick");
                 finished(summary);
+                // Every box ticked: page 3's Continue goes now, not at the next page change.
+                handler.post(InspectorService.this::checkPage);
             }
 
             @Override
