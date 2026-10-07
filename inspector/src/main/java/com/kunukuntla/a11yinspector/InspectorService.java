@@ -108,7 +108,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -424,6 +424,7 @@ public class InspectorService extends AccessibilityService {
         });
         showReportButton();
         showLinkButton();
+        showAutoButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -458,6 +459,31 @@ public class InspectorService extends AccessibilityService {
         bg.setStroke(linkOn ? dp(4) : dp(2), linkOn ? 0xFF7CFC00 : 0x66FFFFFF);
     }
 
+    // ---- 🤖 Auto: page 3's Continue (or Back to pages 2 and 1), page 4's Confirm ------------
+
+    private TextView autoButton;
+
+    private void showAutoButton() {
+        autoButton = floating("🤖\nAuto", 0xEE37474F, 622, v -> {
+            closeCard();
+            boolean on = !AutoFlow.enabled(this);
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_flow", on).apply();
+            Toast.makeText(this, on
+                    ? "Auto ON: page 3 Continue (or Back to pages 2 and 1), page 4 Confirm at once"
+                    : "Auto OFF - Continue and Confirm are left to you", Toast.LENGTH_SHORT).show();
+        });
+        showAuto();
+    }
+
+    private void showAuto() {
+        if (autoButton == null) return;
+        boolean on = AutoFlow.enabled(this);
+        autoButton.setText(on ? "🤖\nOn" : "🤖\nAuto");
+        autoButton.setContentDescription(on ? "Auto on" : "Auto off");
+        GradientDrawable bg = (GradientDrawable) autoButton.getBackground();
+        bg.setStroke(on ? dp(4) : dp(2), on ? 0xFF7CFC00 : 0x66FFFFFF);
+    }
+
     /** Go got past the slot page: Tick starts 1 s from now (tap Go in the gap to cancel it). */
     private void tickAfterGo() {
         cancelLinkedTick();
@@ -484,19 +510,22 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 16 dp gap. */
     private static final int BUTTON_STEP = 72;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "link"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "link", "auto"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
                 if (key != null && key.startsWith("show_")) {
                     applyShown();
                     checkPage();
+                } else if ("auto_flow".equals(key)) {
+                    showAuto();
+                    checkPage(); // the badge's "· auto", and a page already ready goes on
                 }
             };
 

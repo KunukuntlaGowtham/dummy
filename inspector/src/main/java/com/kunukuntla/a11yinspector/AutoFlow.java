@@ -15,7 +15,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 /**
- * The pages after the ticking, by themselves (on / off in the app, "auto_flow"):
+ * The pages after the ticking, by themselves (on / off with the 🤖 Auto round button, "auto_flow"):
  * <ul>
  *   <li>Page 3, no empty checkbox left, Continue on: Continue is pressed. When the page
  *       stays on page 3 after it (its error), or Continue stays off with every box ticked:

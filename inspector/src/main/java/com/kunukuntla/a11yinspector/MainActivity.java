@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
                 + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
                 + "recording of the app's events. Deep scan also saves a screenshot in Downloads/A11yInspector; share that PNG with the report. Watch popup 15 s records changes while you open a popup: start with it closed, trigger it, and leave it open. Purple ☑ Tick ticks every checkbox and clears "
                 + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
-                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). A 📍 badge at the top says which page of the booking is open - Page 1 (the page before page 2, whatever it is), Page 2 calendar & slot, Page 3 ticking sevaks, Page 4 Confirm - and Scan says it on its first line. 🤖 Auto (on until turned off below): on page 3, once no checkbox is empty, Continue is pressed; if the page then stays on page 3 (an error) or Continue stays off, Back goes to page 2 and Back again to page 1. On page 4 Confirm is pressed at once. Auto works only in the booking app and never while Tick, Clear, Book or Scan runs. Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
+                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). A 📍 badge at the top says which page of the booking is open - Page 1 (the page before page 2, whatever it is), Page 2 calendar & slot, Page 3 ticking sevaks, Page 4 Confirm - and Scan says it on its first line. Grey-blue 🤖 Auto (its own round button - tap to turn on / off; on shows a green ring): on page 3, once no checkbox is empty, Continue is pressed; if the page then stays on page 3 (an error) or Continue stays off, Back goes to page 2 and Back again to page 1. On page 4 Confirm is pressed at once. Auto works only in the booking app and never while Tick, Clear, Book or Scan runs. Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setLineSpacing(dp(2), 1f);
@@ -219,7 +219,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "📋 Report", "🔗 Link"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "📋 Report", "🔗 Link", "🤖 Auto"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -264,10 +264,8 @@ public class MainActivity extends Activity {
             lp.rightMargin = dp(10);
             row.addView(chip, lp);
         }
-        // Not round buttons: the 📍 badge at the top saying which page of the booking is open,
-        // and Auto - page 3's Continue (or Back to pages 2 and 1), page 4's Confirm.
+        // Not a round button: the 📍 badge at the top saying which page of the booking is open.
         row.addView(settingChip(sp, "show_page", "📍 Page", "Page badge"), chipLp());
-        row.addView(settingChip(sp, "auto_flow", "🤖 Auto Continue / Confirm", "Auto Continue and Confirm"), chipLp());
         HorizontalScrollView wide = new HorizontalScrollView(this);
         wide.setHorizontalScrollBarEnabled(false);
         wide.addView(row);
