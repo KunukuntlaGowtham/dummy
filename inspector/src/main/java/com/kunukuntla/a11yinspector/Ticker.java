@@ -155,39 +155,30 @@ final class Ticker {
             log("row " + row + ": clicking its checkbox" + (name.isEmpty() ? "" : " \"" + name + "\"")
                     + (n.isVisibleToUser() ? "" : " (off screen)") + " - click method: ACTION_CLICK on the box");
             n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            whenCheckedAt(n, idx, 450, ok -> {
-                if (ok) {
-                    lastNode = n;
-                    lastIdx = idx;
-                    lastRow = row;
-                    ticked++;
-                    tickedRows.add(row);
-                    log("row " + row + ": state after ☑ - ticked ✓ by a click");
-                    note("click");
-                    tickTime = SystemClock.uptimeMillis();
-                    waitUntil = tickTime + waitMs();
-                    hintUntil = tickTime + 3000;
-                    clearPopups(before, looks(), this::next);
+            // The page answers every tap on a box - tick or untick - with a pop-up (its cover
+            // comes within ~0.5 s), and the box may read ☑ only a moment later. So once the page
+            // has answered, the box gets no second click: that would untick it.
+            whenTickedOrAnswered(n, idx, before, 700, r -> {
+                if (r == TICKED) {
+                    fastTicked(n, idx, row, "click", before);
                     return;
                 }
-                // Its label, once (a hidden web checkbox can need it).
+                if (r == ANSWERED) {
+                    answeredNotTicked(n, idx, row, "click", before);
+                    return;
+                }
+                // No answer at all: the click didn't reach the box - its label, once.
                 AccessibilityNodeInfo label = clickableParent(n);
-                log("row " + row + ": state after the click ☐ - " + (label != null
+                log("row " + row + ": state after the click ☐, and the page didn't answer - " + (label != null
                         ? "click method: ACTION_CLICK on its label" : "no tappable label around it"));
                 if (label != null) label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                whenCheckedAt(n, idx, label != null ? 450 : 0, byLabel -> {
-                    if (byLabel) {
-                        lastNode = n;
-                        lastIdx = idx;
-                        lastRow = row;
-                        ticked++;
-                        tickedRows.add(row);
-                        log("row " + row + ": state after ☑ - ticked ✓ by a click on its label");
-                        note("label");
-                        tickTime = SystemClock.uptimeMillis();
-                        waitUntil = tickTime + waitMs();
-                        hintUntil = tickTime + 3000;
-                        clearPopups(before, looks(), this::next);
+                whenTickedOrAnswered(n, idx, before, label != null ? 700 : 0, r2 -> {
+                    if (r2 == TICKED) {
+                        fastTicked(n, idx, row, "label", before);
+                        return;
+                    }
+                    if (r2 == ANSWERED) {
+                        answeredNotTicked(n, idx, row, "label", before);
                         return;
                     }
                     // Not ticked: if a pop-up comes the page has answered; either way, on to the next.
@@ -203,6 +194,77 @@ final class Ticker {
             return true;
         }
         return false;
+    }
+
+    private static final int NOTHING = 0, TICKED = 1, ANSWERED = 2;
+
+    /**
+     * Waits (every 60 ms, up to {@code ms}) until the box reads ☑ (TICKED) or the page has
+     * answered the click without it - a pop-up or its cover came (ANSWERED); else NOTHING.
+     */
+    private void whenTickedOrAnswered(AccessibilityNodeInfo n, int idx, Page.Before before, long ms,
+                                      java.util.function.Consumer<Integer> then) {
+        if (checkedAt(n, idx)) {
+            then.accept(TICKED);
+            return;
+        }
+        if (answered(before)) {
+            then.accept(ANSWERED);
+            return;
+        }
+        if (ms <= 0) {
+            then.accept(NOTHING);
+            return;
+        }
+        later(() -> whenTickedOrAnswered(n, idx, before, ms - 60, then), 60);
+    }
+
+    /** The page answered since {@code before}: its pop-up's cover, or a pop-up accessibility shows. */
+    private boolean answered(Page.Before before) {
+        return Page.coverCame(service, before) || Page.popup(service, before) != null;
+    }
+
+    /** The box reads ☑ after the click ({@code way}): counted, then its pop-up is cleared. */
+    private void fastTicked(AccessibilityNodeInfo n, int idx, String row, String way, Page.Before before) {
+        lastNode = n;
+        lastIdx = idx;
+        lastRow = row;
+        ticked++;
+        tickedRows.add(row);
+        log("row " + row + ": state after ☑ - ticked ✓ by a click" + (way.equals("label") ? " on its label" : ""));
+        note(way);
+        tickTime = SystemClock.uptimeMillis();
+        waitUntil = tickTime + waitMs();
+        hintUntil = tickTime + 3000;
+        clearPopups(before, looks(), this::next);
+    }
+
+    /**
+     * The page answered the click (its pop-up came) but the box doesn't read ☑ yet: no second
+     * click - it would untick the box. The pop-up is cleared, then the box is read once more.
+     */
+    private void answeredNotTicked(AccessibilityNodeInfo n, int idx, String row, String way, Page.Before before) {
+        log("row " + row + ": the page answered the " + way + " (its pop-up came) but the box still reads ☐ -"
+                + " no second click (it would untick it); clearing the pop-up, then reading the box");
+        tickTime = SystemClock.uptimeMillis();
+        waitUntil = tickTime + waitMs();
+        hintUntil = tickTime + 3000;
+        clearPopups(before, looks(), () -> {
+            if (checkedAt(n, idx)) {
+                lastNode = n;
+                lastIdx = idx;
+                lastRow = row;
+                ticked++;
+                tickedRows.add(row);
+                log("row " + row + ": state after ☑ - ticked ✓ by the " + way + " (read after its pop-up)");
+                note(way);
+            } else {
+                log("row " + row + ": state after ☐ - the page answered but didn't tick it");
+                note("not ticked");
+                refused(row, "not ticked - the page answered with a pop-up");
+            }
+            next();
+        });
     }
 
     /**
@@ -221,19 +283,6 @@ final class Ticker {
             if (i++ == idx) return m.isChecked();
         }
         return false;
-    }
-
-    /** Checks every 40 ms (up to {@code ms}) whether the box at {@code idx} turned ☑. */
-    private void whenCheckedAt(AccessibilityNodeInfo n, int idx, long ms, java.util.function.Consumer<Boolean> then) {
-        if (ms <= 0) {
-            then.accept(checkedAt(n, idx));
-            return;
-        }
-        later(() -> {
-            boolean on = checkedAt(n, idx);
-            if (on || ms <= 40) then.accept(on);
-            else whenCheckedAt(n, idx, ms - 40, then);
-        }, 40);
     }
 
     /** A row not added: noted, said on screen, never tried again. */
@@ -419,10 +468,15 @@ final class Ticker {
         log("row " + b.row + " [" + app() + "]: checkbox found - " + describeBox(b.node) + ", state before ☐");
         log("row " + b.row + ": clicking its checkbox (at " + b.box.centerX() + "," + b.box.centerY() + ") - click method: ACTION_CLICK on the box");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-        whenChecked(b.node, 450, checked -> {
+        whenChecked(b.node, 700, checked -> {
             if (checked) {
                 note("click");
                 done(b, "ticked ✓ by a click", before);
+                return;
+            }
+            // The page answered (its pop-up came): no second click - it would untick the box.
+            if (answered(before)) {
+                carefulAnswered(b, "click", before);
                 return;
             }
             AccessibilityNodeInfo label = clickableParent(b.node);
@@ -431,10 +485,14 @@ final class Ticker {
                         + " - clicking its label");
                 label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
             }
-            whenChecked(b.node, label != null ? 450 : 0, byLabel -> {
+            whenChecked(b.node, label != null ? 700 : 0, byLabel -> {
                 if (byLabel) {
                     note("label");
                     done(b, "ticked ✓ by a click on its label", before);
+                    return;
+                }
+                if (label != null && answered(before)) {
+                    carefulAnswered(b, "label", before);
                     return;
                 }
                 log("row " + b.row + ": tapping it at " + b.box.centerX() + "," + b.box.centerY());
@@ -453,6 +511,30 @@ final class Ticker {
                     }
                 });
             });
+        });
+    }
+
+    /** The careful way: the page answered but the box reads ☐ - pop-up cleared, box read again. */
+    private void carefulAnswered(Box b, String way, Page.Before before) {
+        log("row " + b.row + ": the page answered the " + way + " (its pop-up came) but the box still reads ☐ -"
+                + " no second click (it would untick it); clearing the pop-up, then reading the box");
+        tickTime = SystemClock.uptimeMillis();
+        waitUntil = tickTime + waitMs();
+        hintUntil = tickTime + 3000;
+        clearPopups(before, looks(), () -> {
+            if (Page.isChecked(b.node)) {
+                ticked++;
+                tickedRows.add(b.row);
+                note(way);
+                log("row " + b.row + ": state after ☑ - ticked ✓ by the " + way + " (read after its pop-up)");
+            } else {
+                note("not ticked");
+                notTicked++;
+                failedRows.add(b.row);
+                log("row " + b.row + ": state after ☐ - the page answered but didn't tick it ✗");
+                missedChanged();
+            }
+            next();
         });
     }
 
