@@ -42,6 +42,9 @@ final class AutoFlow {
 
         /** Back on page 1 because Tick missed rows (the retry starts here). */
         void missedAtPage1();
+
+        /** Tick ended: test mode's trip (back to page 1 and forward) instead of going on? */
+        boolean testTripAfterTick();
     }
 
     static boolean enabled(Context c) {
@@ -94,6 +97,11 @@ final class AutoFlow {
         boolean afterTick = tickEnded;
         tickEnded = false;
         if (kind != PageKind.Kind.TICKING || f.boxes == 0) return;
+        if (afterTick && host.testTripAfterTick()) {
+            missed = true;
+            backToPage1("Test mode");
+            return;
+        }
         if (f.empty() > 0) {
             offSince = 0;
             // Tick has ended and a box is still empty (a row the page refused): start again from page 1.

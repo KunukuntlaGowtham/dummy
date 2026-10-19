@@ -259,6 +259,11 @@ public class InspectorService extends AccessibilityService {
             public void missedAtPage1() {
                 startRetry();
             }
+
+            @Override
+            public boolean testTripAfterTick() {
+                return InspectorService.this.testTripAfterTick();
+            }
         });
         pageCheckSoon();
     }
@@ -563,92 +568,8 @@ public class InspectorService extends AccessibilityService {
         deleteButton = floating("🗑\nDelete", 0xEEC62828, 688, v -> {
             closeCard();
             if (deleter.isRunning()) deleter.stop("Stopped");
-            else if (!busy()) askDelete();
+            else if (!busy()) deleteNow();
         });
-    }
-
-    /** Asks which profile number to delete (the number on its card: 2, 3, ...). */
-    private void askDelete() {
-        closeAsk();
-        android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
-        List<SevakDeleter.Card> cards;
-        try {
-            cards = SevakDeleter.cards(this);
-        } catch (RuntimeException e) {
-            cards = new ArrayList<>();
-        }
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(18), dp(16), dp(18), dp(10));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xF81B1D22);
-        bg.setCornerRadius(dp(16));
-        box.setBackground(bg);
-        TextView title = new TextView(this);
-        title.setText("🗑 Delete sevaks (testing)");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
-        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        box.addView(title);
-        StringBuilder seen = new StringBuilder();
-        for (SevakDeleter.Card c : cards) {
-            seen.append('\n').append(c.number).append("  ").append(c.name)
-                    .append(c.bin == null ? "  (no delete)" : "  🗑");
-        }
-        TextView hint = new TextView(this);
-        hint.setText("0 = delete nothing: back to page 1 and forward again (to test page 2's checkbox). Numbers in the order to delete, e.g. 2, 5: profile 2, then whoever is number 5 once 2 has gone (the one that was 6) - each number as on screen at its turn. Each: its bin tapped, then its 2 pop-ups closed. Profiles on screen now:"
-                + (seen.length() == 0 ? "\n(none found - open the sevaks list)" : seen.toString()));
-        hint.setTextColor(0xCCFFFFFF);
-        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
-        hint.setPadding(0, dp(4), 0, dp(6));
-        box.addView(hint);
-        android.widget.EditText number = field(box, "Profile numbers to delete", "e.g. 2, 5",
-                prefs.getString("delete_number", ""), android.text.InputType.TYPE_CLASS_TEXT);
-        LinearLayout row = new LinearLayout(this);
-        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        rowLp.topMargin = dp(10);
-        row.setLayoutParams(rowLp);
-        row.addView(cardButton("Cancel", v -> closeAsk()), cardButtonLp(true));
-        row.addView(cardButton("Delete", v -> {
-            String s = number.getText().toString().trim();
-            if (s.matches("0+")) {
-                // 0: no delete - only the trip: back to page 1 and forward again (tests page 2's checkbox).
-                prefs.edit().putString("delete_number", s).apply();
-                closeAsk();
-                handler.postDelayed(this::testTrip, 300);
-                return;
-            }
-            List<Integer> numbers = DeleteRun.parse(s);
-            if (numbers.isEmpty()) {
-                Toast.makeText(this, "Type the profiles' numbers, like 2, 5", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            prefs.edit().putString("delete_number", s).apply();
-            closeAsk();
-            handler.postDelayed(() -> { // the keyboard goes down first
-                if (busy()) return;
-                deleteButton.setText("■\nStop");
-                deleter.start(numbers);
-            }, 300);
-        }, true), cardButtonLp(true));
-        box.addView(row);
-        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
-                getResources().getDisplayMetrics().widthPixels * 90 / 100,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        lp.y = dp(90);
-        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
-        try {
-            windowManager.addView(box, lp);
-            ask = box;
-            number.requestFocus();
-        } catch (RuntimeException e) {
-            Toast.makeText(this, "Couldn't show the form: " + e.getMessage(), Toast.LENGTH_LONG).show();
-        }
     }
 
     /** Go got past the slot page: Tick starts 1 s from now (tap Go in the gap to cancel it). */
@@ -782,43 +703,69 @@ public class InspectorService extends AccessibilityService {
     }
 
     /** Back on page 1 for rows Tick missed: delete them (numbered as after each delete), then Continue. */
-    /** Delete with 0 (testing): no profile deleted - page 3 or 2 back to page 1, then forward as the retry. */
-    private boolean tripOnly;
+    // Test mode (set in the app): the numbers to delete on the trip instead of the rows not
+    // added - "0" deletes none - and after any Tick run (all ticked too) the trip runs once.
 
-    private void testTrip() {
-        if (busy() || flow == null || flow.busy()) return;
+    private boolean testMode() {
+        return getSharedPreferences("settings", MODE_PRIVATE).getBoolean("test_mode", false);
+    }
+
+    /** Test mode's numbers ("0": none - only the trip back and forward). */
+    private List<Integer> testNumbers() {
+        return DeleteRun.parse(getSharedPreferences("settings", MODE_PRIVATE).getString("test_delete", "0"));
+    }
+
+    /** The numbers the next trip deletes (null: the rows Tick didn't add). */
+    private List<Integer> tripNumbers;
+
+    /** 🗑 Delete: the trip now - test mode's numbers, else the rows the last Tick didn't add. */
+    private void deleteNow() {
+        if (flow == null || flow.busy()) return;
+        List<Integer> numbers = testMode() ? testNumbers() : MissedBox.afterRemoving(lastMissed);
+        if (!testMode() && numbers.isEmpty()) {
+            Toast.makeText(this, "🗑 Nothing to delete - the last Tick added every row", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        retryUsed = false;
+        tripNumbers = numbers;
         PageKind.Kind k;
         try {
             k = PageKind.decide(PageKind.read(this));
         } catch (RuntimeException e) {
             k = PageKind.Kind.OTHER;
         }
-        tripOnly = true;
         if (k == PageKind.Kind.TICKING || k == PageKind.Kind.CALENDAR) {
-            Toast.makeText(this, "↻ Test (0): no delete - back to page 1, then forward", Toast.LENGTH_SHORT).show();
-            flow.backForRetry("Test (0)"); // page 1 reached: startRetry goes on
+            Toast.makeText(this, "↻ " + (numbers.isEmpty() ? "No delete" : "Delete " + numbers)
+                    + ": back to page 1, then forward", Toast.LENGTH_SHORT).show();
+            flow.backForRetry(testMode() ? "Test mode" : "Delete"); // page 1 reached: startRetry goes on
         } else {
             startRetry(); // on page 1 already
         }
     }
 
+    /** Tick ended: in test mode the trip runs once whatever was ticked (AutoFlow goes back). */
+    private boolean testTripAfterTick() {
+        if (!testMode() || retryUsed) return false;
+        tripNumbers = testNumbers();
+        return true;
+    }
+
     private void startRetry() {
-        if (tripOnly) {
-            tripOnly = false;
-            retrying = true;
-            Toast.makeText(this, "↻ Test: nothing deleted - Continue, page 2's checkbox, page 3", Toast.LENGTH_SHORT).show();
-            retryContinuePage1();
-            return;
-        }
-        List<Integer> numbers = MissedBox.afterRemoving(lastMissed);
-        if (!retryOn() || retryUsed || numbers.isEmpty() || deleting()) {
+        boolean given = tripNumbers != null;
+        List<Integer> numbers = given ? tripNumbers : MissedBox.afterRemoving(lastMissed);
+        tripNumbers = null;
+        if (deleting() || !given && (!retryOn() || retryUsed || numbers.isEmpty())) {
             checkPage();
             return;
         }
         retryUsed = true;
         retrying = true;
-        Toast.makeText(this, "🗑 Deleting the rows not ticked (" + numbers + "), then Continue",
-                Toast.LENGTH_SHORT).show();
+        if (numbers.isEmpty()) {
+            Toast.makeText(this, "↻ Nothing deleted - Continue, page 2's checkbox, page 3", Toast.LENGTH_SHORT).show();
+            retryContinuePage1();
+            return;
+        }
+        Toast.makeText(this, "🗑 Deleting " + numbers + ", then Continue", Toast.LENGTH_SHORT).show();
         deleteButton.setText("■\nStop");
         deleter.start(numbers);
     }

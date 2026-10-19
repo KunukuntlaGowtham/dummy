@@ -68,7 +68,7 @@ public class MainActivity extends Activity {
                 + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
                 + "recording of the app's events. Deep scan also saves a screenshot in Downloads/A11yInspector; share that PNG with the report. Watch popup 15 s records changes while you open a popup: start with it closed, trigger it, and leave it open. Purple ☑ Tick ticks every checkbox and clears "
                 + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
-                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). A 📍 badge at the top says which page of the booking is open - Page 1 (the page before page 2, whatever it is), Page 2 calendar & slot, Page 3 ticking sevaks, Page 4 Confirm - and Scan says it on its first line. Grey-blue 🤖 Auto (its own round button - tap to turn on / off; on shows a green ring): on page 3, when a Tick run ends with a checkbox still not ticked, Back goes to page 2 and Back again to page 1; once no checkbox is empty, Continue is pressed; if the page then stays on page 3 (an error) or Continue stays off, Back goes to page 2 and Back again to page 1. On page 4 Confirm is pressed at once. Auto works only in the booking app and never while Tick, Clear, Book or Scan runs. Red 🗑 Delete (testing) asks for profile numbers on the sevaks list in the order to delete (e.g. 2, 5): profile 2, then whoever is number 5 once 2 has gone (the one that was 6) - each number as on screen at its turn. Type 0 to delete nothing: from page 3 or 2 it goes back to page 1 and forward again (Continue, page 2's checkbox and Continue, page 3's Continue, Confirm) - to test the checkbox on the second pass. Each profile: its bin tapped, its 2 pop-ups closed the moment they come (at the place their button was last time, else by a screenshot), and whether it went is checked. Tap it again to stop. When a Tick run leaves rows not ticked and Auto has gone back to page 1, Auto deletes those profiles (numbered as after each delete), presses Continue, on page 2 ticks only its checkbox and presses Continue (a full Go if Continue stays off), on page 3 presses Continue at once (no ticking) and then Confirm - once per booking (turn it off below). If Go's date isn't open (green) it takes another by the preference below. Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
+                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). A 📍 badge at the top says which page of the booking is open - Page 1 (the page before page 2, whatever it is), Page 2 calendar & slot, Page 3 ticking sevaks, Page 4 Confirm - and Scan says it on its first line. Grey-blue 🤖 Auto (its own round button - tap to turn on / off; on shows a green ring): on page 3, when a Tick run ends with a checkbox still not ticked, Back goes to page 2 and Back again to page 1; once no checkbox is empty, Continue is pressed; if the page then stays on page 3 (an error) or Continue stays off, Back goes to page 2 and Back again to page 1. On page 4 Confirm is pressed at once. Auto works only in the booking app and never while Tick, Clear, Book or Scan runs. Red 🗑 Delete asks nothing: it goes back to page 1 (from page 3 or 2), deletes the rows the last Tick didn't add - or, in 🧪 Test mode below, the numbers typed there (0 = none) - in order, each number as on screen at its turn (2, 5: profile 2, then whoever is 5 once 2 has gone), then goes forward. Each profile: its bin tapped, its 2 pop-ups closed the moment they come. Tap it again to stop. When a Tick run leaves rows not ticked and Auto has gone back to page 1, Auto deletes those profiles (numbered as after each delete), presses Continue, on page 2 ticks only its checkbox and presses Continue (a full Go if Continue stays off), on page 3 presses Continue at once (no ticking) and then Confirm - once per booking (turn it off below). If Go's date isn't open (green) it takes another by the preference below. Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
         how.setTextColor(0xE6FFFFFF);
         how.setTextSize(13);
         how.setLineSpacing(dp(2), 1f);
@@ -326,17 +326,62 @@ public class MainActivity extends Activity {
         wide2.setHorizontalScrollBarEnabled(false);
         wide2.addView(row2);
         box.addView(wide2);
+        // Test mode: the trip's numbers typed here (0 = none), and the trip after every Tick.
+        LinearLayout row3 = new LinearLayout(this);
+        row3.setGravity(Gravity.CENTER_VERTICAL);
+        row3.setPadding(0, dp(8), 0, 0);
+        row3.addView(settingChip(sp, "test_mode", "🧪 Test mode", "Test mode", false), chipLp());
+        TextView label = new TextView(this);
+        label.setText("Delete:");
+        label.setTextColor(0xFF4A4F4A);
+        label.setTextSize(13);
+        row3.addView(label);
+        android.widget.EditText numbers = new android.widget.EditText(this);
+        numbers.setSingleLine(true);
+        numbers.setText(sp.getString("test_delete", "0"));
+        numbers.setHint("0 or 2, 5");
+        numbers.setTextSize(14);
+        numbers.setMinWidth(dp(110));
+        numbers.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        numbers.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence c, int a, int b, int d) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence c, int a, int b, int d) {
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable e) {
+                sp.edit().putString("test_delete", e.toString().trim()).apply();
+            }
+        });
+        row3.addView(numbers);
+        box.addView(row3);
+        TextView note = new TextView(this);
+        note.setText("Test mode on: after every Tick run (ticked or not) Auto goes back to page 1 once, deletes "
+                + "these numbers (0 = none), and goes forward - page 2's checkbox, Continue, page 3's Continue, "
+                + "Confirm. 🗑 Delete runs the same trip now. Off: Delete and Auto use the rows Tick didn't add.");
+        note.setTextColor(0xFF6A6F6A);
+        note.setTextSize(12);
+        box.addView(note);
         return box;
     }
 
     /** A chip turning a setting (on until turned off) on / off. */
     private TextView settingChip(android.content.SharedPreferences sp, String key, String name, String spoken) {
+        return settingChip(sp, key, name, spoken, true);
+    }
+
+    private TextView settingChip(android.content.SharedPreferences sp, String key, String name, String spoken,
+                                 boolean byDefault) {
         TextView chip = new TextView(this);
         chip.setTypeface(Typeface.DEFAULT_BOLD);
         chip.setTextSize(13);
         chip.setPadding(dp(12), dp(7), dp(12), dp(7));
         Runnable paint = () -> {
-            boolean on = sp.getBoolean(key, true);
+            boolean on = sp.getBoolean(key, byDefault);
             chip.setText((on ? "✓ " : "") + name);
             chip.setTextColor(on ? Color.WHITE : GREEN);
             GradientDrawable bg = new GradientDrawable();
@@ -347,7 +392,7 @@ public class MainActivity extends Activity {
         };
         paint.run();
         chip.setOnClickListener(v -> {
-            sp.edit().putBoolean(key, !sp.getBoolean(key, true)).apply();
+            sp.edit().putBoolean(key, !sp.getBoolean(key, byDefault)).apply();
             paint.run();
         });
         return chip;
