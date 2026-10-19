@@ -108,7 +108,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton, deleteButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -280,7 +280,7 @@ public class InspectorService extends AccessibilityService {
         }
         // While a run goes the page isn't read again: Tick's speed comes first. The badge
         // keeps the page the run started on.
-        if (scanning || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (scanning || deleting || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
         PageKind.Facts f;
         try {
             f = PageKind.read(this);
@@ -404,6 +404,14 @@ public class InspectorService extends AccessibilityService {
         clearer = new Ticker(this, (summary, log) -> {
             saveReport(log);
             clearButton.setText("✖\nClear");
+            if (afterClear != null) {
+                // Delete's pop-ups: the next step, once this clear is done.
+                Runnable next = afterClear;
+                afterClear = null;
+                deleteLog.append("  clear: ").append(summary.replace('\n', ' ')).append('\n');
+                handler.postDelayed(next, 400);
+                return;
+            }
             finished(summary);
         });
         clearButton = floating("✖\nClear", 0xEEE65100, 292, v -> {
@@ -443,6 +451,7 @@ public class InspectorService extends AccessibilityService {
         showReportButton();
         showLinkButton();
         showAutoButton();
+        showDeleteButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -502,6 +511,169 @@ public class InspectorService extends AccessibilityService {
         bg.setStroke(on ? dp(4) : dp(2), on ? 0xFF7CFC00 : 0x66FFFFFF);
     }
 
+    // ---- 🗑 Delete (testing): a sevak profile by its number, then its 2 pop-ups cleared --------
+
+    private TextView deleteButton;
+    private boolean deleting;
+    /** The step after the running Clear (Delete's pop-ups), or null. */
+    private Runnable afterClear;
+    private final StringBuilder deleteLog = new StringBuilder();
+
+    private void showDeleteButton() {
+        deleteButton = floating("🗑\nDelete", 0xEEC62828, 688, v -> {
+            closeCard();
+            if (!busy()) askDelete();
+        });
+    }
+
+    /** Asks which profile number to delete (the number on its card: 2, 3, ...). */
+    private void askDelete() {
+        closeAsk();
+        android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        List<SevakDeleter.Card> cards;
+        try {
+            cards = SevakDeleter.cards(this);
+        } catch (RuntimeException e) {
+            cards = new ArrayList<>();
+        }
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(16), dp(18), dp(10));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(0xF81B1D22);
+        bg.setCornerRadius(dp(16));
+        box.setBackground(bg);
+        TextView title = new TextView(this);
+        title.setText("🗑 Delete a sevak (testing)");
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        box.addView(title);
+        StringBuilder seen = new StringBuilder();
+        for (SevakDeleter.Card c : cards) {
+            seen.append('\n').append(c.number).append("  ").append(c.name)
+                    .append(c.bin == null ? "  (no delete)" : "  🗑");
+        }
+        TextView hint = new TextView(this);
+        hint.setText("Taps the profile's bin, then clears the 2 pop-ups after it. Profiles on screen:"
+                + (seen.length() == 0 ? "\n(none found - open the sevaks list)" : seen.toString()));
+        hint.setTextColor(0xCCFFFFFF);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        hint.setPadding(0, dp(4), 0, dp(6));
+        box.addView(hint);
+        android.widget.EditText number = field(box, "Profile number to delete", "e.g. 2",
+                prefs.getString("delete_number", ""), android.text.InputType.TYPE_CLASS_NUMBER);
+        LinearLayout row = new LinearLayout(this);
+        LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        rowLp.topMargin = dp(10);
+        row.setLayoutParams(rowLp);
+        row.addView(cardButton("Cancel", v -> closeAsk()), cardButtonLp(true));
+        row.addView(cardButton("Delete", v -> {
+            String s = number.getText().toString().trim();
+            int n;
+            try {
+                n = Integer.parseInt(s);
+            } catch (NumberFormatException e) {
+                Toast.makeText(this, "Type the profile's number, like 2", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            prefs.edit().putString("delete_number", s).apply();
+            closeAsk();
+            handler.postDelayed(() -> deleteSevak(n), 400); // the keyboard goes down first
+        }, true), cardButtonLp(true));
+        box.addView(row);
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                getResources().getDisplayMetrics().widthPixels * 90 / 100,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT);
+        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        lp.y = dp(90);
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE;
+        try {
+            windowManager.addView(box, lp);
+            ask = box;
+            number.requestFocus();
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "Couldn't show the form: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    /** Taps profile {@code n}'s bin, clears the 2 pop-ups after it, and says whether it went. */
+    private void deleteSevak(int n) {
+        if (busy()) return;
+        deleteLog.setLength(0);
+        long start = android.os.SystemClock.uptimeMillis();
+        SevakDeleter.Card card;
+        try {
+            card = SevakDeleter.card(this, n);
+        } catch (RuntimeException e) {
+            card = null;
+        }
+        if (card == null) {
+            Toast.makeText(this, "🗑 No profile " + n + " on the screen", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (card.bin == null) {
+            Toast.makeText(this, "🗑 Profile " + n + " (" + card.name + ") has no delete", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        android.graphics.Rect r = SevakDeleter.where(card.bin);
+        if (r == null) {
+            // Off screen: brought on screen, then looked for again.
+            card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+            deleting = true;
+            handler.postDelayed(() -> {
+                deleting = false;
+                SevakDeleter.Card again = SevakDeleter.card(this, n);
+                android.graphics.Rect r2 = again == null || again.bin == null ? null : SevakDeleter.where(again.bin);
+                if (r2 == null) {
+                    Toast.makeText(this, "🗑 Profile " + n + "'s bin isn't on screen - scroll to it", Toast.LENGTH_SHORT).show();
+                } else {
+                    tapBin(n, again.name, r2, start);
+                }
+            }, 500);
+            return;
+        }
+        tapBin(n, card.name, r, start);
+    }
+
+    private void tapBin(int n, String name, android.graphics.Rect r, long start) {
+        deleting = true;
+        deleteLog.append("Delete profile ").append(n).append(" (").append(name).append(")\n");
+        deleteLog.append("  bin tapped at ").append(r.centerX()).append(',').append(r.centerY()).append('\n');
+        android.graphics.Path p = new android.graphics.Path();
+        p.moveTo(r.centerX(), r.centerY());
+        dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
+                .build(), null, null);
+        // Pop-up 1 (asks to delete), then pop-up 2 (says it's deleted): one Clear each.
+        handler.postDelayed(() -> {
+            deleting = false;
+            afterClear = () -> {
+                afterClear = () -> deleteDone(n, name, start);
+                clearButton.setText("■\nStop");
+                clearer.clearNow();
+            };
+            clearButton.setText("■\nStop");
+            clearer.clearNow();
+        }, 700);
+    }
+
+    private void deleteDone(int n, String name, long start) {
+        boolean gone = true;
+        try {
+            for (SevakDeleter.Card c : SevakDeleter.cards(this)) if (c.name.equals(name)) gone = false;
+        } catch (RuntimeException ignored) {
+        }
+        String head = (gone ? "🗑 Profile " + n + " (" + name + ") deleted ✓" : "🗑 Profile " + n + " (" + name + ") still there ✗")
+                + " - " + (android.os.SystemClock.uptimeMillis() - start) + " ms";
+        saveReport("A11y Inspector - Delete (testing)\n=========================\n" + head + "\n\n" + deleteLog);
+        finished(head + "\n" + deleteLog);
+    }
+
     /** Go got past the slot page: Tick starts 1 s from now (tap Go in the gap to cancel it). */
     private void tickAfterGo() {
         cancelLinkedTick();
@@ -528,13 +700,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton, deleteButton};
     }
 
-    /** Down the screen from one round button to the next: 56 dp button + 16 dp gap. */
-    private static final int BUTTON_STEP = 72;
+    /** Down the screen from one round button to the next: 56 dp button + 14 dp gap (9 buttons fit). */
+    private static final int BUTTON_STEP = 70;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "link", "auto"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "link", "auto", "delete"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
@@ -563,7 +735,7 @@ public class InspectorService extends AccessibilityService {
                 if (on) {
                     lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                     lp.x = dp(12);
-                    lp.y = dp(160 + BUTTON_STEP * k);
+                    lp.y = dp(110 + BUTTON_STEP * k);
                 } else {
                     lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                 }
@@ -663,7 +835,7 @@ public class InspectorService extends AccessibilityService {
 
     private void autoCheck() {
         // Tick and Clear clear their own pop-ups: never tap the same one twice.
-        if (scanning || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (scanning || deleting || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
         if (ok == null && Page.coverCame(this, autoBaseline)) {
             // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
@@ -744,7 +916,7 @@ public class InspectorService extends AccessibilityService {
 
     /** Another run is on: say so instead of starting a second one over it. */
     private boolean busy() {
-        boolean on = scanning || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
+        boolean on = scanning || deleting || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
         if (on) Toast.makeText(this, "Stop the running one first", Toast.LENGTH_SHORT).show();
         return on;
     }
