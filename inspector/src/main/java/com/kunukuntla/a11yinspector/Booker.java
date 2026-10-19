@@ -239,14 +239,12 @@ final class Booker {
             int[] d = e.getValue();
             if (d[0] == plan.day && d[1] == plan.month && d[2] == plan.year) {
                 AccessibilityNodeInfo cell = e.getKey();
-                if (!cell.isEnabled()) {
-                    log("date: " + dateText() + " is shown as not open - tapping it anyway to see what the page says");
-                }
                 pageBefore = pageTexts();
-                // Clear of the page's header first, then one way after another until the page
-                // shows it took the day.
+                // Clear of the page's header first; then, when the day isn't open (green),
+                // another by the preference set in the app; then one way after another until
+                // the page shows it took the day.
                 dayStart = SystemClock.uptimeMillis();
-                inView(cell, 0, r -> chooseDay(0));
+                inView(cell, 0, r -> judgeDay());
                 return;
             }
         }
@@ -285,6 +283,59 @@ final class Booker {
                     pickDate(moves + 1, 0);
                 });
             });
+        });
+    }
+
+    /** Our own buttons hidden around the calendar's screenshot (set by the service). */
+    private Consumer<Boolean> hideOverlays = on -> { };
+
+    void setOverlayHider(Consumer<Boolean> hide) {
+        hideOverlays = hide;
+    }
+
+    /**
+     * The day asked for open (green)? Else the open day the app's preference picks - same
+     * week, nearest after, nearest before or nearest either way - on the month shown.
+     */
+    private void judgeDay() {
+        int g = gen;
+        Map<AccessibilityNodeInfo, int[]> cells = dayCells();
+        DayColours.open(service, cells, hideOverlays, open -> {
+            if (!running || g != gen) return;
+            if (open == null) {
+                log("date: the page doesn't show which days are open - taking " + dateText());
+                chooseDay(0);
+                return;
+            }
+            long want = DayPick.epochDay(plan.day, plan.month, plan.year);
+            if (Boolean.TRUE.equals(open.get(want))) {
+                log("date: " + dateText() + " is open ✓");
+                chooseDay(0);
+                return;
+            }
+            java.util.Set<Long> openDays = new java.util.HashSet<>();
+            for (Map.Entry<Long, Boolean> e : open.entrySet()) if (e.getValue()) openDays.add(e.getKey());
+            String mode = service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+                    .getString("date_fallback", DayPick.WEEK);
+            long pick = DayPick.choose(want, openDays, mode);
+            if (pick < 0) {
+                log("date: " + dateText() + " isn't open and no day shown is - tapping it anyway");
+                chooseDay(0);
+                return;
+            }
+            String asked = dateText();
+            int[] d = DayPick.date(pick);
+            plan.day = d[0];
+            plan.month = d[1];
+            plan.year = d[2];
+            log("date: " + asked + " isn't open - taking " + dateText() + " (" + DayPick.label(mode) + ")");
+            done.append("↪ Date ").append(asked).append(" not open - took ").append(dateText()).append('\n');
+            AccessibilityNodeInfo c = dayCell();
+            if (c == null) {
+                chooseDay(0);
+                return;
+            }
+            inView(c, 0, r -> chooseDay(0));
         });
     }
 

@@ -249,6 +249,16 @@ public class InspectorService extends AccessibilityService {
             public void say(String message) {
                 Toast.makeText(InspectorService.this, message, Toast.LENGTH_SHORT).show();
             }
+
+            @Override
+            public boolean mayGoBack() {
+                return !retryOn() || !retryUsed;
+            }
+
+            @Override
+            public void missedAtPage1() {
+                startRetry();
+            }
         });
         pageCheckSoon();
     }
@@ -385,6 +395,7 @@ public class InspectorService extends AccessibilityService {
             public void notAdded(java.util.List<String> rows) {
                 // Live, in the corner: stays after the run, until the next Tick run starts.
                 missedBox.show(rows);
+                lastMissed = new ArrayList<>(rows);
             }
         });
         tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> {
@@ -399,6 +410,7 @@ public class InspectorService extends AccessibilityService {
                     Toast.makeText(this, "📍 This looks like " + kind.title() + " - Tick is for Page 3",
                             Toast.LENGTH_SHORT).show();
                 }
+                retryUsed = false; // a new booking: its one retry again
                 tickButton.setText("■\nStop");
                 ticker.start();
             }
@@ -422,7 +434,31 @@ public class InspectorService extends AccessibilityService {
             bookButton.setText("📅\nBook");
             goButton.setText("▶\nGo");
             finished(summary);
-            if (linkOn && booker.handedOver()) tickAfterGo();
+            if (retrying) {
+                // The retry's page 2 needed a full Go: on to page 3.
+                if (booker.handedOver()) retryPage3(0);
+                else endRetry("Go didn't get past page 2");
+            } else if (linkOn && booker.handedOver()) tickAfterGo();
+        });
+        // The calendar's screenshot (which days are green) is taken with our buttons off it.
+        booker.setOverlayHider(new java.util.function.Consumer<Boolean>() {
+            private int[] was;
+
+            @Override
+            public void accept(Boolean hide) {
+                View[] vs = shownButtons();
+                if (hide) {
+                    was = new int[vs.length];
+                    for (int i = 0; i < vs.length; i++) {
+                        if (vs[i] == null) continue;
+                        was[i] = vs[i].getVisibility();
+                        vs[i].setVisibility(View.INVISIBLE);
+                    }
+                } else if (was != null) {
+                    for (int i = 0; i < vs.length; i++) if (vs[i] != null) vs[i].setVisibility(was[i]);
+                    was = null;
+                }
+            }
         });
         // Book: choose what to fill (from the page's own dropdown list) and save it.
         bookButton = floating("📅\nBook", 0xEE1565C0, 358, v -> {
@@ -519,6 +555,10 @@ public class InspectorService extends AccessibilityService {
             saveReport(log);
             deleteButton.setText("🗑\nDelete");
             finished(summary);
+            if (retrying) {
+                if (summary.startsWith("Stopped")) endRetry("Delete was stopped");
+                else handler.postDelayed(this::retryContinuePage1, 150);
+            }
         });
         deleteButton = floating("🗑\nDelete", 0xEEC62828, 688, v -> {
             closeCard();
@@ -716,8 +756,158 @@ public class InspectorService extends AccessibilityService {
                 + (plan.radio.isEmpty() ? "" : " · " + plan.radio), Toast.LENGTH_SHORT).show();
         goButton.setText("■\nStop");
         cancelLinkedTick();
-        booker.setHandOver(linkOn);
+        if (!retrying) retryUsed = false; // a new booking: its one retry again
+        booker.setHandOver(linkOn || retrying);
         booker.start(plan);
+    }
+
+    // ---- Retry once after rows Tick missed: delete them on page 1, then pages 2 → 3 → 4 ----
+
+    /** The rows the last Tick run didn't add (as Tick numbers them). */
+    private List<String> lastMissed = new ArrayList<>();
+    /** This booking's one retry is used (Tick missing rows again leaves it on page 3). */
+    private boolean retryUsed;
+    /** The retry runs: delete on page 1, Continue, page 2's checkbox, page 3's Tick. */
+    private boolean retrying;
+
+    private boolean retryOn() {
+        return getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_delete_missed", true);
+    }
+
+    /** Back on page 1 for rows Tick missed: delete them (numbered as after each delete), then Continue. */
+    private void startRetry() {
+        List<Integer> numbers = MissedBox.afterRemoving(lastMissed);
+        if (!retryOn() || retryUsed || numbers.isEmpty() || deleting()) {
+            checkPage();
+            return;
+        }
+        retryUsed = true;
+        retrying = true;
+        Toast.makeText(this, "🗑 Deleting the rows not ticked (" + numbers + "), then Continue",
+                Toast.LENGTH_SHORT).show();
+        deleteButton.setText("■\nStop");
+        deleter.start(numbers);
+    }
+
+    private void endRetry(String why) {
+        retrying = false;
+        Toast.makeText(this, "↻ Retry stopped: " + why, Toast.LENGTH_LONG).show();
+        checkPage();
+    }
+
+    /** Up to {@code ms} for {@code test} (looked at every 60 ms), then {@code then}. */
+    private void waitUntil(java.util.function.BooleanSupplier test, long ms, java.util.function.Consumer<Boolean> then) {
+        long until = android.os.SystemClock.uptimeMillis() + ms;
+        Runnable[] look = new Runnable[1];
+        look[0] = () -> {
+            if (destroyed || !retrying) return;
+            boolean ok;
+            try {
+                ok = test.getAsBoolean();
+            } catch (RuntimeException e) {
+                ok = false;
+            }
+            if (ok || android.os.SystemClock.uptimeMillis() >= until) then.accept(ok);
+            else handler.postDelayed(look[0], 60);
+        };
+        handler.post(look[0]);
+    }
+
+    /** A button with these words, on and on screen (itself or the box around it), or null. */
+    private AccessibilityNodeInfo pressableButton(java.util.function.Predicate<String> words) {
+        for (AccessibilityNodeInfo n : Page.nodes(this)) {
+            if (!n.isVisibleToUser() || !words.test(Page.label(n))) continue;
+            AccessibilityNodeInfo b = PageKind.pressable(n);
+            if (b != null && b.isEnabled() && n.isEnabled()) return b;
+        }
+        return null;
+    }
+
+    private void press(AccessibilityNodeInfo b) {
+        if (b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
+        android.graphics.Rect r = Page.bounds(b);
+        android.graphics.Path p = new android.graphics.Path();
+        p.moveTo(r.centerX(), r.centerY());
+        dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50))
+                .build(), null, null);
+    }
+
+    /** Page 1, deletes done: Continue (up to 3 s for it to turn on), then page 2. */
+    private void retryContinuePage1() {
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 3000, on -> {
+            if (!on) {
+                endRetry("Continue on page 1 stayed off");
+                return;
+            }
+            press(pressableButton(PageKind::isContinue));
+            waitUntil(() -> PageKind.decide(PageKind.read(this)) == PageKind.Kind.CALENDAR, 6000, at2 -> {
+                if (at2) retryPage2();
+                else endRetry("page 2 didn't come after Continue");
+            });
+        });
+    }
+
+    /** Page 2 again: everything is still chosen but its checkbox - ticked, then Continue. */
+    private void retryPage2() {
+        AccessibilityNodeInfo box = null;
+        for (AccessibilityNodeInfo n : Page.nodes(this)) {
+            if (Page.isCheckbox(n) && !n.isChecked()) {
+                box = n;
+                break;
+            }
+        }
+        if (box != null) {
+            AccessibilityNodeInfo b = box;
+            if (!b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                android.graphics.Rect r = Page.visible(b);
+                if (r != null) {
+                    android.graphics.Path p = new android.graphics.Path();
+                    p.moveTo(r.centerX(), r.centerY());
+                    dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                            .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50))
+                            .build(), null, null);
+                }
+            }
+        }
+        // Continue the moment it turns on; still off after 2 s: something else is missing - a full Go.
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 2000, on -> {
+            if (!on) {
+                Toast.makeText(this, "↻ Page 2: Continue stayed off - filling it with Go", Toast.LENGTH_SHORT).show();
+                startSaved();
+                return;
+            }
+            press(pressableButton(PageKind::isContinue));
+            waitUntil(() -> PageKind.decide(PageKind.read(this)) == PageKind.Kind.TICKING, 6000, at3 -> {
+                if (at3) retryPage3(0);
+                else endRetry("page 3 didn't come after Continue");
+            });
+        });
+    }
+
+    /** Page 3 again: Tick the boxes (Auto then presses Continue, and Confirm on page 4). */
+    private void retryPage3(int tries) {
+        PageKind.Facts f;
+        try {
+            f = PageKind.read(this);
+        } catch (RuntimeException e) {
+            f = null;
+        }
+        if (f == null || f.boxes == 0) {
+            if (tries < 20) {
+                handler.postDelayed(() -> retryPage3(tries + 1), 100);
+                return;
+            }
+            endRetry("no checkboxes on page 3");
+            return;
+        }
+        retrying = false;
+        if (f.empty() == 0) {
+            checkPage(); // all ticked already: Auto presses Continue
+            return;
+        }
+        tickButton.setText("■\nStop");
+        ticker.start();
     }
 
     // ---- Auto-clear: press the OK of every new pop-up the moment it comes up ----------

@@ -36,6 +36,12 @@ final class AutoFlow {
         void page1(PageKind.Facts f);
 
         void say(String message);
+
+        /** Tick missed rows: may Auto go back to page 1 for them (once per booking)? */
+        boolean mayGoBack();
+
+        /** Back on page 1 because Tick missed rows (the retry starts here). */
+        void missedAtPage1();
     }
 
     static boolean enabled(Context c) {
@@ -47,6 +53,8 @@ final class AutoFlow {
     private final Host host;
     /** A step under way: Continue's result, or the Back presses. */
     private boolean busy;
+    /** These Back presses are for rows Tick missed (page 1 then starts the retry). */
+    private boolean missed;
     /** Confirm pressed on this visit to page 4 (pressed again only after leaving it). */
     private boolean confirmDone;
     /** After Continue on page 3: page 4's Confirm is looked for on every page change. */
@@ -90,7 +98,13 @@ final class AutoFlow {
             offSince = 0;
             // Tick has ended and a box is still empty (a row the page refused): start again from page 1.
             if (afterTick) {
-                backToPage1(f.empty() + (f.empty() == 1 ? " checkbox" : " checkboxes") + " not ticked after Tick");
+                String why = f.empty() + (f.empty() == 1 ? " checkbox" : " checkboxes") + " not ticked after Tick";
+                if (!host.mayGoBack()) {
+                    host.say("📍 Page 3: " + why + " again - left here (the retry was used)");
+                    return;
+                }
+                missed = true;
+                backToPage1(why);
             }
             return;
         }
@@ -204,6 +218,7 @@ final class AutoFlow {
                 backTo2(tries + 1); // a pop-up on top took the first Back
             } else {
                 host.say("↩ Back: page 2 didn't come - stopped");
+                missed = false;
                 done();
             }
         });
@@ -215,11 +230,16 @@ final class AutoFlow {
             if (f != null) {
                 host.page1(f);
                 host.say("↩ Back on page 1");
-                done();
+                boolean wasMissed = missed;
+                missed = false;
+                busy = false;
+                if (wasMissed) host.missedAtPage1();
+                else host.recheck();
             } else if (tries < 1) {
                 backTo1(tries + 1);
             } else {
                 host.say("↩ Back: still on page 2 - stopped");
+                missed = false;
                 done();
             }
         });
