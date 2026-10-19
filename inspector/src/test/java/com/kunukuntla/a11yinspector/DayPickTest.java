@@ -66,9 +66,9 @@ public class DayPickTest {
 
     @Test
     public void greenPixels() {
-        assertTrue(DayColours.isGreen(60, 170, 80));
-        assertFalse(DayColours.isGreen(240, 240, 240)); // white
-        assertFalse(DayColours.isGreen(106, 44, 145)); // purple
-        assertFalse(DayColours.isGreen(200, 200, 60)); // yellow
+        assertTrue(DayPick.isGreen(60, 170, 80));
+        assertFalse(DayPick.isGreen(240, 240, 240)); // white
+        assertFalse(DayPick.isGreen(106, 44, 145)); // purple
+        assertFalse(DayPick.isGreen(200, 200, 60)); // yellow
     }
 }

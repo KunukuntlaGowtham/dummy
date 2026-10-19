@@ -130,13 +130,10 @@ final class DayColours {
                 int y = r.top + r.height() * (5 + j * 90 / 8) / 100;
                 if (x < 0 || y < 0 || x >= bmp.getWidth() || y >= bmp.getHeight()) continue;
                 int c = bmp.getPixel(x, y);
-                if (isGreen((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF)) hits++;
+                if (DayPick.isGreen((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF)) hits++;
             }
         }
         return hits >= 4;
     }
 
-    static boolean isGreen(int r, int g, int b) {
-        return g >= 100 && g - r >= 40 && g - b >= 20;
-    }
 }

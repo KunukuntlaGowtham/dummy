@@ -68,6 +68,11 @@ final class DayPick {
         return new int[] {d.getDayOfMonth(), d.getMonthValue(), d.getYear()};
     }
 
+    /** A screenshot's colour that is the calendar's green (an open day). */
+    static boolean isGreen(int r, int g, int b) {
+        return g >= 100 && g - r >= 40 && g - b >= 20;
+    }
+
     /** What the app shows for each preference. */
     static String label(String mode) {
         switch (mode) {
