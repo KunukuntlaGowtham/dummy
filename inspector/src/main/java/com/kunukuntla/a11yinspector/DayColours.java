@@ -109,31 +109,54 @@ final class DayColours {
         }, 80);
     }
 
-    /** Each day: green in its box? Null when no day is green (the calendar doesn't use green). */
+    /** What the last look saw: each day's colour (for the report). */
+    static String lastNote = "";
+
+    /**
+     * Each day: drawn green or yellow (open)? Null when no day is either (the calendar doesn't
+     * colour its days). {@link #lastNote} gets each day's colour.
+     */
     private static Map<Long, Boolean> read(Bitmap bmp, Map<Long, Rect> where) {
         Map<Long, Boolean> out = new HashMap<>();
-        boolean anyGreen = false;
-        for (Map.Entry<Long, Rect> e : where.entrySet()) {
-            boolean g = green(bmp, e.getValue());
-            anyGreen |= g;
-            out.put(e.getKey(), g);
+        boolean anyOpen = false;
+        StringBuilder note = new StringBuilder();
+        for (long day : new java.util.TreeSet<>(where.keySet())) {
+            Rect r = where.get(day);
+            int[] seen = colours(bmp, r);
+            // Green or yellow: open; the day already chosen (drawn purple) counts as open too.
+            boolean open = seen[0] >= 4 || seen[1] >= 4 || seen[3] >= 10;
+            anyOpen |= open;
+            out.put(day, open);
+            int[] d = DayPick.date(day);
+            note.append(note.length() == 0 ? "" : ", ").append(d[0]).append('/').append(d[1]).append(' ')
+                    .append(seen[0] >= 4 ? "green" : seen[1] >= 4 ? "yellow" : seen[3] >= 10 ? "chosen (purple)"
+                            : String.format("#%06X", seen[2]));
         }
-        return anyGreen ? out : null;
+        lastNote = note.toString();
+        return anyOpen ? out : null;
     }
 
-    /** At least 4 of 81 points across the day's box are green (its fill, ring or dot). */
-    static boolean green(Bitmap bmp, Rect r) {
-        int hits = 0;
+    /**
+     * Across the day's box (81 points): {green points, yellow points, the box's middle colour,
+     * purple points}.
+     * At least 4 green or yellow points make an open day (its fill, ring or dot).
+     */
+    static int[] colours(Bitmap bmp, Rect r) {
+        int green = 0, yellow = 0, purple = 0;
         for (int i = 0; i < 9; i++) {
             for (int j = 0; j < 9; j++) {
                 int x = r.left + r.width() * (5 + i * 90 / 8) / 100;
                 int y = r.top + r.height() * (5 + j * 90 / 8) / 100;
                 if (x < 0 || y < 0 || x >= bmp.getWidth() || y >= bmp.getHeight()) continue;
                 int c = bmp.getPixel(x, y);
-                if (DayPick.isGreen((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF)) hits++;
+                int cr = (c >> 16) & 0xFF, cg = (c >> 8) & 0xFF, cb = c & 0xFF;
+                if (DayPick.isGreen(cr, cg, cb)) green++;
+                else if (DayPick.isYellow(cr, cg, cb)) yellow++;
+                else if (DayPick.isPurple(cr, cg, cb)) purple++;
             }
         }
-        return hits >= 4;
+        int mx = Math.min(Math.max(r.centerX(), 0), bmp.getWidth() - 1);
+        int my = Math.min(Math.max(r.top + r.height() / 4, 0), bmp.getHeight() - 1);
+        return new int[] {green, yellow, bmp.getPixel(mx, my) & 0xFFFFFF, purple};
     }
-
 }

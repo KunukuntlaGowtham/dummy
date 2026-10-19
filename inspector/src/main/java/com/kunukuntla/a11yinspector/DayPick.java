@@ -3,7 +3,7 @@ package com.kunukuntla.a11yinspector;
 import java.util.Collection;
 
 /**
- * Which day to book when the one asked for isn't open (not green), by the preference chosen
+ * Which day to book when the one asked for isn't open (not green or yellow), by the preference chosen
  * in the app:
  * <ul>
  *   <li>{@link #WEEK} - the nearest open day in the same week (Sunday to Saturday), else the
@@ -70,7 +70,17 @@ final class DayPick {
 
     /** A screenshot's colour that is the calendar's green (an open day). */
     static boolean isGreen(int r, int g, int b) {
-        return g >= 100 && g - r >= 40 && g - b >= 20;
+        return g >= 100 && g - r >= 30 && g - b >= 20;
+    }
+
+    /** The calendar's yellow / amber (also an open day: few left). */
+    static boolean isYellow(int r, int g, int b) {
+        return r >= 170 && g >= 120 && b <= 140 && r - b >= 70 && g - b >= 40 && Math.abs(r - g) <= 90;
+    }
+
+    /** The app's purple (the day already chosen). */
+    static boolean isPurple(int r, int g, int b) {
+        return b >= 110 && r >= 60 && b - g >= 50 && r - g >= 20;
     }
 
     /** What the app shows for each preference. */

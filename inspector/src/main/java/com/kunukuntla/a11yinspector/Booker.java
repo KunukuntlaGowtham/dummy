@@ -302,14 +302,16 @@ final class Booker {
         Map<AccessibilityNodeInfo, int[]> cells = dayCells();
         DayColours.open(service, cells, hideOverlays, open -> {
             if (!running || g != gen) return;
+            if (!DayColours.lastNote.isEmpty()) log("date: day colours - " + DayColours.lastNote);
+            DayColours.lastNote = "";
             if (open == null) {
-                log("date: the page doesn't show which days are open - taking " + dateText());
+                log("date: no day drawn green or yellow - taking " + dateText());
                 chooseDay(0);
                 return;
             }
             long want = DayPick.epochDay(plan.day, plan.month, plan.year);
             if (Boolean.TRUE.equals(open.get(want))) {
-                log("date: " + dateText() + " is open ✓");
+                log("date: " + dateText() + " is open (green / yellow) ✓");
                 chooseDay(0);
                 return;
             }

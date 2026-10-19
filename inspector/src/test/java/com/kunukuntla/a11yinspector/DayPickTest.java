@@ -70,5 +70,12 @@ public class DayPickTest {
         assertFalse(DayPick.isGreen(240, 240, 240)); // white
         assertFalse(DayPick.isGreen(106, 44, 145)); // purple
         assertFalse(DayPick.isGreen(200, 200, 60)); // yellow
+        assertTrue(DayPick.isGreen(200, 247, 197)); // pale green
+        assertTrue(DayPick.isYellow(255, 213, 79)); // amber
+        assertTrue(DayPick.isYellow(253, 224, 133)); // pale yellow (the note box)
+        assertFalse(DayPick.isYellow(240, 240, 240)); // white
+        assertFalse(DayPick.isYellow(60, 170, 80)); // green
+        assertTrue(DayPick.isPurple(106, 44, 145)); // the app's purple
+        assertFalse(DayPick.isPurple(240, 240, 240));
     }
 }
