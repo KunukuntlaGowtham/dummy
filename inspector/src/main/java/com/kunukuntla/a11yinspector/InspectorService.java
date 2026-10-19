@@ -61,6 +61,7 @@ public class InspectorService extends AccessibilityService {
         CharSequence evPkg = event.getPackageName();
         // Tick's waiting look runs the moment the page changes, not at its next timer.
         if (ticker != null) ticker.onPageEvent(event);
+        if (deleter != null) deleter.onPageEvent(event);
         if (autoClear && evPkg != null && !getPackageName().contentEquals(evPkg)) {
             int t = event.getEventType();
             if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
@@ -103,6 +104,7 @@ public class InspectorService extends AccessibilityService {
         closeCard();
         closeAsk();
         if (ticker != null) ticker.stop("Stopped");
+        if (deleter != null) deleter.stop("Stopped");
         if (missedBox != null) missedBox.hide();
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
@@ -280,7 +282,7 @@ public class InspectorService extends AccessibilityService {
         }
         // While a run goes the page isn't read again: Tick's speed comes first. The badge
         // keeps the page the run started on.
-        if (scanning || deleting || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
         PageKind.Facts f;
         try {
             f = PageKind.read(this);
@@ -404,14 +406,6 @@ public class InspectorService extends AccessibilityService {
         clearer = new Ticker(this, (summary, log) -> {
             saveReport(log);
             clearButton.setText("✖\nClear");
-            if (afterClear != null) {
-                // Delete's pop-ups: the next step, once this clear is done.
-                Runnable next = afterClear;
-                afterClear = null;
-                deleteLog.append("  clear: ").append(summary.replace('\n', ' ')).append('\n');
-                handler.postDelayed(next, 400);
-                return;
-            }
             finished(summary);
         });
         clearButton = floating("✖\nClear", 0xEEE65100, 292, v -> {
@@ -511,18 +505,25 @@ public class InspectorService extends AccessibilityService {
         bg.setStroke(on ? dp(4) : dp(2), on ? 0xFF7CFC00 : 0x66FFFFFF);
     }
 
-    // ---- 🗑 Delete (testing): a sevak profile by its number, then its 2 pop-ups cleared --------
+    // ---- 🗑 Delete (testing): sevak profiles by their numbers, each with its 2 pop-ups --------
 
     private TextView deleteButton;
-    private boolean deleting;
-    /** The step after the running Clear (Delete's pop-ups), or null. */
-    private Runnable afterClear;
-    private final StringBuilder deleteLog = new StringBuilder();
+    private DeleteRun deleter;
+
+    private boolean deleting() {
+        return deleter != null && deleter.isRunning();
+    }
 
     private void showDeleteButton() {
+        deleter = new DeleteRun(this, (summary, log) -> {
+            saveReport(log);
+            deleteButton.setText("🗑\nDelete");
+            finished(summary);
+        });
         deleteButton = floating("🗑\nDelete", 0xEEC62828, 688, v -> {
             closeCard();
-            if (!busy()) askDelete();
+            if (deleter.isRunning()) deleter.stop("Stopped");
+            else if (!busy()) askDelete();
         });
     }
 
@@ -544,7 +545,7 @@ public class InspectorService extends AccessibilityService {
         bg.setCornerRadius(dp(16));
         box.setBackground(bg);
         TextView title = new TextView(this);
-        title.setText("🗑 Delete a sevak (testing)");
+        title.setText("🗑 Delete sevaks (testing)");
         title.setTextColor(Color.WHITE);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
@@ -555,14 +556,14 @@ public class InspectorService extends AccessibilityService {
                     .append(c.bin == null ? "  (no delete)" : "  🗑");
         }
         TextView hint = new TextView(this);
-        hint.setText("Taps the profile's bin, then clears the 2 pop-ups after it. Profiles on screen:"
+        hint.setText("Type the numbers as they are on screen now, e.g. 2, 5 - each later one is moved up for the ones deleted above it (5 is deleted as 4 once 2 has gone). Each: its bin tapped, then its 2 pop-ups closed. Profiles on screen:"
                 + (seen.length() == 0 ? "\n(none found - open the sevaks list)" : seen.toString()));
         hint.setTextColor(0xCCFFFFFF);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hint.setPadding(0, dp(4), 0, dp(6));
         box.addView(hint);
-        android.widget.EditText number = field(box, "Profile number to delete", "e.g. 2",
-                prefs.getString("delete_number", ""), android.text.InputType.TYPE_CLASS_NUMBER);
+        android.widget.EditText number = field(box, "Profile numbers to delete", "e.g. 2, 5",
+                prefs.getString("delete_number", ""), android.text.InputType.TYPE_CLASS_TEXT);
         LinearLayout row = new LinearLayout(this);
         LinearLayout.LayoutParams rowLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
@@ -571,16 +572,18 @@ public class InspectorService extends AccessibilityService {
         row.addView(cardButton("Cancel", v -> closeAsk()), cardButtonLp(true));
         row.addView(cardButton("Delete", v -> {
             String s = number.getText().toString().trim();
-            int n;
-            try {
-                n = Integer.parseInt(s);
-            } catch (NumberFormatException e) {
-                Toast.makeText(this, "Type the profile's number, like 2", Toast.LENGTH_SHORT).show();
+            List<Integer> numbers = DeleteRun.parse(s);
+            if (numbers.isEmpty()) {
+                Toast.makeText(this, "Type the profiles' numbers, like 2, 5", Toast.LENGTH_SHORT).show();
                 return;
             }
             prefs.edit().putString("delete_number", s).apply();
             closeAsk();
-            handler.postDelayed(() -> deleteSevak(n), 400); // the keyboard goes down first
+            handler.postDelayed(() -> { // the keyboard goes down first
+                if (busy()) return;
+                deleteButton.setText("■\nStop");
+                deleter.start(numbers);
+            }, 300);
         }, true), cardButtonLp(true));
         box.addView(row);
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
@@ -599,79 +602,6 @@ public class InspectorService extends AccessibilityService {
         } catch (RuntimeException e) {
             Toast.makeText(this, "Couldn't show the form: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
-    }
-
-    /** Taps profile {@code n}'s bin, clears the 2 pop-ups after it, and says whether it went. */
-    private void deleteSevak(int n) {
-        if (busy()) return;
-        deleteLog.setLength(0);
-        long start = android.os.SystemClock.uptimeMillis();
-        SevakDeleter.Card card;
-        try {
-            card = SevakDeleter.card(this, n);
-        } catch (RuntimeException e) {
-            card = null;
-        }
-        if (card == null) {
-            Toast.makeText(this, "🗑 No profile " + n + " on the screen", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if (card.bin == null) {
-            Toast.makeText(this, "🗑 Profile " + n + " (" + card.name + ") has no delete", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        android.graphics.Rect r = SevakDeleter.where(card.bin);
-        if (r == null) {
-            // Off screen: brought on screen, then looked for again.
-            card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-            deleting = true;
-            handler.postDelayed(() -> {
-                deleting = false;
-                SevakDeleter.Card again = SevakDeleter.card(this, n);
-                android.graphics.Rect r2 = again == null || again.bin == null ? null : SevakDeleter.where(again.bin);
-                if (r2 == null) {
-                    Toast.makeText(this, "🗑 Profile " + n + "'s bin isn't on screen - scroll to it", Toast.LENGTH_SHORT).show();
-                } else {
-                    tapBin(n, again.name, r2, start);
-                }
-            }, 500);
-            return;
-        }
-        tapBin(n, card.name, r, start);
-    }
-
-    private void tapBin(int n, String name, android.graphics.Rect r, long start) {
-        deleting = true;
-        deleteLog.append("Delete profile ").append(n).append(" (").append(name).append(")\n");
-        deleteLog.append("  bin tapped at ").append(r.centerX()).append(',').append(r.centerY()).append('\n');
-        android.graphics.Path p = new android.graphics.Path();
-        p.moveTo(r.centerX(), r.centerY());
-        dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
-                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
-                .build(), null, null);
-        // Pop-up 1 (asks to delete), then pop-up 2 (says it's deleted): one Clear each.
-        handler.postDelayed(() -> {
-            deleting = false;
-            afterClear = () -> {
-                afterClear = () -> deleteDone(n, name, start);
-                clearButton.setText("■\nStop");
-                clearer.clearNow();
-            };
-            clearButton.setText("■\nStop");
-            clearer.clearNow();
-        }, 700);
-    }
-
-    private void deleteDone(int n, String name, long start) {
-        boolean gone = true;
-        try {
-            for (SevakDeleter.Card c : SevakDeleter.cards(this)) if (c.name.equals(name)) gone = false;
-        } catch (RuntimeException ignored) {
-        }
-        String head = (gone ? "🗑 Profile " + n + " (" + name + ") deleted ✓" : "🗑 Profile " + n + " (" + name + ") still there ✗")
-                + " - " + (android.os.SystemClock.uptimeMillis() - start) + " ms";
-        saveReport("A11y Inspector - Delete (testing)\n=========================\n" + head + "\n\n" + deleteLog);
-        finished(head + "\n" + deleteLog);
     }
 
     /** Go got past the slot page: Tick starts 1 s from now (tap Go in the gap to cancel it). */
@@ -835,7 +765,7 @@ public class InspectorService extends AccessibilityService {
 
     private void autoCheck() {
         // Tick and Clear clear their own pop-ups: never tap the same one twice.
-        if (scanning || deleting || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
         if (ok == null && Page.coverCame(this, autoBaseline)) {
             // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
@@ -916,7 +846,7 @@ public class InspectorService extends AccessibilityService {
 
     /** Another run is on: say so instead of starting a second one over it. */
     private boolean busy() {
-        boolean on = scanning || deleting || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
+        boolean on = scanning || deleting() || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
         if (on) Toast.makeText(this, "Stop the running one first", Toast.LENGTH_SHORT).show();
         return on;
     }
