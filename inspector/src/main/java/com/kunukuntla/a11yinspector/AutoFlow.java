@@ -203,6 +203,13 @@ final class AutoFlow {
     }
 
     /** Back to page 2 (the calendar), then Back again to page 1 - the page before it. */
+    /** Page 3's Continue was just pressed (by the retry): page 4's Confirm pressed the moment it comes. */
+    void watchConfirm(String pkg) {
+        watchPkg = pkg;
+        watchUntil = SystemClock.uptimeMillis() + 60000;
+        confirmDone = false;
+    }
+
     /** Back to page 1 as for missed rows (page 1 then starts the retry) - Delete's test with 0. */
     void backForRetry(String why) {
         if (busy) return;

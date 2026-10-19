@@ -919,29 +919,20 @@ public class InspectorService extends AccessibilityService {
         });
     }
 
-    /** Page 3 again: Tick the boxes (Auto then presses Continue, and Confirm on page 4). */
+    /** Page 3 again: nothing ticked - Continue the moment it is on, then Confirm on page 4 at once. */
     private void retryPage3(int tries) {
-        PageKind.Facts f;
-        try {
-            f = PageKind.read(this);
-        } catch (RuntimeException e) {
-            f = null;
-        }
-        if (f == null || f.boxes == 0) {
-            if (tries < 20) {
-                handler.postDelayed(() -> retryPage3(tries + 1), 100);
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 3000, on -> {
+            if (!on) {
+                endRetry("Continue on page 3 stayed off");
                 return;
             }
-            endRetry("no checkboxes on page 3");
-            return;
-        }
-        retrying = false;
-        if (f.empty() == 0) {
-            checkPage(); // all ticked already: Auto presses Continue
-            return;
-        }
-        tickButton.setText("■\nStop");
-        ticker.start();
+            AccessibilityNodeInfo c = pressableButton(PageKind::isContinue);
+            String pkg = c.getPackageName() == null ? "" : c.getPackageName().toString();
+            if (flow != null) flow.watchConfirm(pkg); // page 4's Confirm pressed the moment it comes
+            press(c);
+            retrying = false;
+            Toast.makeText(this, "↻ Page 3: Continue pressed - Confirm next", Toast.LENGTH_SHORT).show();
+        });
     }
 
     // ---- Auto-clear: press the OK of every new pop-up the moment it comes up ----------
