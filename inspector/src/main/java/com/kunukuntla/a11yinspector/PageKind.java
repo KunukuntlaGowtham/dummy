@@ -36,6 +36,12 @@ final class PageKind {
             this.name = name;
         }
 
+        /** The page with this number (1-4), OTHER for any other. */
+        static Kind of(int number) {
+            for (Kind k : values()) if (k.number == number && number > 0) return k;
+            return OTHER;
+        }
+
         /** "Page 2 · Calendar & slot", or "Not a booking page". */
         String title() {
             return number == 0 ? name : "Page " + number + " · " + name;

@@ -238,6 +238,9 @@ public class InspectorService extends AccessibilityService {
                 rememberPage1(f);
                 lastFacts = f;
                 lastKind = PageKind.Kind.SEVAK_LIST;
+                PageOrder order = orders.get(f.pkg);
+                if (order == null) orders.put(f.pkg, order = new PageOrder());
+                order.set(1);
             }
 
             @Override
@@ -263,6 +266,8 @@ public class InspectorService extends AccessibilityService {
     /** The last reading (for page 1: the page read just before page 2 came). */
     private PageKind.Facts lastFacts;
     private PageKind.Kind lastKind = PageKind.Kind.OTHER;
+    /** Each app's place in the pages' order. */
+    private final java.util.Map<String, PageOrder> orders = new java.util.HashMap<>();
 
     private void checkPage() {
         if (destroyed || pageBadge == null) return;
@@ -282,10 +287,20 @@ public class InspectorService extends AccessibilityService {
         } catch (RuntimeException e) {
             return;
         }
-        PageKind.Kind kind = kindOf(f);
+        PageKind.Kind read = kindOf(f);
+        // The pages keep their order, 1 → 2 → 3 → 4: a reading that jumps (a page still
+        // drawing) isn't taken until it holds - the badge stays, and the page is read again.
+        PageOrder order = orders.get(f.pkg);
+        if (order == null) orders.put(f.pkg, order = new PageOrder());
+        PageKind.Kind kind = PageKind.Kind.of(order.next(read.number));
+        if (read != PageKind.Kind.OTHER && kind == PageKind.Kind.OTHER) {
+            pageCheckSoon();
+            return;
+        }
         // Page 1 is the page before page 2, whatever it is: kept when page 2 comes after it.
         if (kind == PageKind.Kind.CALENDAR && lastFacts != null && lastFacts.pkg.equals(f.pkg)
-                && (lastKind == PageKind.Kind.OTHER || lastKind == PageKind.Kind.SEVAK_LIST)) {
+                && (lastKind == PageKind.Kind.OTHER || lastKind == PageKind.Kind.SEVAK_LIST)
+                && PageKind.decide(lastFacts) == PageKind.Kind.OTHER) {
             rememberPage1(lastFacts);
         }
         if (kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.TICKING) {
