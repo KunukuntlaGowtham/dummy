@@ -596,7 +596,7 @@ public class InspectorService extends AccessibilityService {
                     .append(c.bin == null ? "  (no delete)" : "  🗑");
         }
         TextView hint = new TextView(this);
-        hint.setText("Numbers in the order to delete, e.g. 2, 5: profile 2, then whoever is number 5 once 2 has gone (the one that was 6) - each number as on screen at its turn. Each: its bin tapped, then its 2 pop-ups closed. Profiles on screen now:"
+        hint.setText("0 = delete nothing: back to page 1 and forward again (to test page 2's checkbox). Numbers in the order to delete, e.g. 2, 5: profile 2, then whoever is number 5 once 2 has gone (the one that was 6) - each number as on screen at its turn. Each: its bin tapped, then its 2 pop-ups closed. Profiles on screen now:"
                 + (seen.length() == 0 ? "\n(none found - open the sevaks list)" : seen.toString()));
         hint.setTextColor(0xCCFFFFFF);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
@@ -612,6 +612,13 @@ public class InspectorService extends AccessibilityService {
         row.addView(cardButton("Cancel", v -> closeAsk()), cardButtonLp(true));
         row.addView(cardButton("Delete", v -> {
             String s = number.getText().toString().trim();
+            if (s.matches("0+")) {
+                // 0: no delete - only the trip: back to page 1 and forward again (tests page 2's checkbox).
+                prefs.edit().putString("delete_number", s).apply();
+                closeAsk();
+                handler.postDelayed(this::testTrip, 300);
+                return;
+            }
             List<Integer> numbers = DeleteRun.parse(s);
             if (numbers.isEmpty()) {
                 Toast.makeText(this, "Type the profiles' numbers, like 2, 5", Toast.LENGTH_SHORT).show();
@@ -775,7 +782,34 @@ public class InspectorService extends AccessibilityService {
     }
 
     /** Back on page 1 for rows Tick missed: delete them (numbered as after each delete), then Continue. */
+    /** Delete with 0 (testing): no profile deleted - page 3 or 2 back to page 1, then forward as the retry. */
+    private boolean tripOnly;
+
+    private void testTrip() {
+        if (busy() || flow == null || flow.busy()) return;
+        PageKind.Kind k;
+        try {
+            k = PageKind.decide(PageKind.read(this));
+        } catch (RuntimeException e) {
+            k = PageKind.Kind.OTHER;
+        }
+        tripOnly = true;
+        if (k == PageKind.Kind.TICKING || k == PageKind.Kind.CALENDAR) {
+            Toast.makeText(this, "↻ Test (0): no delete - back to page 1, then forward", Toast.LENGTH_SHORT).show();
+            flow.backForRetry("Test (0)"); // page 1 reached: startRetry goes on
+        } else {
+            startRetry(); // on page 1 already
+        }
+    }
+
     private void startRetry() {
+        if (tripOnly) {
+            tripOnly = false;
+            retrying = true;
+            Toast.makeText(this, "↻ Test: nothing deleted - Continue, page 2's checkbox, page 3", Toast.LENGTH_SHORT).show();
+            retryContinuePage1();
+            return;
+        }
         List<Integer> numbers = MissedBox.afterRemoving(lastMissed);
         if (!retryOn() || retryUsed || numbers.isEmpty() || deleting()) {
             checkPage();

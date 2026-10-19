@@ -203,6 +203,13 @@ final class AutoFlow {
     }
 
     /** Back to page 2 (the calendar), then Back again to page 1 - the page before it. */
+    /** Back to page 1 as for missed rows (page 1 then starts the retry) - Delete's test with 0. */
+    void backForRetry(String why) {
+        if (busy) return;
+        missed = true;
+        backToPage1(why);
+    }
+
     private void backToPage1(String why) {
         busy = true;
         host.say("↩ " + why + " - back to page 2, then page 1");
