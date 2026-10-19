@@ -13,13 +13,11 @@ import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.TreeSet;
 
 /**
- * 🗑 Delete (testing): deletes sevak profiles by the numbers they have on screen now
- * ("2, 5"). Each delete moves the profiles below it up one, so a number is lowered by one
- * for every profile above it already deleted (5 is deleted as 4 once 2 has gone) - the
- * same counting as the "not added" box on the ticking page. Each profile: its bin tapped,
+ * 🗑 Delete (testing): deletes sevak profiles one after another, each by the number it has
+ * on screen at that moment, in the order typed ("2, 5": profile 2, then whoever is number 5
+ * once 2 has gone - the one that was 6). The page is read again before each. Each profile: its bin tapped,
  * then its 2 pop-ups (asks, then says done) closed the moment they come - at the place
  * their button was last time, else found on a screenshot by its purple button (and kept).
  */
@@ -50,9 +48,9 @@ final class DeleteRun {
         return running;
     }
 
-    /** "2, 5" / "2 5" / "5,2" -> 2, 5 (each once, smallest first); empty when none. */
+    /** "2, 5" / "2 5" -> 2, 5 - in the order typed (a number twice: deleted twice); empty when none. */
     static List<Integer> parse(String s) {
-        TreeSet<Integer> out = new TreeSet<>();
+        List<Integer> out = new ArrayList<>();
         for (String p : s.split("[^0-9]+")) {
             if (p.isEmpty()) continue;
             try {
@@ -61,14 +59,7 @@ final class DeleteRun {
             } catch (NumberFormatException ignored) {
             }
         }
-        return new ArrayList<>(out);
-    }
-
-    /** The number profile {@code original} has now, once the ones in {@code deleted} have gone. */
-    static int nowNumber(int original, List<Integer> deleted) {
-        int n = original;
-        for (int d : deleted) if (d < original) n--;
-        return n;
+        return out;
     }
 
     void start(List<Integer> numbers) {
@@ -89,7 +80,7 @@ final class DeleteRun {
                 break;
             }
         }
-        log("deleting " + numbers + " (numbers as on screen at the start)");
+        log("deleting " + numbers + " (each as numbered on screen when its turn comes)");
         nextProfile();
     }
 
@@ -128,11 +119,11 @@ final class DeleteRun {
             return;
         }
         original = todo.remove(0);
-        int now = nowNumber(original, deleted);
+        int now = original; // as numbered on screen now - the page is read again for each
         List<SevakDeleter.Card> cards = SevakDeleter.cards(service);
         SevakDeleter.Card card = null;
         for (SevakDeleter.Card c : cards) if (c.number == now) card = c;
-        String as = now == original ? "" : " (now " + now + ")";
+        String as = "";
         if (card == null || card.bin == null) {
             log("profile " + original + as + ": " + (card == null ? "not on the screen" : "has no delete (" + card.name + ")") + " ✗");
             failed.add(original);

@@ -556,7 +556,7 @@ public class InspectorService extends AccessibilityService {
                     .append(c.bin == null ? "  (no delete)" : "  🗑");
         }
         TextView hint = new TextView(this);
-        hint.setText("Type the numbers as they are on screen now, e.g. 2, 5 - each later one is moved up for the ones deleted above it (5 is deleted as 4 once 2 has gone). Each: its bin tapped, then its 2 pop-ups closed. Profiles on screen:"
+        hint.setText("Numbers in the order to delete, e.g. 2, 5: profile 2, then whoever is number 5 once 2 has gone (the one that was 6) - each number as on screen at its turn. Each: its bin tapped, then its 2 pop-ups closed. Profiles on screen now:"
                 + (seen.length() == 0 ? "\n(none found - open the sevaks list)" : seen.toString()));
         hint.setTextColor(0xCCFFFFFF);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
