@@ -440,6 +440,7 @@ public class InspectorService extends AccessibilityService {
             goButton.setText("▶\nGo");
             finished(summary);
             if (retrying) {
+                rlog("page 2: Go - " + summary.replace('\n', ' '));
                 // The retry's page 2 needed a full Go: on to page 3.
                 if (booker.handedOver()) retryPage3(0);
                 else endRetry("Go didn't get past page 2");
@@ -561,6 +562,7 @@ public class InspectorService extends AccessibilityService {
             deleteButton.setText("🗑\nDelete");
             finished(summary);
             if (retrying) {
+                rlog("page 1: delete - " + summary.replace('\n', ' '));
                 if (summary.startsWith("Stopped")) endRetry("Delete was stopped");
                 else handler.postDelayed(this::retryContinuePage1, 150);
             }
@@ -772,6 +774,7 @@ public class InspectorService extends AccessibilityService {
 
     private void endRetry(String why) {
         retrying = false;
+        saveRetryLog("↻ Retry stopped: " + why);
         Toast.makeText(this, "↻ Retry stopped: " + why, Toast.LENGTH_LONG).show();
         checkPage();
     }
@@ -821,6 +824,7 @@ public class InspectorService extends AccessibilityService {
                 endRetry("Continue on page 1 stayed off");
                 return;
             }
+            rlog("page 1: Continue pressed");
             press(pressableButton(PageKind::isContinue));
             waitUntil(() -> PageKind.decide(PageKind.read(this)) == PageKind.Kind.CALENDAR, 6000, at2 -> {
                 if (at2) retryPage2();
@@ -829,35 +833,110 @@ public class InspectorService extends AccessibilityService {
         });
     }
 
-    /** Page 2 again: everything is still chosen but its checkbox - ticked, then Continue. */
+    /** The retry's steps, with their times (saved for 📋 Report when it ends). */
+    private final StringBuilder retryLog = new StringBuilder();
+    private long retryStart;
+
+    private void rlog(String step) {
+        if (retryLog.length() == 0) retryStart = android.os.SystemClock.uptimeMillis();
+        retryLog.append(String.format(java.util.Locale.ROOT, "%6d ms  ",
+                android.os.SystemClock.uptimeMillis() - retryStart)).append(step).append('\n');
+    }
+
+    private void saveRetryLog(String end) {
+        rlog(end);
+        saveReport("A11y Inspector - Auto retry\n=========================\n" + end + "\n\nSTEPS\n" + retryLog);
+        retryLog.setLength(0);
+    }
+
+    /** Page 2's first empty checkbox, or null (not drawn yet). */
+    private AccessibilityNodeInfo emptyBox() {
+        for (AccessibilityNodeInfo n : Page.nodes(this)) if (Page.isCheckbox(n) && !n.isChecked()) return n;
+        return null;
+    }
+
+    private boolean anyBoxTicked() {
+        for (AccessibilityNodeInfo n : Page.nodes(this)) if (Page.isCheckbox(n) && n.isChecked()) return true;
+        return false;
+    }
+
+    /**
+     * Page 2 again: everything is still chosen but its checkbox. The checkbox shows a moment
+     * after the calendar: up to 3 s for it, then ticked (a click, checked; else a tap where it
+     * is drawn, checked), then Continue the moment it is on.
+     */
     private void retryPage2() {
-        AccessibilityNodeInfo box = null;
-        for (AccessibilityNodeInfo n : Page.nodes(this)) {
-            if (Page.isCheckbox(n) && !n.isChecked()) {
-                box = n;
-                break;
+        rlog("page 2: waiting for its checkbox");
+        waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
+            AccessibilityNodeInfo box = emptyBox();
+            if (box == null) {
+                rlog(seen ? "page 2: checkbox already ticked" : "page 2: no checkbox came in 3 s");
+                page2Continue();
+                return;
             }
-        }
-        if (box != null) {
-            AccessibilityNodeInfo b = box;
-            if (!b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                android.graphics.Rect r = Page.visible(b);
-                if (r != null) {
-                    android.graphics.Path p = new android.graphics.Path();
-                    p.moveTo(r.centerX(), r.centerY());
-                    dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
-                            .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50))
-                            .build(), null, null);
+            rlog("page 2: checkbox \"" + cutLabel(box) + "\" - clicking it");
+            box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            waitUntil(() -> emptyBox() == null && anyBoxTicked(), 600, ok -> {
+                if (ok) {
+                    rlog("page 2: checkbox ticked ✓");
+                    page2Continue();
+                    return;
                 }
-            }
-        }
-        // Continue the moment it turns on; still off after 2 s: something else is missing - a full Go.
-        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 2000, on -> {
+                AccessibilityNodeInfo again = emptyBox();
+                android.graphics.Rect r = again == null ? null : Page.visible(again);
+                if (r == null) {
+                    rlog("page 2: checkbox not ticked and not on screen ✗");
+                    page2Continue();
+                    return;
+                }
+                rlog("page 2: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
+                tapAt(r.centerX(), r.centerY());
+                waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok2 -> {
+                    if (!ok2) {
+                        // The box's own left edge (where the square is drawn) as a last try.
+                        AccessibilityNodeInfo last = emptyBox();
+                        android.graphics.Rect lr = last == null ? null : Page.visible(last);
+                        if (lr != null) {
+                            rlog("page 2: still not ticked - tapping its left edge at " + (lr.left + lr.height() / 2) + "," + lr.centerY());
+                            tapAt(lr.left + lr.height() / 2, lr.centerY());
+                        }
+                        waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok3 -> {
+                            rlog(ok3 ? "page 2: checkbox ticked ✓" : "page 2: checkbox still not ticked ✗");
+                            page2Continue();
+                        });
+                        return;
+                    }
+                    rlog("page 2: checkbox ticked ✓");
+                    page2Continue();
+                });
+            });
+        });
+    }
+
+    private static String cutLabel(AccessibilityNodeInfo n) {
+        String l = Page.label(n);
+        if (l.isEmpty() && n.getParent() != null) l = Page.label(n.getParent());
+        return l.length() > 40 ? l.substring(0, 40) + "…" : l;
+    }
+
+    private void tapAt(int x, int y) {
+        android.graphics.Path p = new android.graphics.Path();
+        p.moveTo(x, y);
+        dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50))
+                .build(), null, null);
+    }
+
+    /** Page 2's Continue the moment it is on; still off after 2.5 s: a full Go. */
+    private void page2Continue() {
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 2500, on -> {
             if (!on) {
+                rlog("page 2: Continue stayed off - filling it with Go");
                 Toast.makeText(this, "↻ Page 2: Continue stayed off - filling it with Go", Toast.LENGTH_SHORT).show();
                 startSaved();
                 return;
             }
+            rlog("page 2: Continue pressed");
             press(pressableButton(PageKind::isContinue));
             waitUntil(() -> PageKind.decide(PageKind.read(this)) == PageKind.Kind.TICKING, 6000, at3 -> {
                 if (at3) retryPage3(0);
@@ -878,6 +957,7 @@ public class InspectorService extends AccessibilityService {
             if (flow != null) flow.watchConfirm(pkg); // page 4's Confirm pressed the moment it comes
             press(c);
             retrying = false;
+            saveRetryLog("page 3: Continue pressed - Confirm next");
             Toast.makeText(this, "↻ Page 3: Continue pressed - Confirm next", Toast.LENGTH_SHORT).show();
         });
     }
