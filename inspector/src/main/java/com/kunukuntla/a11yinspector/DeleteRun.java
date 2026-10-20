@@ -80,6 +80,7 @@ final class DeleteRun {
                 break;
             }
         }
+        runBase = new Page.Before(service);
         log("deleting " + numbers + " (each as numbered on screen when its turn comes)");
         nextProfile();
     }
@@ -118,47 +119,78 @@ final class DeleteRun {
             stop(failed.isEmpty() ? "✅ Done" : "Done - some not deleted");
             return;
         }
+        // Before each: no pop-up up, and the list settled (the same profiles on two looks in
+        // a row) - after a delete the page rebuilds its list and shows its last pop-up.
+        int g = gen;
+        long waitStart = SystemClock.uptimeMillis();
+        int[] last = {-1};
+        when(() -> {
+            if (Page.popup(service, runBase) != null || Page.coverCame(service, runBase)) {
+                last[0] = -1;
+                return false;
+            }
+            int n = SevakDeleter.cards(service).size();
+            boolean settled = n > 0 && n == last[0];
+            last[0] = n;
+            return settled;
+        }, SystemClock.uptimeMillis() + 3000, ready -> {
+            if (g != gen) return;
+            long waited = SystemClock.uptimeMillis() - waitStart;
+            if (waited > 150) log("  page ready after " + waited + " ms" + (ready ? "" : " (not settled - going on)"));
+            deleteNext();
+        });
+    }
+
+    private void deleteNext() {
         original = todo.remove(0);
         int now = original; // as numbered on screen now - the page is read again for each
         List<SevakDeleter.Card> cards = SevakDeleter.cards(service);
         SevakDeleter.Card card = null;
         for (SevakDeleter.Card c : cards) if (c.number == now) card = c;
-        String as = "";
         if (card == null || card.bin == null) {
-            log("profile " + original + as + ": " + (card == null ? "not on the screen" : "has no delete (" + card.name + ")") + " ✗");
+            log("profile " + original + ": " + (card == null ? "not on the page (" + cards.size() + " profiles)"
+                    : "has no delete (" + card.name + ")") + " ✗");
             failed.add(original);
             nextProfile();
             return;
         }
         Rect r = SevakDeleter.where(card.bin);
-        if (r == null) {
-            card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-            SevakDeleter.Card c0 = card;
-            int g = gen;
-            handler.postDelayed(() -> {
-                if (g != gen) return;
-                Rect r2 = SevakDeleter.where(c0.bin);
-                if (r2 == null) {
-                    log("profile " + original + as + ": its bin isn't on screen ✗");
-                    failed.add(original);
-                    nextProfile();
-                } else {
-                    tapBin(c0, cards.size(), r2, as);
-                }
-            }, 300);
+        if (r != null) {
+            tapBin(card, cards.size(), r);
             return;
         }
-        tapBin(card, cards.size(), r, as);
+        // Off screen: brought on screen, and tapped the moment it shows (no fixed wait).
+        card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+        int g = gen;
+        int count = cards.size();
+        when(() -> {
+            SevakDeleter.Card c = SevakDeleter.card(service, now);
+            return c != null && c.bin != null && SevakDeleter.where(c.bin) != null;
+        }, SystemClock.uptimeMillis() + 800, shown -> {
+            if (g != gen) return;
+            SevakDeleter.Card c = SevakDeleter.card(service, now);
+            Rect r2 = c == null || c.bin == null ? null : SevakDeleter.where(c.bin);
+            if (r2 == null) {
+                log("profile " + original + ": its bin didn't come on screen ✗");
+                failed.add(original);
+                nextProfile();
+            } else {
+                log("profile " + original + ": brought on screen");
+                tapBin(c, count, r2);
+            }
+        });
     }
 
     private Page.Before before;
+    /** The page at the start, with no pop-up up: a pop-up is what comes on top of it. */
+    private Page.Before runBase;
 
-    private void tapBin(SevakDeleter.Card card, int count, Rect r, String as) {
+    private void tapBin(SevakDeleter.Card card, int count, Rect r) {
         name = card.name;
         cardsBefore = count;
         stepStart = SystemClock.uptimeMillis();
         before = new Page.Before(service);
-        log("profile " + original + as + " " + name + ": bin tapped at " + r.centerX() + "," + r.centerY());
+        log("profile " + original + " " + name + ": bin tapped at " + r.centerX() + "," + r.centerY());
         tap(r);
         popup(1, false, SystemClock.uptimeMillis() + 2500);
     }
@@ -251,17 +283,30 @@ final class DeleteRun {
     }
 
     /** The profile gone from the list? Then the next one. */
+    /** The profile gone: fewer profiles, the same on two looks in a row, no pop-up up. */
     private void checkGone() {
         int g = gen;
-        when(() -> SevakDeleter.cards(service).size() < cardsBefore, SystemClock.uptimeMillis() + 1500, gone -> {
+        int[] last = {-1};
+        when(() -> {
+            if (Page.popup(service, before) != null || Page.coverCame(service, before)) {
+                last[0] = -1;
+                return false;
+            }
+            int n = SevakDeleter.cards(service).size();
+            boolean ok = n > 0 && n < cardsBefore && n == last[0];
+            last[0] = n;
+            return ok;
+        }, SystemClock.uptimeMillis() + 3000, gone -> {
             if (g != gen) return;
             long ms = SystemClock.uptimeMillis() - stepStart;
             if (gone) {
+                runBase = new Page.Before(service); // the page as it is now, rebuilt, no pop-up
                 deleted.add(original);
                 log("profile " + original + " " + name + ": deleted ✓ (" + ms + " ms)");
             } else {
                 failed.add(original);
-                log("profile " + original + " " + name + ": still there ✗ (" + ms + " ms)");
+                log("profile " + original + " " + name + ": still there? ✗ (" + ms + " ms, "
+                        + SevakDeleter.cards(service).size() + " profiles, were " + cardsBefore + ")");
             }
             nextProfile();
         });
