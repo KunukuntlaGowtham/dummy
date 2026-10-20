@@ -571,6 +571,9 @@ public class InspectorService extends AccessibilityService {
             closeCard();
             if (deleter.isRunning()) deleter.stop("Stopped");
             else if (!busy()) deleteNow();
+        }, v -> {
+            closeCard();
+            if (!deleter.isRunning() && !busy()) deleteHere();
         });
     }
 
@@ -743,6 +746,23 @@ public class InspectorService extends AccessibilityService {
         } else {
             startRetry(); // on page 1 already
         }
+    }
+
+    /**
+     * Long press on 🗑: only delete, here on page 1 - test mode's numbers, else the rows the
+     * last Tick didn't add - no Back before, no Continue after.
+     */
+    private void deleteHere() {
+        List<Integer> numbers = testMode() ? testNumbers() : MissedBox.afterRemoving(lastMissed);
+        if (numbers.isEmpty()) {
+            Toast.makeText(this, testMode() ? "🗑 Test mode's numbers are 0 - nothing to delete"
+                    : "🗑 Nothing to delete - the last Tick added every row", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        Toast.makeText(this, "🗑 Deleting " + numbers + " here only (no Continue after)", Toast.LENGTH_SHORT).show();
+        retrying = false;
+        deleteButton.setText("■\nStop");
+        deleter.start(numbers);
     }
 
     /** Tick ended: in test mode the trip runs once whatever was ticked (AutoFlow goes back). */
