@@ -42,6 +42,11 @@ public class DeleteRunTest {
         assertTrue(DeleteRun.sameName("Mellacheruvu Greeshma", "MELLACHERUVU GREESHMA"));
         assertTrue(DeleteRun.sameName("Mellacheruvu Greeshma", "Mellacheruvu Greeshma (F, 23)"));
         assertFalse(DeleteRun.sameName("Mellacheruvu Greeshma", "Mellacheruvu Tejasree"));
-        assertFalse(DeleteRun.sameName("Ab", "Ab"));
+        assertTrue(DeleteRun.sameName("Ravi", "RAVI"));
+        // A part of a name is never enough: not a short first name, not a bare surname.
+        assertFalse(DeleteRun.sameName("Ravi", "Ravindra Kumar"));
+        assertFalse(DeleteRun.sameName("Ravi", "Ravi Kumar"));
+        assertFalse(DeleteRun.sameName("Mellacheruvu", "Mellacheruvu Greeshma"));
+        assertFalse(DeleteRun.sameName("Kumar Ravi", "Ravindra Kumar"));
     }
 }

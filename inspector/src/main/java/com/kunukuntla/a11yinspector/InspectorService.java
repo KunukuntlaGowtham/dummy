@@ -777,12 +777,27 @@ public class InspectorService extends AccessibilityService {
             if (!Page.isCheckbox(n)) continue;
             String name = "";
             AccessibilityNodeInfo a = n.getParent();
+            // Only the row's own box: climbing stops where another checkbox (another row) is inside.
             for (int up = 0; up < 4 && a != null && name.isEmpty(); up++, a = a.getParent()) {
+                if (checkboxesIn(a, 0) > 1) break;
                 name = firstName(a, 0);
             }
             out.add(name);
         }
+        // Two rows with the same name: the names can't be trusted - by number only.
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String name : out) {
+            if (name.isEmpty()) continue;
+            if (!seen.add(name.toLowerCase(java.util.Locale.ROOT))) return new ArrayList<>();
+        }
         return out;
+    }
+
+    private static int checkboxesIn(AccessibilityNodeInfo n, int depth) {
+        if (n == null || depth > 6) return 0;
+        int c = Page.isCheckbox(n) ? 1 : 0;
+        for (int i = 0; i < n.getChildCount() && c < 2; i++) c += checkboxesIn(n.getChild(i), depth + 1);
+        return c;
     }
 
     private static String firstName(AccessibilityNodeInfo n, int depth) {
@@ -929,6 +944,7 @@ public class InspectorService extends AccessibilityService {
     }
 
     private void press(AccessibilityNodeInfo b) {
+        if (b == null) return; // gone since it was seen: the step's own wait notices
         if (b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
         android.graphics.Rect r = Page.bounds(b);
         android.graphics.Path p = new android.graphics.Path();
@@ -1074,12 +1090,21 @@ public class InspectorService extends AccessibilityService {
                 return;
             }
             AccessibilityNodeInfo c = pressableButton(PageKind::isContinue);
+            if (c == null) {
+                endRetry("Continue on page 3 went");
+                return;
+            }
             String pkg = c.getPackageName() == null ? "" : c.getPackageName().toString();
             if (flow != null) flow.watchConfirm(pkg); // page 4's Confirm pressed the moment it comes
             press(c);
-            retrying = false;
-            saveRetryLog("page 3: Continue pressed - Confirm next");
+            rlog("page 3: Continue pressed - Confirm next");
             Toast.makeText(this, "↻ Page 3: Continue pressed - Confirm next", Toast.LENGTH_SHORT).show();
+            // The retry stays on (Auto's own steps paused) until page 3 has gone: no second Continue.
+            waitUntil(() -> PageKind.decide(PageKind.read(this)) != PageKind.Kind.TICKING, 6000, gone -> {
+                retrying = false;
+                saveRetryLog(gone ? "page 3 left - retry done" : "page 3 still shown 6 s after Continue - retry done");
+                checkPage();
+            });
         });
     }
 

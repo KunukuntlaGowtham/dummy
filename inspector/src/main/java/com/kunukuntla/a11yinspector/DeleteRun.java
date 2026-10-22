@@ -164,15 +164,17 @@ final class DeleteRun {
         SevakDeleter.Card card = null;
         for (SevakDeleter.Card c : cards) if (c.number == now) card = c;
         if (expected != null && (card == null || !sameName(card.name, expected))) {
-            // Someone else at this number: the card with the expected name, wherever it is.
-            SevakDeleter.Card byName = null;
-            for (SevakDeleter.Card c : cards) if (sameName(c.name, expected)) byName = c;
-            if (byName == null) {
-                log("profile " + original + ": no \"" + expected + "\" on the page"
+            // Someone else at this number: the one card with the expected name, wherever it is.
+            List<SevakDeleter.Card> named = new ArrayList<>();
+            for (SevakDeleter.Card c : cards) if (sameName(c.name, expected)) named.add(c);
+            if (named.size() != 1) {
+                log("profile " + original + ": " + (named.isEmpty() ? "no" : named.size() + " profiles named")
+                        + " \"" + expected + "\" on the page"
                         + (card == null ? "" : " (" + now + " is " + card.name + ")") + " - not deleted ✗");
                 notDeleted();
                 return;
             }
+            SevakDeleter.Card byName = named.get(0);
             log("profile " + original + ": \"" + expected + "\" is number " + byName.number + " now - deleting that one");
             card = byName;
         }
@@ -191,12 +193,15 @@ final class DeleteRun {
         card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         int g = gen;
         int count = cards.size();
+        // Found again as the same card - its number and its name - never whoever has the number asked.
+        int targetNo = card.number;
+        String targetName = card.name;
         when(() -> {
-            SevakDeleter.Card c = SevakDeleter.card(service, now);
+            SevakDeleter.Card c = sameCard(targetNo, targetName);
             return c != null && c.bin != null && SevakDeleter.where(c.bin) != null;
         }, SystemClock.uptimeMillis() + 800, shown -> {
             if (g != gen) return;
-            SevakDeleter.Card c = SevakDeleter.card(service, now);
+            SevakDeleter.Card c = sameCard(targetNo, targetName);
             Rect r2 = c == null || c.bin == null ? null : SevakDeleter.where(c.bin);
             if (r2 == null) {
                 log("profile " + original + ": its bin didn't come on screen ✗");
@@ -227,12 +232,29 @@ final class DeleteRun {
         for (int i = 0; i < todo.size(); i++) if (todo.get(i) >= failedAt) todo.set(i, todo.get(i) + 1);
     }
 
-    /** The same person: one name holds the other (letters only, any case). */
+    /** The card at {@code number} if it still has {@code name}, else null. */
+    private SevakDeleter.Card sameCard(int number, String name) {
+        SevakDeleter.Card c = SevakDeleter.card(service, number);
+        return c != null && c.name.equals(name) ? c : null;
+    }
+
+    /**
+     * The same person: every word of the shorter name is a whole word of the longer one, and the
+     * shorter has at least two words ("Ravi" never matches "Ravindra Kumar", a bare surname
+     * never matches the whole family). Letters only, any case.
+     */
     static boolean sameName(String a, String b) {
-        String x = a.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z]+", " ").trim();
-        String y = b.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z]+", " ").trim();
-        if (x.length() < 3 || y.length() < 3) return false;
-        return x.equals(y) || x.contains(y) || y.contains(x);
+        List<String> x = words(a), y = words(b);
+        if (x.isEmpty() || y.isEmpty()) return false;
+        List<String> shorter = x.size() <= y.size() ? x : y, longer = shorter == x ? y : x;
+        if (shorter.size() < 2 && !x.equals(y)) return false;
+        return longer.containsAll(shorter);
+    }
+
+    private static List<String> words(String s) {
+        List<String> out = new ArrayList<>();
+        for (String w : s.toLowerCase(java.util.Locale.ROOT).split("[^a-z]+")) if (w.length() >= 2) out.add(w);
+        return out;
     }
 
     private void tapBin(SevakDeleter.Card card, int count, Rect r) {
