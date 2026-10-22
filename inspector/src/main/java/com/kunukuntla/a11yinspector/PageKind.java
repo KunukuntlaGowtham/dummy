@@ -114,6 +114,15 @@ final class PageKind {
         return s.toLowerCase(Locale.ROOT).replace("…", "").replaceAll("[^a-z0-9]+", " ").trim();
     }
 
+    /** Inside a dialog / pop-up (up to 10 levels up): its buttons are never a page's. */
+    static boolean inDialog(AccessibilityNodeInfo n) {
+        AccessibilityNodeInfo a = n.getParent();
+        for (int i = 0; i < 10 && a != null; i++, a = a.getParent()) {
+            if (Page.isDialog(a)) return true;
+        }
+        return false;
+    }
+
     /** The button with these words that can be pressed (itself or the box around it), or null. */
     static AccessibilityNodeInfo pressable(AccessibilityNodeInfo n) {
         if (n.isClickable()) return n;
@@ -149,7 +158,7 @@ final class PageKind {
             if (isContinue(label)) {
                 f.cont = true;
                 f.contOn = button.isEnabled() && n.isEnabled();
-            } else if (isConfirm(label)) {
+            } else if (isConfirm(label) && !inDialog(n)) {
                 f.confirm = true;
                 f.confirmOn = f.confirmOn || button.isEnabled() && n.isEnabled();
             }

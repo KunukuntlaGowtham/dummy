@@ -85,13 +85,14 @@ final class AutoFlow {
     }
 
     /** The page as read (only while nothing else runs); {@code bookingPkg}: the app of pages 2-3. */
-    void onPage(PageKind.Kind kind, PageKind.Facts f, String bookingPkg) {
+    void onPage(PageKind.Kind kind, PageKind.Facts f, String bookingPkg, boolean confirmInOrder) {
         if (busy || !enabled(service)) return;
         if (kind != PageKind.Kind.CONFIRM) confirmDone = false;
         if (kind != PageKind.Kind.TICKING) offSince = 0;
         if (bookingPkg == null || !bookingPkg.equals(f.pkg)) return;
         if (kind == PageKind.Kind.CONFIRM) {
-            if (!confirmDone) pressConfirm();
+            // Only page 4 reached from page 3: a Confirm met anywhere else is left alone.
+            if (!confirmDone && confirmInOrder) pressConfirm();
             return;
         }
         boolean afterTick = tickEnded;
@@ -144,10 +145,14 @@ final class AutoFlow {
 
     // ---- page 4: Confirm ----------------------------------------------------------------
 
+    /** How long after page 3's Continue page 4's Confirm is waited for. */
+    private static final long WATCH_MS = 20000;
+
     private void pressConfirm() {
         AccessibilityNodeInfo button = null;
         for (AccessibilityNodeInfo n : Page.nodes(service)) {
             if (!n.isVisibleToUser() || !PageKind.isConfirm(Page.label(n))) continue;
+            if (PageKind.inDialog(n)) continue; // a pop-up's Confirm is never page 4's
             AccessibilityNodeInfo b = PageKind.pressable(n);
             if (b != null && b.isEnabled() && n.isEnabled()) {
                 button = b;
@@ -174,7 +179,7 @@ final class AutoFlow {
         busy = true;
         Set<String> before = PageKind.read(service).texts;
         watchPkg = pkg;
-        watchUntil = SystemClock.uptimeMillis() + 60000;
+        watchUntil = SystemClock.uptimeMillis() + WATCH_MS;
         if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(Page.bounds(button));
         host.say("📍 Page 3: every box ticked - Continue pressed");
         afterContinue(before, SystemClock.uptimeMillis());
@@ -214,7 +219,7 @@ final class AutoFlow {
     /** Page 3's Continue was just pressed (by the retry): page 4's Confirm pressed the moment it comes. */
     void watchConfirm(String pkg) {
         watchPkg = pkg;
-        watchUntil = SystemClock.uptimeMillis() + 60000;
+        watchUntil = SystemClock.uptimeMillis() + WATCH_MS;
         confirmDone = false;
     }
 

@@ -62,8 +62,23 @@ final class DeleteRun {
         return out;
     }
 
+    /** The name each profile should have (null: not known - by number only), in step with the numbers. */
+    private final List<String> names = new ArrayList<>();
+    private String expected;
+
     void start(List<Integer> numbers) {
+        start(numbers, null);
+    }
+
+    /**
+     * {@code expect}: for each number, the sevak's name as page 3 showed it (null where not
+     * known). A profile is deleted only when its card has that name; when the number holds
+     * someone else, the card with that name is deleted instead; when none has it, nothing.
+     */
+    void start(List<Integer> numbers, List<String> expect) {
         if (running) return;
+        names.clear();
+        for (int i = 0; i < numbers.size(); i++) names.add(expect != null && i < expect.size() ? expect.get(i) : null);
         running = true;
         gen++;
         start = SystemClock.uptimeMillis();
@@ -143,15 +158,28 @@ final class DeleteRun {
 
     private void deleteNext() {
         original = todo.remove(0);
+        expected = names.isEmpty() ? null : names.remove(0);
         int now = original; // as numbered on screen now - the page is read again for each
         List<SevakDeleter.Card> cards = SevakDeleter.cards(service);
         SevakDeleter.Card card = null;
         for (SevakDeleter.Card c : cards) if (c.number == now) card = c;
+        if (expected != null && (card == null || !sameName(card.name, expected))) {
+            // Someone else at this number: the card with the expected name, wherever it is.
+            SevakDeleter.Card byName = null;
+            for (SevakDeleter.Card c : cards) if (sameName(c.name, expected)) byName = c;
+            if (byName == null) {
+                log("profile " + original + ": no \"" + expected + "\" on the page"
+                        + (card == null ? "" : " (" + now + " is " + card.name + ")") + " - not deleted ✗");
+                notDeleted();
+                return;
+            }
+            log("profile " + original + ": \"" + expected + "\" is number " + byName.number + " now - deleting that one");
+            card = byName;
+        }
         if (card == null || card.bin == null) {
             log("profile " + original + ": " + (card == null ? "not on the page (" + cards.size() + " profiles)"
                     : "has no delete (" + card.name + ")") + " ✗");
-            failed.add(original);
-            nextProfile();
+            notDeleted();
             return;
         }
         Rect r = SevakDeleter.where(card.bin);
@@ -172,8 +200,7 @@ final class DeleteRun {
             Rect r2 = c == null || c.bin == null ? null : SevakDeleter.where(c.bin);
             if (r2 == null) {
                 log("profile " + original + ": its bin didn't come on screen ✗");
-                failed.add(original);
-                nextProfile();
+                notDeleted();
             } else {
                 log("profile " + original + ": brought on screen");
                 tapBin(c, count, r2);
@@ -184,6 +211,29 @@ final class DeleteRun {
     private Page.Before before;
     /** The page at the start, with no pop-up up: a pop-up is what comes on top of it. */
     private Page.Before runBase;
+
+    /**
+     * This profile wasn't deleted: it still holds its place, so each later number at or after it
+     * (counted as if it had gone) is one further down now.
+     */
+    private void notDeleted() {
+        failed.add(original);
+        shiftAfterFailure(todo, original);
+        nextProfile();
+    }
+
+    /** The numbers still to go, once profile {@code failedAt} stayed: those at or after it move one down. */
+    static void shiftAfterFailure(List<Integer> todo, int failedAt) {
+        for (int i = 0; i < todo.size(); i++) if (todo.get(i) >= failedAt) todo.set(i, todo.get(i) + 1);
+    }
+
+    /** The same person: one name holds the other (letters only, any case). */
+    static boolean sameName(String a, String b) {
+        String x = a.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z]+", " ").trim();
+        String y = b.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z]+", " ").trim();
+        if (x.length() < 3 || y.length() < 3) return false;
+        return x.equals(y) || x.contains(y) || y.contains(x);
+    }
 
     private void tapBin(SevakDeleter.Card card, int count, Rect r) {
         name = card.name;
@@ -304,9 +354,10 @@ final class DeleteRun {
                 deleted.add(original);
                 log("profile " + original + " " + name + ": deleted ✓ (" + ms + " ms)");
             } else {
-                failed.add(original);
                 log("profile " + original + " " + name + ": still there? ✗ (" + ms + " ms, "
                         + SevakDeleter.cards(service).size() + " profiles, were " + cardsBefore + ")");
+                notDeleted();
+                return;
             }
             nextProfile();
         });

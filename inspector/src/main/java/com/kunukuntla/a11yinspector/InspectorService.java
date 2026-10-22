@@ -309,7 +309,10 @@ public class InspectorService extends AccessibilityService {
         // drawing) isn't taken until it holds - the badge stays, and the page is read again.
         PageOrder order = orders.get(f.pkg);
         if (order == null) orders.put(f.pkg, order = new PageOrder());
+        int prevPage = order.pos();
         PageKind.Kind kind = PageKind.Kind.of(order.next(read.number));
+        // Page 4's Confirm only right after page 3 (or still on 4) - never a Confirm met elsewhere.
+        boolean confirmInOrder = kind == PageKind.Kind.CONFIRM && (prevPage == 3 || prevPage == 4);
         if (read != PageKind.Kind.OTHER && kind == PageKind.Kind.OTHER) {
             pageCheckSoon();
             return;
@@ -326,7 +329,8 @@ public class InspectorService extends AccessibilityService {
         lastFacts = f;
         lastKind = kind;
         pageKind = kind;
-        if (auto && flow != null) flow.onPage(kind, f, sp.getString("booking_pkg", ""));
+        // During the retry its own steps press Continue: Auto's would press it twice.
+        if (auto && flow != null && !retrying) flow.onPage(kind, f, sp.getString("booking_pkg", ""), confirmInOrder);
         if (!show) return;
         if (kind == PageKind.Kind.OTHER) {
             pageBadge.setVisibility(View.GONE);
@@ -341,7 +345,7 @@ public class InspectorService extends AccessibilityService {
         bg.setCornerRadius(dp(14));
         bg.setStroke(dp(1), 0x66FFFFFF);
         pageBadge.setBackground(bg);
-        pageBadge.setText("📍 " + kind.title() + (auto ? " · auto" : ""));
+        pageBadge.setText((testMode() ? "🧪 TEST · " : "📍 ") + kind.title() + (auto ? " · auto" : ""));
         pageBadge.setContentDescription(kind.title() + ": " + f.describe());
         pageBadge.setVisibility(View.VISIBLE);
     }
@@ -392,6 +396,12 @@ public class InspectorService extends AccessibilityService {
                 // Page 3 decides now, not at the next page change: Continue when every box
                 // is ticked, back to page 1 when one is still empty.
                 // (Not when you stopped it yourself: then nothing goes back.)
+                // Page 3's names on its rows, for Delete to check it deletes the same sevaks.
+                try {
+                    rowNames = readRowNames();
+                } catch (RuntimeException e) {
+                    rowNames = new ArrayList<>();
+                }
                 if (flow != null && !summary.startsWith("Stopped")) flow.tickEnded();
                 handler.post(InspectorService.this::checkPage);
             }
@@ -720,19 +730,88 @@ public class InspectorService extends AccessibilityService {
         return DeleteRun.parse(getSharedPreferences("settings", MODE_PRIVATE).getString("test_delete", "0"));
     }
 
-    /** The numbers the next trip deletes (null: the rows Tick didn't add). */
+    /** The numbers the next trip deletes (null: the rows Tick didn't add), and their names (null: by number). */
     private List<Integer> tripNumbers;
+    private List<String> tripNames;
+
+    /** Page 3's sevak name on each row (in checkbox order), read when Tick ended. */
+    private List<String> rowNames = new ArrayList<>();
+
+    /** The rows Tick didn't add, as numbers to delete one after another, with page 3's names. */
+    private static final class Missed {
+        final List<Integer> numbers = new ArrayList<>();
+        final List<String> names = new ArrayList<>();
+    }
+
+    /**
+     * The rows the last Tick didn't add - taken once: deleted, they are forgotten (a later 🗑
+     * never deletes the same numbers again, now other people).
+     */
+    private Missed takeMissed() {
+        Missed m = new Missed();
+        m.numbers.addAll(MissedBox.afterRemoving(lastMissed));
+        List<Integer> rows = new ArrayList<>();
+        for (String r : lastMissed) {
+            try {
+                rows.add(Integer.parseInt(r.trim()));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        java.util.Collections.sort(rows);
+        for (int row : rows) {
+            String n = row - 1 < rowNames.size() ? rowNames.get(row - 1) : "";
+            m.names.add(n == null || n.isEmpty() ? null : n);
+        }
+        lastMissed = new ArrayList<>();
+        rowNames = new ArrayList<>();
+        return m;
+    }
+
+    private static final java.util.Set<String> NOT_NAMES = new java.util.HashSet<>(java.util.Arrays.asList(
+            "female", "male", "yrs", "years", "sevak", "sevaks", "confirm", "select", "add", "edit", "dob"));
+
+    /** Each checkbox's row (page order): the first word-like text around it that isn't a label word. */
+    private List<String> readRowNames() {
+        List<String> out = new ArrayList<>();
+        for (AccessibilityNodeInfo n : Page.nodes(this)) {
+            if (!Page.isCheckbox(n)) continue;
+            String name = "";
+            AccessibilityNodeInfo a = n.getParent();
+            for (int up = 0; up < 4 && a != null && name.isEmpty(); up++, a = a.getParent()) {
+                name = firstName(a, 0);
+            }
+            out.add(name);
+        }
+        return out;
+    }
+
+    private static String firstName(AccessibilityNodeInfo n, int depth) {
+        if (n == null || depth > 3) return "";
+        String l = Page.label(n);
+        if (l.matches(".*[A-Za-z]{3,}.*") && !Page.isCheckbox(n)) {
+            String first = l.trim().split("\\s+")[0].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z]", "");
+            if (!NOT_NAMES.contains(first) && l.length() <= 60) return l;
+        }
+        for (int i = 0; i < n.getChildCount(); i++) {
+            String c = firstName(n.getChild(i), depth + 1);
+            if (!c.isEmpty()) return c;
+        }
+        return "";
+    }
 
     /** 🗑 Delete: the trip now - test mode's numbers, else the rows the last Tick didn't add. */
     private void deleteNow() {
         if (flow == null || flow.busy()) return;
-        List<Integer> numbers = testMode() ? testNumbers() : MissedBox.afterRemoving(lastMissed);
-        if (!testMode() && numbers.isEmpty()) {
+        boolean test = testMode();
+        Missed m = test ? null : takeMissed();
+        List<Integer> numbers = test ? testNumbers() : m.numbers;
+        if (!test && numbers.isEmpty()) {
             Toast.makeText(this, "🗑 Nothing to delete - the last Tick added every row", Toast.LENGTH_SHORT).show();
             return;
         }
         retryUsed = false;
         tripNumbers = numbers;
+        tripNames = test ? null : m.names;
         PageKind.Kind k;
         try {
             k = PageKind.decide(PageKind.read(this));
@@ -753,30 +832,52 @@ public class InspectorService extends AccessibilityService {
      * last Tick didn't add - no Back before, no Continue after.
      */
     private void deleteHere() {
-        List<Integer> numbers = testMode() ? testNumbers() : MissedBox.afterRemoving(lastMissed);
+        boolean test = testMode();
+        Missed m = test ? null : takeMissed();
+        List<Integer> numbers = test ? testNumbers() : m.numbers;
         if (numbers.isEmpty()) {
-            Toast.makeText(this, testMode() ? "🗑 Test mode's numbers are 0 - nothing to delete"
+            Toast.makeText(this, test ? "🗑 Test mode's numbers are 0 - nothing to delete"
                     : "🗑 Nothing to delete - the last Tick added every row", Toast.LENGTH_SHORT).show();
             return;
         }
         Toast.makeText(this, "🗑 Deleting " + numbers + " here only (no Continue after)", Toast.LENGTH_SHORT).show();
         retrying = false;
         deleteButton.setText("■\nStop");
-        deleter.start(numbers);
+        deleter.start(numbers, test ? null : m.names);
     }
 
     /** Tick ended: in test mode the trip runs once whatever was ticked (AutoFlow goes back). */
     private boolean testTripAfterTick() {
         if (!testMode() || retryUsed) return false;
         tripNumbers = testNumbers();
+        tripNames = null;
+        // One test trip, then test mode is off: a later Tick never deletes test numbers again.
+        getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("test_mode", false).apply();
+        Toast.makeText(this, "🧪 Test trip " + (tripNumbers.isEmpty() ? "(no delete)" : "deleting " + tripNumbers)
+                + " - test mode is now off", Toast.LENGTH_LONG).show();
         return true;
     }
 
     private void startRetry() {
         boolean given = tripNumbers != null;
-        List<Integer> numbers = given ? tripNumbers : MissedBox.afterRemoving(lastMissed);
+        List<Integer> numbers;
+        List<String> expect;
+        if (given) {
+            numbers = tripNumbers;
+            expect = tripNames;
+        } else {
+            if (deleting() || !retryOn() || retryUsed || lastMissed.isEmpty()) {
+                tripNumbers = null;
+                checkPage();
+                return;
+            }
+            Missed m = takeMissed();
+            numbers = m.numbers;
+            expect = m.names;
+        }
         tripNumbers = null;
-        if (deleting() || !given && (!retryOn() || retryUsed || numbers.isEmpty())) {
+        tripNames = null;
+        if (deleting() || !given && numbers.isEmpty()) {
             checkPage();
             return;
         }
@@ -789,7 +890,7 @@ public class InspectorService extends AccessibilityService {
         }
         Toast.makeText(this, "🗑 Deleting " + numbers + ", then Continue", Toast.LENGTH_SHORT).show();
         deleteButton.setText("■\nStop");
-        deleter.start(numbers);
+        deleter.start(numbers, expect);
     }
 
     private void endRetry(String why) {
