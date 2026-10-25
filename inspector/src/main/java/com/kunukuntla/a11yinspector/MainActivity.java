@@ -514,7 +514,7 @@ public class MainActivity extends Activity {
             + "☑ Tick - ticks every sevak on page 3 and clears the pop-up after each.\n"
             + "✖ Clear - clears the pop-ups up now (long-press: Auto-clear on / off).\n"
             + "📅 Book - on page 2: choose the dropdown option (from the page's own list), the date and the slot, then Save.\n"
-            + "▶ Go - fills page 2 with those saved choices (long-press: the same form as Book).\n"
+            + "▶ Go - fills page 2 with those saved choices (long-press: the same form as Book). On page 1 it presses Continue first; on page 3 (with 🤖 on) Tick starts at once.\n"
             + "🤖 Auto - on: Go → Tick → Continue → Confirm runs by itself (see Settings).\n"
             + "📋 Report - the last run's result; the full report is in this app.\n"
             + "🗑 Delete - only in test mode (Settings).\n\n"

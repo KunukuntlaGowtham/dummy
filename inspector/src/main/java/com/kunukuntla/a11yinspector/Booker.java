@@ -73,9 +73,17 @@ final class Booker {
     }
 
     /** On the sevak page: hand over to Tick when linked, else tick the sevaks here as before. */
+    /** This run started on the sevak page itself (no page change to wait for before Tick). */
+    private boolean startedOnSevaks;
+
+    boolean startedOnSevaks() {
+        return startedOnSevaks;
+    }
+
     private void atSevakPage(String how) {
         if (handOver) {
             handedOver = true;
+            startedOnSevaks = how.startsWith("started");
             log("sevak page: " + how + " - handing over to Tick (Go and Tick linked)");
             stop("At the sevak page - Tick goes on from here");
             return;
@@ -90,6 +98,7 @@ final class Booker {
         plan = p;
         sevakPage = false;
         handedOver = false;
+        startedOnSevaks = false;
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.setLength(0);

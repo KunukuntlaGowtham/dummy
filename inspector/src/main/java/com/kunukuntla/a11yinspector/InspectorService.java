@@ -454,7 +454,11 @@ public class InspectorService extends AccessibilityService {
                 // The retry's page 2 needed a full Go: on to page 3.
                 if (booker.handedOver()) retryPage3(0);
                 else endRetry("Go didn't get past page 2");
-            } else if (linkOn() && booker.handedOver()) tickAfterGo();
+            } else if (linkOn() && booker.handedOver()) {
+                // Go started on page 3: no page change to wait for - Tick at once.
+                if (booker.startedOnSevaks()) tickNow();
+                else tickAfterGo();
+            }
         });
         // The calendar's screenshot (which days are green) is taken with our buttons off it.
         booker.setOverlayHider(new java.util.function.Consumer<Boolean>() {
@@ -589,6 +593,14 @@ public class InspectorService extends AccessibilityService {
         handler.postDelayed(pendingTick, 1000);
     }
 
+    /** Go started on page 3 (Auto on): Tick starts now, no 1 s gap. */
+    private void tickNow() {
+        if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        Toast.makeText(this, "Go: already on page 3 - Tick now", Toast.LENGTH_SHORT).show();
+        tickButton.setText("■\nStop");
+        ticker.start();
+    }
+
     private void cancelLinkedTick() {
         if (pendingTick == null) return;
         handler.removeCallbacks(pendingTick);
@@ -693,7 +705,59 @@ public class InspectorService extends AccessibilityService {
         cancelLinkedTick();
         if (!retrying) retryUsed = false; // a new booking: its one retry again
         booker.setHandOver(linkOn() || retrying);
+        // Go on page 1: its Continue first, then page 2 is filled the moment it shows.
+        if (!retrying && onPage1()) {
+            AccessibilityNodeInfo c = pressableButton(PageKind::isContinue);
+            if (c == null) {
+                goButton.setText("▶\nGo");
+                Toast.makeText(this, "Go: on page 1 but its Continue is off", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Toast.makeText(this, "Go: page 1 - Continue, then page 2", Toast.LENGTH_SHORT).show();
+            press(c);
+            awaitPage(PageKind.Kind.CALENDAR, 6000, ok -> {
+                if (!ok) {
+                    goButton.setText("▶\nGo");
+                    Toast.makeText(this, "Go: page 2 didn't come after page 1's Continue", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                booker.start(plan);
+            });
+            return;
+        }
         booker.start(plan);
+    }
+
+    /** Page 1 open now: the page kept as the one before page 2, or the booking app's page with only a Continue. */
+    private boolean onPage1() {
+        try {
+            PageKind.Facts f = PageKind.read(this);
+            PageKind.Kind k = kindOf(f);
+            if (k == PageKind.Kind.SEVAK_LIST) return true;
+            String booking = getSharedPreferences("settings", MODE_PRIVATE).getString("booking_pkg", "");
+            return k == PageKind.Kind.OTHER && f.cont && f.boxes == 0 && f.days == 0 && f.dropdowns == 0
+                    && !booking.isEmpty() && booking.equals(f.pkg) && SevakDeleter.cards(this).size() > 0;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /** Up to {@code ms} (looked at every 60 ms) for a page of this kind, then {@code then}. */
+    private void awaitPage(PageKind.Kind want, long ms, java.util.function.Consumer<Boolean> then) {
+        long until = android.os.SystemClock.uptimeMillis() + ms;
+        Runnable[] look = new Runnable[1];
+        look[0] = () -> {
+            if (destroyed) return;
+            boolean ok;
+            try {
+                ok = PageKind.decide(PageKind.read(this)) == want;
+            } catch (RuntimeException e) {
+                ok = false;
+            }
+            if (ok || android.os.SystemClock.uptimeMillis() >= until) then.accept(ok);
+            else handler.postDelayed(look[0], 60);
+        };
+        handler.post(look[0]);
     }
 
     // ---- Retry once after rows Tick missed: delete them on page 1, then pages 2 → 3 → 4 ----
