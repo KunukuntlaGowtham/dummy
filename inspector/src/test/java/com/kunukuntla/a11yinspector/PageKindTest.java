@@ -62,6 +62,21 @@ public class PageKindTest {
     }
 
     @Test
+    public void page2StillDrawingIsNeverPage3() {
+        // The declaration checkbox and Continue, before the calendar shows.
+        PageKind.Facts f = facts(0, 0, 0, 1, 0, true);
+        f.declare = true;
+        assertEquals(PageKind.Kind.CALENDAR, PageKind.decide(f));
+        // One checkbox and the dropdown's text field.
+        PageKind.Facts g = facts(0, 0, 0, 1, 0, true);
+        g.fields = 1;
+        assertEquals(PageKind.Kind.CALENDAR, PageKind.decide(g));
+        // Page 3 with many rows stays page 3.
+        PageKind.Facts h = facts(0, 0, 0, 12, 0, true);
+        assertEquals(PageKind.Kind.TICKING, PageKind.decide(h));
+    }
+
+    @Test
     public void page1ByItsOwnWords() {
         PageKind.Facts f = facts(0, 0, 0, 0, 2, true);
         f.texts.add("Srivari Seva");

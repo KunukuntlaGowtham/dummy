@@ -50,7 +50,9 @@ final class PageKind {
 
     /** What the page has, counted. */
     static final class Facts {
-        int days, radios, boxes, ticked, dropdowns, sevakWords;
+        int days, radios, boxes, ticked, dropdowns, sevakWords, fields;
+        /** Page 2's declaration ("I hereby declare ...") is on the page. */
+        boolean declare;
         boolean cont, contOn, confirm, confirmOn;
         String pkg = "";
         /** The page's words (not bare numbers): what page 1 is known by. */
@@ -88,6 +90,9 @@ final class PageKind {
         // A Confirm button: the last page.
         if (f.confirm) return Kind.CONFIRM;
         // No calendar, checkboxes to tick: the sevak rows.
+        // Page 2 still drawing its calendar: its one checkbox is the declaration, or it has the
+        // dropdown's text field - never page 3.
+        if (f.boxes <= 1 && (f.declare || f.fields > 0 && f.boxes == 1)) return Kind.CALENDAR;
         if (f.boxes >= 2 || f.boxes == 1 && (f.sevakWords > 0 || f.cont)) return Kind.TICKING;
         // The sevaks list by its own words (known also on first use, before page 2 was ever seen).
         if (f.boxes == 0 && isPage1(f.texts)) return Kind.SEVAK_LIST;
@@ -162,6 +167,8 @@ final class PageKind {
                 f.dropdowns++;
             }
             if (low.contains("sevak")) f.sevakWords++;
+            if (low.contains("hereby declare")) f.declare = true;
+            if (cls.endsWith("EditText") || role.contains("textfield")) f.fields++;
             if (label.length() >= 2 && !label.matches("[\\d\\s/:.,-]+") && f.texts.size() < 300) f.texts.add(label);
             if (label.isEmpty() || !n.isVisibleToUser()) continue;
             AccessibilityNodeInfo button = pressable(n);

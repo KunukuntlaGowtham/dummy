@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
     /** An unchosen chip: clear glass tinted with the accent. */
     private static final int CHIP_OFF = 0x1F5856D6;
     private TextView status;
+    private Runnable refreshDate;
     private TextView report;
 
     @Override
@@ -171,6 +172,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (refreshDate != null) refreshDate.run();
         boolean on = serviceOn();
         status.setText(on ? "●  Scan button is on" : "○  Off - tap to turn on in Accessibility");
         GradientDrawable chip = new GradientDrawable();
@@ -334,6 +336,7 @@ public class MainActivity extends Activity {
             String d = sp.getString("book_date", "");
             datePill.setText(d.isEmpty() ? "📅 Pick a date" : "📅 " + d);
         };
+        refreshDate = showDate; // shown afresh when you come back (📅 Book may have changed it)
         showDate.run();
         datePill.setOnClickListener(v -> {
             java.util.Calendar c = java.util.Calendar.getInstance();

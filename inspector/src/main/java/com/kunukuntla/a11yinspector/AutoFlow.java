@@ -83,8 +83,11 @@ final class AutoFlow {
     /** A Tick run has just ended: the next reading of page 3 decides (Continue, or back). */
     private boolean tickEnded;
 
+    private long tickEndedAt;
+
     void tickEnded() {
         tickEnded = true;
+        tickEndedAt = SystemClock.uptimeMillis();
     }
 
     /** Forget a Tick that ended earlier (Auto switched on / off: never acted on later). */
@@ -112,9 +115,15 @@ final class AutoFlow {
             if (!confirmDone && confirmInOrder) pressConfirm();
             return;
         }
+        // Tick's end is kept until page 3 is read properly (a pop-up closing, the page redrawing),
+        // for up to 5 s - not used up on a reading that isn't page 3 yet.
+        if (tickEnded && SystemClock.uptimeMillis() - tickEndedAt > 5000) tickEnded = false;
+        if (kind != PageKind.Kind.TICKING || f.boxes == 0) {
+            if (tickEnded) handler.postDelayed(host::recheck, 150);
+            return;
+        }
         boolean afterTick = tickEnded;
         tickEnded = false;
-        if (kind != PageKind.Kind.TICKING || f.boxes == 0) return;
         if (afterTick && host.testTripAfterTick()) {
             missed = true;
             backToPage1("Test mode");
@@ -266,8 +275,25 @@ final class AutoFlow {
         backTo2(0);
     }
 
-    private void backTo2(int tries) {
+    /**
+     * Back one page: the page's own Back button (a web page inside an app may ignore the
+     * phone's Back, or answer it with a pop-up), else its back arrow, else the phone's Back.
+     */
+    private void pressBack() {
+        AccessibilityNodeInfo button = null, arrow = null;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String l = Page.label(n).toLowerCase(java.util.Locale.ROOT).trim();
+            if (l.equals("back") && button == null) button = PageKind.pressable(n);
+            else if (l.contains("back_arrow") && arrow == null && n.isClickable()) arrow = n;
+        }
+        if (button != null && button.isEnabled() && button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
+        if (arrow != null && arrow.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
         service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
+    }
+
+    private void backTo2(int tries) {
+        if (tries == 0) pressBack();
+        else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK); // a pop-up took the first
         waitFor(k -> k == PageKind.Kind.CALENDAR, SystemClock.uptimeMillis(), f -> {
             if (f != null) {
                 backTo1(0);
@@ -283,7 +309,8 @@ final class AutoFlow {
     }
 
     private void backTo1(int tries) {
-        service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
+        if (tries == 0) pressBack();
+        else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
         waitFor(k -> k != PageKind.Kind.CALENDAR, SystemClock.uptimeMillis(), f -> {
             if (f != null) {
                 host.page1(f);

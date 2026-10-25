@@ -270,13 +270,18 @@ public class InspectorService extends AccessibilityService {
     }
 
     /** The page changed: look which page it is shortly (changes come in bursts). */
+    private long lastPageCheck;
+
     private void pageCheckSoon() {
         if (pageCheckQueued || pageBadge == null) return;
         pageCheckQueued = true;
+        // 120 ms after a change, but at most one read every 300 ms while the page keeps changing.
+        long since = android.os.SystemClock.uptimeMillis() - lastPageCheck;
         handler.postDelayed(() -> {
             pageCheckQueued = false;
+            lastPageCheck = android.os.SystemClock.uptimeMillis();
             checkPage();
-        }, 120); // the page read soon after it changes (it was 350 ms)
+        }, Math.max(120, 300 - since));
     }
 
     // Auto: page 3's Continue (or Back to pages 2 and 1), page 4's Confirm.
@@ -1003,7 +1008,12 @@ public class InspectorService extends AccessibilityService {
 
     /** Tick ended: in test mode the trip runs once whatever was ticked (AutoFlow goes back). */
     private boolean testTripAfterTick() {
-        if (!testMode() || retryUsed) return false;
+        if (!testMode()) return false;
+        if (retryUsed) {
+            Toast.makeText(this, "🧪 Test trip not started - one already ran for this booking (press Tick or Go to start a new one)",
+                    Toast.LENGTH_LONG).show();
+            return false;
+        }
         tripNumbers = testNumbers();
         tripNames = null;
         if (flow != null) flow.holdConfirm(true); // a test never books
@@ -1076,7 +1086,12 @@ public class InspectorService extends AccessibilityService {
         } catch (RuntimeException e) {
             return;
         }
-        if (k != PageKind.Kind.TICKING || !testTripAfterTick()) return;
+        if (k != PageKind.Kind.TICKING) {
+            Toast.makeText(this, "🧪 Test trip not started - this doesn't read as page 3 (" + k.title() + ")",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (!testTripAfterTick()) return;
         flow.backForRetry("Test mode");
     }
 
@@ -1232,9 +1247,9 @@ public class InspectorService extends AccessibilityService {
                 .build(), null, null);
     }
 
-    /** Page 2's Continue the moment it is on; still off after 1.5 s: a full Go. */
+    /** Page 2's Continue the moment it is on; still off after 3 s: a full Go. */
     private void page2Continue() {
-        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 1500, on -> {
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 3000, on -> {
             if (!on) {
                 if (!hasSavedPlan()) {
                     endRetry("page 2 needs Go, but nothing is saved in 📅 Book");
@@ -1605,6 +1620,23 @@ public class InspectorService extends AccessibilityService {
         });
         calHolder.addView(cal, new android.widget.FrameLayout.LayoutParams(
                 android.widget.FrameLayout.LayoutParams.MATCH_PARENT, dp(300)));
+        // The day already chosen can't be "changed" to itself: this keeps it and closes the calendar.
+        TextView keep = new TextView(this);
+        keep.setText("✓ Use this date");
+        keep.setTextColor(Glass.ACCENT);
+        keep.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        keep.setPadding(dp(14), dp(8), dp(14), dp(8));
+        keep.setOnClickListener(v -> {
+            java.util.Calendar c = java.util.Calendar.getInstance();
+            c.setTimeInMillis(cal.getDate());
+            picked[0] = c.get(java.util.Calendar.DAY_OF_MONTH) + "/" + (c.get(java.util.Calendar.MONTH) + 1)
+                    + "/" + c.get(java.util.Calendar.YEAR);
+            showDate.run();
+            calHolder.setVisibility(View.GONE);
+        });
+        calHolder.addView(keep, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.END));
         LinearLayout.LayoutParams calLp = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         calLp.topMargin = dp(6);
