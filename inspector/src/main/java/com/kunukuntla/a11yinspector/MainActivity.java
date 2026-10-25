@@ -45,73 +45,42 @@ public class MainActivity extends Activity {
         page.setOrientation(LinearLayout.VERTICAL);
         page.setBackgroundColor(0xFFF4F6F4);
 
+        // Head: the name, whether the service is on (tap: Accessibility settings), the tabs.
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.VERTICAL);
-        head.setPadding(dp(20), dp(24), dp(20), dp(18));
+        head.setPadding(dp(20), dp(22), dp(20), dp(12));
         head.setBackgroundColor(GREEN);
         TextView title = new TextView(this);
         title.setText(R.string.app_name);
         title.setTextColor(Color.WHITE);
-        title.setTextSize(24);
+        title.setTextSize(22);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         head.addView(title);
-        TextView how = new TextView(this);
-        how.setText("Turn it on in Accessibility, open any app, then use the round buttons - all "
-                + "work through accessibility; a screenshot is used only to find a pop-up's purple button when the page doesn't report it. Green 🔍 Scan says where the page comes "
-                + "from (the app's own screen, a web page in a browser or Custom Tab, or a web page "
-                + "inside the app) and what the app is built with, checks every controllable "
-                + "(web or app, ✓ ok or ⚠ what is wrong), lists everything the app "
-                + "reports on that screen, and what Tick, Clear and Book would find there: pop-ups "
-                + "and the button that clears each, every checkbox with its row, the calendar "
-                + "(month, open and closed days, arrows), the dropdown, radios and Continue. "
-                + "Long-press it for a deep scan: web pages woken, every property of every element "
-                + "and the app's own details, plus Whole page (scrolls to the end) and a 15 s "
-                + "recording of the app's events. Deep scan also saves a screenshot in Downloads/A11yInspector; share that PNG with the report. Watch popup 15 s records changes while you open a popup: start with it closed, trigger it, and leave it open. Purple ☑ Tick ticks every checkbox and clears "
-                + "the pop-up after each; orange ✖ Clear clears the pop-ups up now (long-press it for Auto-clear: the OK of every new pop-up is pressed the moment it comes up, e.g. after you tick a checkbox yourself); blue 📅 Book "
-                + "is where you choose the dropdown option (from the page's own list), the date and the radio, and Save; teal ▶ Go then fills the page with them straight away - option, date, checkbox, radio, Continue. Brown 🔗 Link (tap to turn on / off) links Go and Tick: when Go reaches the sevak page, Tick starts 1 s later by itself (tap Go in that second to cancel it). A 📍 badge at the top says which page of the booking is open - Page 1 (the page before page 2, whatever it is), Page 2 calendar & slot, Page 3 ticking sevaks, Page 4 Confirm - and Scan says it on its first line. Grey-blue 🤖 Auto (its own round button - tap to turn on / off; on shows a green ring): on page 3, when a Tick run ends with a checkbox still not ticked, Back goes to page 2 and Back again to page 1; once no checkbox is empty, Continue is pressed; if the page then stays on page 3 (an error) or Continue stays off, Back goes to page 2 and Back again to page 1. On page 4 Confirm is pressed at once. Auto works only in the booking app and never while Tick, Clear, Book or Scan runs. Red 🗑 Delete asks nothing: it goes back to page 1 (from page 3 or 2), deletes the rows the last Tick didn't add - or, in 🧪 Test mode below, the numbers typed there (0 = none) - in order, each number as on screen at its turn (2, 5: profile 2, then whoever is 5 once 2 has gone), then goes forward. Long-press 🗑 to only delete, on the page you're on (page 1), with no Back before and no Continue after. Each profile: its bin tapped, its 2 pop-ups closed the moment they come. Tap it again to stop. When a Tick run leaves rows not ticked and Auto has gone back to page 1, Auto deletes those profiles (numbered as after each delete), presses Continue, on page 2 ticks only its checkbox and presses Continue (a full Go if Continue stays off), on page 3 presses Continue at once (no ticking) and then Confirm - once per booking (turn it off below). If Go's date isn't open (green) it takes another by the preference below. Choose below which round buttons are on the screen. When a run ends a short message says how it went; grey 📋 Report shows the full result.");
-        how.setTextColor(0xE6FFFFFF);
-        how.setTextSize(13);
-        how.setLineSpacing(dp(2), 1f);
-        how.setPadding(0, dp(6), 0, dp(4));
-        // The long help folds away: tap "How to use" to open or close it.
-        android.content.SharedPreferences ui = getSharedPreferences("settings", MODE_PRIVATE);
-        TextView howToggle = new TextView(this);
-        howToggle.setTextColor(Color.WHITE);
-        howToggle.setTypeface(Typeface.DEFAULT_BOLD);
-        howToggle.setTextSize(13);
-        howToggle.setPadding(0, dp(10), 0, dp(10));
-        Runnable paintHow = () -> {
-            boolean open = ui.getBoolean("help_open", false);
-            how.setVisibility(open ? View.VISIBLE : View.GONE);
-            howToggle.setText(open ? "▾  How to use (tap to hide)" : "▸  How to use");
-        };
-        howToggle.setOnClickListener(v -> {
-            ui.edit().putBoolean("help_open", !ui.getBoolean("help_open", false)).apply();
-            paintHow.run();
-        });
-        paintHow.run();
-        head.addView(howToggle);
-        head.addView(how);
-        View gap = new View(this);
-        head.addView(gap, new LinearLayout.LayoutParams(1, dp(8)));
         status = new TextView(this);
         status.setTextColor(Color.WHITE);
         status.setTypeface(Typeface.DEFAULT_BOLD);
         status.setPadding(dp(14), dp(8), dp(14), dp(8));
         status.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
-        head.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
+        LinearLayout.LayoutParams stLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        stLp.topMargin = dp(8);
+        head.addView(status, stLp);
+        LinearLayout tabs = new LinearLayout(this);
+        LinearLayout.LayoutParams tabsLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        tabsLp.topMargin = dp(14);
+        head.addView(tabs, tabsLp);
         page.addView(head);
 
+        // Tab 1: the last run's report, with Share / Copy / Save.
+        LinearLayout reportTab = new LinearLayout(this);
+        reportTab.setOrientation(LinearLayout.VERTICAL);
         LinearLayout buttons = new LinearLayout(this);
-        buttons.setPadding(dp(12), dp(14), dp(12), dp(6));
+        buttons.setPadding(dp(12), dp(12), dp(12), dp(2));
         buttons.addView(pill("Share", v -> share()));
         buttons.addView(pill("Copy", v -> copy()));
         buttons.addView(pill("Save to Downloads", v -> save()));
-        page.addView(buttons);
-        page.addView(shownChooser());
-        page.addView(preferences());
-
+        reportTab.addView(buttons);
         report = new TextView(this);
         report.setTypeface(Typeface.MONOSPACE);
         report.setTextSize(11);
@@ -122,7 +91,6 @@ public class MainActivity extends Activity {
         wide.addView(report);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(wide);
-        // The report on a white card, apart from the buttons above it.
         GradientDrawable sheet = new GradientDrawable();
         sheet.setColor(Color.WHITE);
         sheet.setCornerRadius(dp(14));
@@ -131,7 +99,70 @@ public class MainActivity extends Activity {
         scroll.setClipToOutline(true);
         LinearLayout.LayoutParams sheetLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1);
         sheetLp.setMargins(dp(12), dp(10), dp(12), dp(12));
-        page.addView(scroll, sheetLp);
+        reportTab.addView(scroll, sheetLp);
+
+        // Tab 2: settings - which buttons show, the Auto flow, test mode - as cards.
+        LinearLayout settings = new LinearLayout(this);
+        settings.setOrientation(LinearLayout.VERTICAL);
+        settings.setPadding(0, dp(4), 0, dp(24));
+        settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
+        settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
+        settings.addView(card("🧪 Test mode", 0xFFC62828, testMode()));
+        ScrollView settingsTab = new ScrollView(this);
+        settingsTab.addView(settings);
+
+        // Tab 3: how to use, short.
+        TextView help = new TextView(this);
+        help.setText(HELP);
+        help.setTextColor(0xFF22262A);
+        help.setTextSize(14);
+        help.setLineSpacing(dp(3), 1f);
+        help.setPadding(dp(18), dp(14), dp(18), dp(24));
+        ScrollView helpTab = new ScrollView(this);
+        helpTab.addView(help);
+
+        View[] panes = {reportTab, settingsTab, helpTab};
+        String[] names = {"📋 Report", "⚙ Settings", "❓ Help"};
+        LinearLayout body = new LinearLayout(this);
+        body.setOrientation(LinearLayout.VERTICAL);
+        for (View v : panes) {
+            body.addView(v, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+        }
+        android.content.SharedPreferences ui = getSharedPreferences("settings", MODE_PRIVATE);
+        TextView[] tabViews = new TextView[panes.length];
+        Runnable[] paint = new Runnable[1];
+        paint[0] = () -> {
+            int open = ui.getInt("tab", 0);
+            for (int i = 0; i < panes.length; i++) {
+                boolean on = i == open;
+                panes[i].setVisibility(on ? View.VISIBLE : View.GONE);
+                tabViews[i].setTextColor(on ? GREEN : Color.WHITE);
+                GradientDrawable bg = new GradientDrawable();
+                bg.setCornerRadius(dp(18));
+                bg.setColor(on ? Color.WHITE : 0x33FFFFFF);
+                tabViews[i].setBackground(bg);
+            }
+        };
+        for (int i = 0; i < panes.length; i++) {
+            int k = i;
+            TextView t = new TextView(this);
+            t.setText(names[i]);
+            t.setTypeface(Typeface.DEFAULT_BOLD);
+            t.setTextSize(13);
+            t.setGravity(Gravity.CENTER);
+            t.setPadding(dp(6), dp(9), dp(6), dp(9));
+            t.setOnClickListener(v -> {
+                ui.edit().putInt("tab", k).apply();
+                paint[0].run();
+            });
+            tabViews[i] = t;
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1);
+            lp.setMargins(i == 0 ? 0 : dp(4), 0, i == panes.length - 1 ? 0 : dp(4), 0);
+            tabs.addView(t, lp);
+        }
+        paint[0].run();
+        page.addView(body, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(page);
     }
 
@@ -220,7 +251,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "📋 Report", "🔗 Link", "🤖 Auto", "🗑 Delete"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -229,16 +260,12 @@ public class MainActivity extends Activity {
     private View shownChooser() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(12), dp(6), dp(12), dp(4));
-        TextView head = new TextView(this);
-        head.setText("Round buttons on the screen (tap to show / hide):");
-        head.setTextColor(0xFF4A4F4A);
-        head.setTextSize(13);
-        box.addView(head);
+        box.addView(note("Tap to show / hide. 🗑 shows only in test mode."));
         LinearLayout row = new LinearLayout(this);
         row.setPadding(0, dp(6), 0, 0);
         android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
         for (int i = 0; i < InspectorService.SHOWN_KEYS.length; i++) {
+            if (InspectorService.SHOWN_KEYS[i].equals("delete")) continue;
             String key = "show_" + InspectorService.SHOWN_KEYS[i];
             String name = SHOWN_NAMES[i];
             TextView chip = new TextView(this);
@@ -274,22 +301,18 @@ public class MainActivity extends Activity {
         return box;
     }
 
-    /**
-     * Go's date when it isn't open (green): same week then nearest, nearest after, nearest
-     * before, or nearest either way. And Auto's one retry after rows Tick missed.
-     */
-    private View preferences() {
+    /** The Auto flow as steps, each with its setting next to it. */
+    private View autoFlow() {
         android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(12), dp(6), dp(12), dp(4));
-        TextView head = new TextView(this);
-        head.setText("If Go's date isn't open (green), take:");
-        head.setTextColor(0xFF4A4F4A);
-        head.setTextSize(13);
-        box.addView(head);
+        box.addView(note("With 🤖 on, one press of ▶ Go runs the booking through:"));
+        box.addView(step("Page 2", "▶ Go fills the dropdown, the date, the checkbox and the slot, then Continue."));
+        TextView dateHead = note("If the date isn't open (green / yellow), take:");
+        dateHead.setPadding(dp(16), dp(4), 0, 0);
+        box.addView(dateHead);
         LinearLayout row = new LinearLayout(this);
-        row.setPadding(0, dp(6), 0, 0);
+        row.setPadding(dp(16), dp(6), 0, dp(4));
         java.util.List<Runnable> paints = new java.util.ArrayList<>();
         for (String mode : DayPick.MODES) {
             TextView chip = new TextView(this);
@@ -318,24 +341,32 @@ public class MainActivity extends Activity {
         wide.setHorizontalScrollBarEnabled(false);
         wide.addView(row);
         box.addView(wide);
-        LinearLayout row2 = new LinearLayout(this);
-        row2.setPadding(0, dp(8), 0, 0);
-        row2.addView(settingChip(sp, "auto_delete_missed", "🗑 Auto: delete rows not ticked, retry once",
-                "Auto delete rows not ticked and retry"), chipLp());
+        box.addView(step("Page 3", "☑ Tick starts 1 s later and ticks every sevak. All ticked: Continue."));
+        LinearLayout retry = new LinearLayout(this);
+        retry.setPadding(dp(16), dp(6), 0, dp(4));
+        retry.addView(settingChip(sp, "auto_delete_missed", "Rows not ticked: back, delete them, retry once",
+                "Retry after rows not ticked"), chipLp());
         HorizontalScrollView wide2 = new HorizontalScrollView(this);
         wide2.setHorizontalScrollBarEnabled(false);
-        wide2.addView(row2);
+        wide2.addView(retry);
         box.addView(wide2);
-        // Test mode: the trip's numbers typed here (0 = none), and the trip after every Tick.
-        LinearLayout row3 = new LinearLayout(this);
-        row3.setGravity(Gravity.CENTER_VERTICAL);
-        row3.setPadding(0, dp(8), 0, 0);
-        row3.addView(settingChip(sp, "test_mode", "🧪 Test mode", "Test mode", false), chipLp());
+        box.addView(step("Page 4", "Confirm is pressed the moment it shows."));
+        return box;
+    }
+
+    /** Test mode: the trip back to page 1 and forward, with numbers to delete (0 = none). */
+    private View testMode() {
+        android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.addView(settingChip(sp, "test_mode", "🧪 Test mode", "Test mode", false), chipLp());
         TextView label = new TextView(this);
         label.setText("Delete:");
         label.setTextColor(0xFF4A4F4A);
         label.setTextSize(13);
-        row3.addView(label);
+        row.addView(label);
         android.widget.EditText numbers = new android.widget.EditText(this);
         numbers.setSingleLine(true);
         numbers.setText(sp.getString("test_delete", "0"));
@@ -357,17 +388,96 @@ public class MainActivity extends Activity {
                 sp.edit().putString("test_delete", e.toString().trim()).apply();
             }
         });
-        row3.addView(numbers);
-        box.addView(row3);
-        TextView note = new TextView(this);
-        note.setText("Test mode on: after every Tick run (ticked or not) Auto goes back to page 1 once, deletes "
-                + "these numbers (0 = none), and goes forward - page 2's checkbox, Continue, page 3's Continue, "
-                + "Confirm. 🗑 Delete runs the same trip now; long-press 🗑 only deletes, here on page 1. Off: Delete and Auto use the rows Tick didn't add.");
-        note.setTextColor(0xFF6A6F6A);
-        note.setTextSize(12);
-        box.addView(note);
+        row.addView(numbers);
+        box.addView(row);
+        box.addView(note("• On: the red 🗑 button shows, and the page badge says 🧪 TEST."));
+        box.addView(note("• After the next Tick, Auto goes back to page 1, deletes these numbers (0 = none), "
+                + "then forward: page 2's checkbox, Continue, page 3's Continue, Confirm. Then test mode turns itself off."));
+        box.addView(note("• 🗑 tap: the same trip now. 🗑 long-press: only delete, here on page 1."));
+        box.addView(note("• Numbers go in order, each as numbered on screen at its turn (2, 5: 2, then whoever is 5 after)."));
         return box;
     }
+
+    /** A titled white card with a coloured edge. */
+    private View card(String title, int colour, View content) {
+        LinearLayout c = new LinearLayout(this);
+        c.setOrientation(LinearLayout.VERTICAL);
+        c.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setColor(Color.WHITE);
+        bg.setCornerRadius(dp(14));
+        bg.setStroke(dp(2), colour);
+        c.setBackground(bg);
+        TextView t = new TextView(this);
+        t.setText(title);
+        t.setTextColor(colour);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setTextSize(15);
+        t.setPadding(0, 0, 0, dp(6));
+        c.addView(t);
+        c.addView(content);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.setMargins(dp(12), dp(10), dp(12), 0);
+        c.setLayoutParams(lp);
+        return c;
+    }
+
+    private TextView note(String text) {
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(0xFF4A4F4A);
+        t.setTextSize(13);
+        t.setLineSpacing(dp(2), 1f);
+        t.setPadding(0, dp(3), 0, dp(3));
+        return t;
+    }
+
+    /** "Page 3  ☑ Tick ..." - a step of the flow. */
+    private View step(String page, String what) {
+        LinearLayout r = new LinearLayout(this);
+        r.setPadding(0, dp(8), 0, dp(2));
+        TextView p = new TextView(this);
+        p.setText(page);
+        p.setTextColor(Color.WHITE);
+        p.setTypeface(Typeface.DEFAULT_BOLD);
+        p.setTextSize(12);
+        p.setPadding(dp(8), dp(3), dp(8), dp(3));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(10));
+        bg.setColor(0xFF37474F);
+        p.setBackground(bg);
+        r.addView(p);
+        TextView w = new TextView(this);
+        w.setText(what);
+        w.setTextColor(0xFF22262A);
+        w.setTextSize(13);
+        w.setPadding(dp(10), 0, 0, 0);
+        r.addView(w, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        return r;
+    }
+
+    private static final String HELP =
+            "1. Turn A11y Inspector on in Accessibility (tap the chip at the top).\n"
+            + "2. Open the TTD app. The round buttons float on the left; drag them anywhere.\n\n"
+            + "ROUND BUTTONS\n"
+            + "🔍 Scan - what the screen has (long-press: deep scan + screenshot, to send me).\n"
+            + "☑ Tick - ticks every sevak on page 3 and clears the pop-up after each.\n"
+            + "✖ Clear - clears the pop-ups up now (long-press: Auto-clear on / off).\n"
+            + "▶ Go - fills page 2 with your saved choices. Long-press: choose them (option, date, slot).\n"
+            + "🤖 Auto - on: Go → Tick → Continue → Confirm runs by itself (see Settings).\n"
+            + "📋 Report - the last run's result; the full report is in this app.\n"
+            + "🗑 Delete - only in test mode (Settings).\n\n"
+            + "AT THE TOP OF THE SCREEN\n"
+            + "📍 Page 1-4 - which page of the booking is open (🧪 TEST when test mode is on).\n"
+            + "❌ Not added - the rows Tick couldn't add, numbered as after each delete.\n\n"
+            + "THE PAGES\n"
+            + "Page 1 - the sevaks list (the page before page 2).\n"
+            + "Page 2 - dropdown, calendar, checkbox, slot.\n"
+            + "Page 3 - the sevak rows to tick.\n"
+            + "Page 4 - Confirm.\n\n"
+            + "SENDING ME A PROBLEM\n"
+            + "📋 Report → Share, or a deep scan (long-press 🔍) with its screenshot.";
 
     /** A chip turning a setting (on until turned off) on / off. */
     private TextView settingChip(android.content.SharedPreferences sp, String key, String name, String spoken) {

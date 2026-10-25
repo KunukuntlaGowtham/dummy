@@ -110,7 +110,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton, deleteButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, goButton, reportButton, autoButton, deleteButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -378,7 +378,7 @@ public class InspectorService extends AccessibilityService {
 
     // ---- Tick, Clear and Book --------------------------------------------------------
 
-    private TextView tickButton, clearButton, bookButton, goButton;
+    private TextView tickButton, clearButton, goButton;
     private Ticker ticker, clearer;
     private Booker booker;
     /** The rows not added in the Tick run, renumbered as after removing the earlier ones. */
@@ -446,7 +446,6 @@ public class InspectorService extends AccessibilityService {
         }, v -> toggleAutoClear());
         booker = new Booker(this, (summary, log) -> {
             saveReport(log);
-            bookButton.setText("📅\nBook");
             goButton.setText("▶\nGo");
             finished(summary);
             if (retrying) {
@@ -454,7 +453,7 @@ public class InspectorService extends AccessibilityService {
                 // The retry's page 2 needed a full Go: on to page 3.
                 if (booker.handedOver()) retryPage3(0);
                 else endRetry("Go didn't get past page 2");
-            } else if (linkOn && booker.handedOver()) tickAfterGo();
+            } else if (linkOn() && booker.handedOver()) tickAfterGo();
         });
         // The calendar's screenshot (which days are green) is taken with our buttons off it.
         booker.setOverlayHider(new java.util.function.Consumer<Boolean>() {
@@ -476,15 +475,6 @@ public class InspectorService extends AccessibilityService {
                 }
             }
         });
-        // Book: choose what to fill (from the page's own dropdown list) and save it.
-        bookButton = floating("📅\nBook", 0xEE1565C0, 358, v -> {
-            closeCard();
-            if (booker.isRunning()) booker.stop("Stopped");
-            else if (!busy()) {
-                Toast.makeText(this, "Reading the dropdown's options…", Toast.LENGTH_SHORT).show();
-                Booker.options(this, handler, this::askBooking);
-            }
-        });
         // Go: fill the page straight away with the saved choices - no form, no reading first.
         goButton = floating("▶\nGo", 0xEE00897B, 424, v -> {
             closeCard();
@@ -493,44 +483,29 @@ public class InspectorService extends AccessibilityService {
                 Toast.makeText(this, "Tick after Go cancelled", Toast.LENGTH_SHORT).show();
             } else if (booker.isRunning()) booker.stop("Stopped");
             else if (!busy()) startSaved();
+        }, v -> {
+            // Long press: choose what Go fills (from the page's own dropdown list) and save it.
+            closeCard();
+            if (booker.isRunning() || busy()) return;
+            Toast.makeText(this, "Reading the dropdown's options…", Toast.LENGTH_SHORT).show();
+            Booker.options(this, handler, this::askBooking);
         });
         showReportButton();
-        showLinkButton();
         showAutoButton();
         showDeleteButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
 
-    // ---- 🔗 Link: Go and Tick one after the other -------------------------------------
+    // ---- Go then Tick (part of 🤖 Auto) ----------------------------------------------------
 
-    /** Go and Tick linked: when Go gets past the slot page, Tick starts 1 s later by itself. */
-    private boolean linkOn;
-    private TextView linkButton;
+    /** With 🤖 Auto on, Go and Tick are linked: past the slot page, Tick starts 1 s later by itself. */
+    private boolean linkOn() {
+        return AutoFlow.enabled(this);
+    }
+
     /** Tick, waiting out the 1 s after Go (null when none waits). */
     private Runnable pendingTick;
-
-    private void showLinkButton() {
-        linkOn = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("link_go_tick", false);
-        linkButton = floating("🔗\nLink", 0xEE6D4C41, 556, v -> {
-            closeCard();
-            linkOn = !linkOn;
-            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("link_go_tick", linkOn).apply();
-            booker.setHandOver(linkOn); // also for a Go running now
-            if (!linkOn) cancelLinkedTick();
-            showLink();
-            Toast.makeText(this, linkOn
-                    ? "Go → Tick linked: when Go reaches the sevak page, Tick starts 1 s later"
-                    : "Go and Tick not linked - each runs on its own", Toast.LENGTH_SHORT).show();
-        });
-        showLink();
-    }
-
-    private void showLink() {
-        linkButton.setText(linkOn ? "🔗\nOn" : "🔗\nLink");
-        GradientDrawable bg = (GradientDrawable) linkButton.getBackground();
-        bg.setStroke(linkOn ? dp(4) : dp(2), linkOn ? 0xFF7CFC00 : 0x66FFFFFF);
-    }
 
     // ---- 🤖 Auto: page 3's Continue (or Back to pages 2 and 1), page 4's Confirm ------------
 
@@ -541,9 +516,11 @@ public class InspectorService extends AccessibilityService {
             closeCard();
             boolean on = !AutoFlow.enabled(this);
             getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_flow", on).apply();
+            booker.setHandOver(on); // also for a Go running now
+            if (!on) cancelLinkedTick();
             Toast.makeText(this, on
-                    ? "Auto ON: page 3 Continue (or Back to pages 2 and 1), page 4 Confirm at once"
-                    : "Auto OFF - Continue and Confirm are left to you", Toast.LENGTH_SHORT).show();
+                    ? "🤖 Auto ON: Go → Tick → Continue → Confirm runs by itself"
+                    : "🤖 Auto OFF - each button runs on its own", Toast.LENGTH_SHORT).show();
         });
         showAuto();
     }
@@ -595,7 +572,7 @@ public class InspectorService extends AccessibilityService {
         pendingTick = () -> {
             pendingTick = null;
             goButton.setText("▶\nGo");
-            if (!linkOn || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+            if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
             tickButton.setText("■\nStop");
             ticker.start();
         };
@@ -613,19 +590,22 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, linkButton, autoButton, deleteButton};
+        return new View[] {button, tickButton, clearButton, goButton, autoButton, reportButton, deleteButton};
     }
 
-    /** Down the screen from one round button to the next: 56 dp button + 14 dp gap (9 buttons fit). */
-    private static final int BUTTON_STEP = 70;
+    /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
+    private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "link", "auto", "delete"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "go", "auto", "report", "delete"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
                 if (key != null && key.startsWith("show_")) {
                     applyShown();
                     checkPage();
+                } else if ("test_mode".equals(key)) {
+                    applyShown(); // 🗑 shows only in test mode
+                    checkPage(); // the badge's 🧪 TEST
                 } else if ("auto_flow".equals(key)) {
                     showAuto();
                     checkPage(); // the badge's "· auto", and a page already ready goes on
@@ -641,6 +621,8 @@ public class InspectorService extends AccessibilityService {
             View v = views[i];
             if (v == null) continue;
             boolean on = sp.getBoolean("show_" + SHOWN_KEYS[i], true);
+            // 🗑 only in test mode: no stray tap can delete.
+            if (SHOWN_KEYS[i].equals("delete")) on = on && sp.getBoolean("test_mode", false);
             v.setVisibility(on ? View.VISIBLE : View.GONE);
             try {
                 WindowManager.LayoutParams lp = (WindowManager.LayoutParams) v.getLayoutParams();
@@ -648,7 +630,7 @@ public class InspectorService extends AccessibilityService {
                 if (on) {
                     lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                     lp.x = dp(12);
-                    lp.y = dp(110 + BUTTON_STEP * k);
+                    lp.y = dp(140 + BUTTON_STEP * k);
                 } else {
                     lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                 }
@@ -700,7 +682,7 @@ public class InspectorService extends AccessibilityService {
         goButton.setText("■\nStop");
         cancelLinkedTick();
         if (!retrying) retryUsed = false; // a new booking: its one retry again
-        booker.setHandOver(linkOn || retrying);
+        booker.setHandOver(linkOn() || retrying);
         booker.start(plan);
     }
 
@@ -1425,10 +1407,10 @@ public class InspectorService extends AccessibilityService {
                     Toast.makeText(this, "Saved - press ▶ Go to fill the page", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                bookButton.setText("■\nStop");
+                goButton.setText("■\nStop");
                 handler.postDelayed(() -> { // the keyboard goes down first
                     cancelLinkedTick();
-                    booker.setHandOver(linkOn);
+                    booker.setHandOver(linkOn());
                     booker.start(plan);
                 }, 400);
             }, startNow), cardButtonLp(true));
