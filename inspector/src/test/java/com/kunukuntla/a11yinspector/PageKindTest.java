@@ -62,6 +62,17 @@ public class PageKindTest {
     }
 
     @Test
+    public void page1ByItsOwnWords() {
+        PageKind.Facts f = facts(0, 0, 0, 0, 2, true);
+        f.texts.add("Srivari Seva");
+        f.texts.add("Sevaks Profiles");
+        assertEquals(PageKind.Kind.SEVAK_LIST, PageKind.decide(f));
+        PageKind.Facts g = facts(0, 0, 0, 0, 0, true);
+        g.texts.add("Add Sevak");
+        assertEquals(PageKind.Kind.SEVAK_LIST, PageKind.decide(g));
+    }
+
+    @Test
     public void page1IsNotDecidedByWhatItHas() {
         assertEquals(PageKind.Kind.OTHER, PageKind.decide(facts(0, 0, 0, 0, 3, false)));
         assertEquals(PageKind.Kind.OTHER, PageKind.decide(facts(0, 0, 0, 0, 0, false)));

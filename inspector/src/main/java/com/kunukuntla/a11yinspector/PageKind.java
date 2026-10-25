@@ -89,7 +89,18 @@ final class PageKind {
         if (f.confirm) return Kind.CONFIRM;
         // No calendar, checkboxes to tick: the sevak rows.
         if (f.boxes >= 2 || f.boxes == 1 && (f.sevakWords > 0 || f.cont)) return Kind.TICKING;
+        // The sevaks list by its own words (known also on first use, before page 2 was ever seen).
+        if (f.boxes == 0 && isPage1(f.texts)) return Kind.SEVAK_LIST;
         return Kind.OTHER;
+    }
+
+    /** Page 1's own words: "Sevaks Profiles" / "Add Sevak" (any case). */
+    static boolean isPage1(Set<String> texts) {
+        for (String t : texts) {
+            String l = t.toLowerCase(Locale.ROOT).trim();
+            if (l.equals("sevaks profiles") || l.equals("add sevak") || l.equals("+ add sevak")) return true;
+        }
+        return false;
     }
 
     /** Two readings of the same page: most of their words shared. */

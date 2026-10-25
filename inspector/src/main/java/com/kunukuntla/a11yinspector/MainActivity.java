@@ -440,8 +440,9 @@ public class MainActivity extends Activity {
         row.addView(numbers);
         box.addView(row);
         box.addView(note("• On: the red 🗑 button shows, and the page badge says 🧪 TEST."));
-        box.addView(note("• After the next Tick, Auto goes back to page 1, deletes these numbers (0 = none), "
-                + "then forward: page 2's checkbox, Continue, page 3's Continue, Confirm. Then test mode turns itself off."));
+        box.addView(note("• After the next Tick (🤖 on or off), it goes back to page 1, deletes these numbers (0 = none), "
+                + "then forward: page 2's checkbox, Continue, page 3's Continue - and stops on page 4: "
+                + "a test never presses Confirm. Then test mode turns itself off."));
         box.addView(note("• 🗑 tap: the same trip now. 🗑 long-press: only delete, here on page 1."));
         box.addView(note("• Numbers go in order, each as numbered on screen at its turn (2, 5: 2, then whoever is 5 after)."));
         return box;

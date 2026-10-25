@@ -402,7 +402,14 @@ public class InspectorService extends AccessibilityService {
                 } catch (RuntimeException e) {
                     rowNames = new ArrayList<>();
                 }
-                if (flow != null && !summary.startsWith("Stopped")) flow.tickEnded();
+                if (flow != null && !summary.startsWith("Stopped")) {
+                    if (AutoFlow.enabled(InspectorService.this)) {
+                        flow.tickEnded(); // Auto decides on page 3: Continue, the retry, or the test trip
+                    } else if (testMode()) {
+                        // Test mode with Auto off: the test trip runs by itself all the same.
+                        handler.postDelayed(() -> startTestTripNow(), 300);
+                    }
+                }
                 handler.post(InspectorService.this::checkPage);
             }
 
@@ -532,6 +539,7 @@ public class InspectorService extends AccessibilityService {
             boolean on = !AutoFlow.enabled(this);
             getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_flow", on).apply();
             booker.setHandOver(on); // also for a Go running now
+            if (flow != null) flow.clearTickEnded(); // a Tick that ended before is never acted on now
             if (!on) cancelLinkedTick();
             Toast.makeText(this, on
                     ? "🤖 Auto ON: Go → Tick → Continue → Confirm runs by itself"
@@ -709,6 +717,26 @@ public class InspectorService extends AccessibilityService {
             if (flow != null) flow.holdConfirm(false);
         }
         booker.setHandOver(linkOn() || retrying);
+        // Go on page 3 with every box ticked already: only its Continue is left.
+        if (!retrying) {
+            PageKind.Facts f3 = null;
+            try {
+                f3 = PageKind.read(this);
+            } catch (RuntimeException ignored) {
+            }
+            if (f3 != null && PageKind.decide(f3) == PageKind.Kind.TICKING && f3.empty() == 0 && f3.contOn) {
+                AccessibilityNodeInfo c3 = pressableButton(PageKind::isContinue);
+                goButton.setText("▶\nGo");
+                if (c3 != null) {
+                    if (linkOn() && flow != null && !testTrip()) {
+                        flow.watchConfirm(c3.getPackageName() == null ? "" : c3.getPackageName().toString());
+                    }
+                    press(c3);
+                    Toast.makeText(this, "Go: page 3 is all ticked - Continue pressed", Toast.LENGTH_SHORT).show();
+                }
+                return;
+            }
+        }
         // Go on page 1: its Continue first, then page 2 is filled the moment it shows.
         if (!retrying && onPage1()) {
             AccessibilityNodeInfo c = pressableButton(PageKind::isContinue);
@@ -737,7 +765,7 @@ public class InspectorService extends AccessibilityService {
         try {
             PageKind.Facts f = PageKind.read(this);
             PageKind.Kind k = kindOf(f);
-            if (k == PageKind.Kind.SEVAK_LIST) return true;
+            if (k == PageKind.Kind.SEVAK_LIST || PageKind.isPage1(f.texts)) return true;
             String booking = getSharedPreferences("settings", MODE_PRIVATE).getString("booking_pkg", "");
             return k == PageKind.Kind.OTHER && f.cont && f.boxes == 0 && f.days == 0 && f.dropdowns == 0
                     && !booking.isEmpty() && booking.equals(f.pkg) && SevakDeleter.cards(this).size() > 0;
@@ -929,10 +957,10 @@ public class InspectorService extends AccessibilityService {
         tripNumbers = testNumbers();
         tripNames = null;
         if (flow != null) flow.holdConfirm(true); // a test never books
-        // One test trip, then test mode is off: a later Tick never deletes test numbers again.
-        getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("test_mode", false).apply();
+        // One test trip, then test mode is off - when the trip ends (🗑 stays to stop it meanwhile).
+        autoTestTrip = true;
         Toast.makeText(this, "🧪 Test trip " + (tripNumbers.isEmpty() ? "(no delete)" : "deleting " + tripNumbers)
-                + " - test mode is now off", Toast.LENGTH_LONG).show();
+                + " - test mode turns off when it ends", Toast.LENGTH_LONG).show();
         return true;
     }
 
@@ -971,8 +999,32 @@ public class InspectorService extends AccessibilityService {
         deleter.start(numbers, expect);
     }
 
+    /** The automatic test trip runs: test mode turns off when it ends. */
+    private boolean autoTestTrip;
+
+    private void testTripEnded() {
+        if (!autoTestTrip) return;
+        autoTestTrip = false;
+        getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("test_mode", false).apply();
+        Toast.makeText(this, "🧪 Test trip done - test mode is off", Toast.LENGTH_SHORT).show();
+    }
+
+    /** Tick ended in test mode with Auto off: on page 3, the test trip now (back, delete, forward). */
+    private void startTestTripNow() {
+        if (flow == null || flow.busy() || retrying || busy()) return;
+        PageKind.Kind k;
+        try {
+            k = PageKind.decide(PageKind.read(this));
+        } catch (RuntimeException e) {
+            return;
+        }
+        if (k != PageKind.Kind.TICKING || !testTripAfterTick()) return;
+        flow.backForRetry("Test mode");
+    }
+
     private void endRetry(String why) {
         retrying = false;
+        testTripEnded();
         saveRetryLog("↻ Retry stopped: " + why);
         Toast.makeText(this, "↻ Retry stopped: " + why, Toast.LENGTH_LONG).show();
         checkPage();
@@ -1166,6 +1218,7 @@ public class InspectorService extends AccessibilityService {
             // The retry stays on (Auto's own steps paused) until page 3 has gone: no second Continue.
             waitUntil(() -> PageKind.decide(PageKind.read(this)) != PageKind.Kind.TICKING, 6000, gone -> {
                 retrying = false;
+                testTripEnded();
                 saveRetryLog(gone ? "page 3 left - retry done" : "page 3 still shown 6 s after Continue - retry done");
                 checkPage();
             });

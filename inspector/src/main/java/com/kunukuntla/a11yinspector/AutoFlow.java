@@ -84,6 +84,11 @@ final class AutoFlow {
         tickEnded = true;
     }
 
+    /** Forget a Tick that ended earlier (Auto switched on / off: never acted on later). */
+    void clearTickEnded() {
+        tickEnded = false;
+    }
+
     /** The page as read (only while nothing else runs); {@code bookingPkg}: the app of pages 2-3. */
     void onPage(PageKind.Kind kind, PageKind.Facts f, String bookingPkg, boolean confirmInOrder) {
         if (busy || !enabled(service)) return;
