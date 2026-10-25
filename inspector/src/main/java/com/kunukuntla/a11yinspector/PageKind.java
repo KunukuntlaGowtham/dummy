@@ -170,7 +170,8 @@ final class PageKind {
             if (low.contains("hereby declare")) f.declare = true;
             if (cls.endsWith("EditText") || role.contains("textfield")) f.fields++;
             if (label.length() >= 2 && !label.matches("[\\d\\s/:.,-]+") && f.texts.size() < 300) f.texts.add(label);
-            if (label.isEmpty() || !n.isVisibleToUser()) continue;
+            // Continue / Confirm count also below the screen (pressed through accessibility).
+            if (label.isEmpty()) continue;
             AccessibilityNodeInfo button = pressable(n);
             if (button == null) continue;
             if (isContinue(label)) {

@@ -190,7 +190,7 @@ final class AutoFlow {
     private void pressConfirm() {
         AccessibilityNodeInfo button = null;
         for (AccessibilityNodeInfo n : Page.nodes(service)) {
-            if (!n.isVisibleToUser() || !PageKind.isConfirm(Page.label(n))) continue;
+            if (!PageKind.isConfirm(Page.label(n))) continue; // also below the screen
             if (PageKind.inDialog(n)) continue; // a pop-up's Confirm is never page 4's
             AccessibilityNodeInfo b = PageKind.pressable(n);
             if (b != null && b.isEnabled() && n.isEnabled()) {
@@ -201,6 +201,7 @@ final class AutoFlow {
         if (button == null) return; // not there yet, or off: the next page change looks again
         confirmDone = true;
         watchUntil = 0;
+        if (!button.isVisibleToUser()) button.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(Page.bounds(button));
         host.say("📍 Page 4: Confirm pressed");
     }
@@ -210,7 +211,7 @@ final class AutoFlow {
     private void pressContinue(String pkg) {
         AccessibilityNodeInfo button = null;
         for (AccessibilityNodeInfo n : Page.nodes(service)) {
-            if (!n.isVisibleToUser() || !PageKind.isContinue(Page.label(n))) continue;
+            if (!PageKind.isContinue(Page.label(n))) continue; // also below the screen
             AccessibilityNodeInfo b = PageKind.pressable(n);
             if (b != null && b.isEnabled()) button = b;
         }
@@ -219,6 +220,7 @@ final class AutoFlow {
         Set<String> before = PageKind.read(service).texts;
         watchPkg = pkg;
         watchUntil = SystemClock.uptimeMillis() + WATCH_MS;
+        if (!button.isVisibleToUser()) button.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(Page.bounds(button));
         host.say("📍 Page 3: every box ticked - Continue pressed");
         afterContinue(before, SystemClock.uptimeMillis());

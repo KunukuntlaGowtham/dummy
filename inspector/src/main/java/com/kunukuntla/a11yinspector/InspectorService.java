@@ -1127,7 +1127,7 @@ public class InspectorService extends AccessibilityService {
     /** A button with these words, on and on screen (itself or the box around it), or null. */
     private AccessibilityNodeInfo pressableButton(java.util.function.Predicate<String> words) {
         for (AccessibilityNodeInfo n : Page.nodes(this)) {
-            if (!n.isVisibleToUser() || !words.test(Page.label(n))) continue;
+            if (!words.test(Page.label(n))) continue; // also below the screen (TTD's Continue often is)
             AccessibilityNodeInfo b = PageKind.pressable(n);
             if (b != null && b.isEnabled() && n.isEnabled()) return b;
         }
@@ -1136,6 +1136,7 @@ public class InspectorService extends AccessibilityService {
 
     private void press(AccessibilityNodeInfo b) {
         if (b == null) return; // gone since it was seen: the step's own wait notices
+        if (!b.isVisibleToUser()) b.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         if (b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
         android.graphics.Rect r = Page.bounds(b);
         android.graphics.Path p = new android.graphics.Path();

@@ -93,6 +93,7 @@ final class Booker {
 
     void start(Plan p) {
         if (running) return;
+        secondPass = false;
         running = true;
         gen++;
         plan = p;
@@ -123,7 +124,8 @@ final class Booker {
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.setLength(0);
-        log("Page 2 again: slot, checkbox, Continue (option and date still chosen)");
+        log("Page 2 again: checkbox, Continue - the slot only if Continue stays off (option and date still chosen)");
+        secondPass = true;
         later(this::afterDate, 30);
     }
 
@@ -630,9 +632,15 @@ final class Booker {
         return c != null && c.isEnabled();
     }
 
+    /** Page 2 again: the slot is still chosen - its round button is tapped only when needed. */
+    private boolean secondPass;
+    private int slotTaps;
+
     private void afterDate() {
-        radioDone = boxDone = false;
+        radioDone = secondPass; // second pass: the slot left as it is, unless Continue stays off
+        boxDone = false;
         reticked = false;
+        slotTaps = 0;
         restStart = SystemClock.uptimeMillis();
         rest(0);
     }
@@ -668,6 +676,17 @@ final class Booker {
             if (!radioDone) log("slot: none on the page");
             pressContinue(0);
             return;
+        }
+        // Second pass, checkbox done, Continue still off: the slot may have been reset - tapped
+        // once; still off a second later - tapped again to put it back (its button toggles).
+        if (secondPass && boxDone && (polls == 12 && slotTaps == 0 || polls == 25 && slotTaps == 1)) {
+            AccessibilityNodeInfo slot = findRadio();
+            if (slot != null) {
+                slotTaps++;
+                log(slotTaps == 1 ? "slot: Continue still off - choosing the slot" : "slot: no change - tapping it back");
+                chooseRadio(slot, () -> rest(0));
+                return;
+            }
         }
         // The checkbox reads ticked but Continue stays off: the page may show it empty while
         // still reporting it ticked (page 2 opened again) - ticked again, checked by Continue.
