@@ -56,9 +56,14 @@ public class PageKindTest {
     public void aConfirmButtonIsPage4() {
         PageKind.Facts f = facts(0, 0, 0, 0, 0, false);
         f.confirm = true;
-        assertEquals(PageKind.Kind.CONFIRM, PageKind.decide(f));
+        assertEquals(PageKind.Kind.CONFIRM, PageKind.decide(f)); // below the screen, no checkboxes
+        f.confirmShown = true;
         f.boxes = 1; // an "I agree" box on it
         assertEquals(PageKind.Kind.CONFIRM, PageKind.decide(f));
+        // A hidden Confirm on page 3 (rows to tick) never makes it page 4.
+        PageKind.Facts g = facts(0, 0, 0, 12, 0, true);
+        g.confirm = true;
+        assertEquals(PageKind.Kind.TICKING, PageKind.decide(g));
     }
 
     @Test

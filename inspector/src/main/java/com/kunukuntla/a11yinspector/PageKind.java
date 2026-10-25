@@ -53,7 +53,7 @@ final class PageKind {
         int days, radios, boxes, ticked, dropdowns, sevakWords, fields;
         /** Page 2's declaration ("I hereby declare ...") is on the page. */
         boolean declare;
-        boolean cont, contOn, confirm, confirmOn;
+        boolean cont, contOn, confirm, confirmOn, confirmShown;
         String pkg = "";
         /** The page's words (not bare numbers): what page 1 is known by. */
         final Set<String> texts = new HashSet<>();
@@ -88,7 +88,8 @@ final class PageKind {
         if (f.days >= MIN_DAYS) return Kind.CALENDAR;
         if (f.dropdowns > 0 && f.radios > 0) return Kind.CALENDAR;
         // A Confirm button: the last page.
-        if (f.confirm) return Kind.CONFIRM;
+        // (A Confirm below the screen counts only on a page with no checkboxes: never page 3.)
+        if (f.confirm && (f.confirmShown || f.boxes == 0)) return Kind.CONFIRM;
         // No calendar, checkboxes to tick: the sevak rows.
         // Page 2 still drawing its calendar: its one checkbox is the declaration, or it has the
         // dropdown's text field - never page 3.
@@ -180,6 +181,7 @@ final class PageKind {
             } else if (isConfirm(label) && !inDialog(n)) {
                 f.confirm = true;
                 f.confirmOn = f.confirmOn || button.isEnabled() && n.isEnabled();
+                f.confirmShown = f.confirmShown || n.isVisibleToUser();
             }
         }
         f.days = Booker.dayCells(service).size();
