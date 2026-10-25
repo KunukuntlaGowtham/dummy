@@ -1192,35 +1192,23 @@ public class InspectorService extends AccessibilityService {
      * pressed the moment it turns on; still off - a full Go.
      */
     private void retryPage2() {
-        rlog("page 2: waiting for Continue / its checkbox");
+        rlog("page 2: waiting for it to settle");
         waitUntil(() -> pressableButton(PageKind::isContinue) != null || emptyBox() != null || anyBoxTicked(), 3000, seen -> {
             if (pressableButton(PageKind::isContinue) != null) {
-                rlog("page 2: Continue already on - pressed (checkbox left as it is)");
+                rlog("page 2: Continue already on - pressed (nothing else touched)");
                 page2Continue();
                 return;
             }
-            AccessibilityNodeInfo box = emptyBox();
-            if (box == null || isTickedNow(box)) {
-                rlog(anyBoxTicked() ? "page 2: checkbox reads ticked - left as it is" : "page 2: no checkbox");
-                page2Continue();
-                return;
-            }
-            rlog("page 2: checkbox \"" + cutLabel(box) + "\" empty - clicking it");
-            box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            waitUntil(() -> pressableButton(PageKind::isContinue) != null || anyBoxTicked() && emptyBox() == null, 700, ok -> {
-                if (ok) {
-                    rlog("page 2: ticked ✓");
-                    page2Continue();
-                    return;
-                }
-                AccessibilityNodeInfo again = emptyBox();
-                android.graphics.Rect r = again == null ? null : Page.visible(again);
-                if (r != null && !isTickedNow(again)) {
-                    rlog("page 2: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
-                    tapAt(r.centerX(), r.centerY());
-                }
-                page2Continue();
-            });
+            // Go's own page-2 routine, after the date: the slot if it was reset, the checkbox
+            // (brought on screen, clicked, tapped), Continue - as on the first pass.
+            rlog("page 2: slot / checkbox / Continue - as on the first pass");
+            Booker.Plan plan = new Booker.Plan();
+            android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
+            plan.option = prefs.getString("book_option", "");
+            plan.radio = prefs.getString("book_radio", "");
+            goButton.setText("■\nStop");
+            booker.setHandOver(true); // at page 3 it stops, and the retry goes on
+            booker.finishPage(plan);
         });
     }
 

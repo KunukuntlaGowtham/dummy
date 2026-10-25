@@ -107,6 +107,26 @@ final class Booker {
         later(() -> pickOption(0), 50);
     }
 
+    /**
+     * Page 2 again (the retry's second pass): the dropdown and the date are still chosen, so
+     * only what follows them - the slot if it was reset, the checkbox, Continue - the same way
+     * as after the date on the first pass.
+     */
+    void finishPage(Plan p) {
+        if (running) return;
+        running = true;
+        gen++;
+        plan = p;
+        sevakPage = false;
+        handedOver = false;
+        startedOnSevaks = false;
+        start = SystemClock.uptimeMillis();
+        log.setLength(0);
+        done.setLength(0);
+        log("Page 2 again: slot, checkbox, Continue (option and date still chosen)");
+        later(this::afterDate, 30);
+    }
+
     void stop(String why) {
         if (!running) return;
         running = false;
@@ -685,15 +705,29 @@ final class Booker {
                 then.run();
                 return;
             }
-            Rect r = visible(b);
-            if (r != null) {
+            // Brought on screen first (page 2 may open scrolled to the top), then tapped where drawn.
+            inView(b, 0, r -> {
                 log("checkbox: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
                 tap(r.centerX(), r.centerY());
-            }
-            waitFor(() -> isChecked(b), 600, ok2 -> {
-                log("checkbox: " + (ok2 ? "ticked ✓" : "still not ticked ✗"));
-                done.append(ok2 ? "✓ Checkbox ticked\n" : "✗ Checkbox not ticked\n");
-                then.run();
+                waitFor(() -> isChecked(b), 600, ok2 -> {
+                    if (ok2) {
+                        log("checkbox: ticked ✓");
+                        done.append("✓ Checkbox ticked\n");
+                        then.run();
+                        return;
+                    }
+                    // Its square is drawn at its left edge: one tap there last.
+                    Rect l = visible(b);
+                    if (l != null) {
+                        log("checkbox: still not ticked - tapping its left edge at " + (l.left + l.height() / 2) + "," + l.centerY());
+                        tap(l.left + l.height() / 2, l.centerY());
+                    }
+                    waitFor(() -> isChecked(b), 700, ok3 -> {
+                        log("checkbox: " + (ok3 ? "ticked ✓" : "still not ticked ✗"));
+                        done.append(ok3 ? "✓ Checkbox ticked\n" : "✗ Checkbox not ticked\n");
+                        then.run();
+                    });
+                });
             });
         });
     }
@@ -961,8 +995,10 @@ final class Booker {
     }
 
     private void finish(boolean onSevaks) {
+        // Off page 2 once its calendar has gone (page 3 has a Continue of its own, so that
+        // alone doesn't say it stayed).
         boolean stillHere = onSevaks ? isSevakPage() || !findBoxes().isEmpty() && continueShown()
-                : continueShown();
+                : continueShown() && !dayCells().isEmpty();
         done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
         // Past the slot page (the sevak page not seen in 3 s, or another screen): Tick may go on.
         if (!onSevaks && !stillHere) handedOver = true;
