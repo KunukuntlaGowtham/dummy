@@ -110,7 +110,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, goButton, reportButton, autoButton, deleteButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -378,7 +378,7 @@ public class InspectorService extends AccessibilityService {
 
     // ---- Tick, Clear and Book --------------------------------------------------------
 
-    private TextView tickButton, clearButton, goButton;
+    private TextView tickButton, clearButton, bookButton, goButton;
     private Ticker ticker, clearer;
     private Booker booker;
     /** The rows not added in the Tick run, renumbered as after removing the earlier ones. */
@@ -447,6 +447,7 @@ public class InspectorService extends AccessibilityService {
         booker = new Booker(this, (summary, log) -> {
             saveReport(log);
             goButton.setText("▶\nGo");
+            bookButton.setText("📅\nBook");
             finished(summary);
             if (retrying) {
                 rlog("page 2: Go - " + summary.replace('\n', ' '));
@@ -473,6 +474,15 @@ public class InspectorService extends AccessibilityService {
                     for (int i = 0; i < vs.length; i++) if (vs[i] != null) vs[i].setVisibility(was[i]);
                     was = null;
                 }
+            }
+        });
+        // Book: choose what Go fills - the dropdown option (from the page's own list), the date, the slot.
+        bookButton = floating("📅\nBook", 0xEE1565C0, 358, v -> {
+            closeCard();
+            if (booker.isRunning()) booker.stop("Stopped");
+            else if (!busy()) {
+                Toast.makeText(this, "Reading the dropdown's options…", Toast.LENGTH_SHORT).show();
+                Booker.options(this, handler, this::askBooking);
             }
         });
         // Go: fill the page straight away with the saved choices - no form, no reading first.
@@ -590,13 +600,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, goButton, autoButton, reportButton, deleteButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "go", "auto", "report", "delete"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
@@ -1407,7 +1417,7 @@ public class InspectorService extends AccessibilityService {
                     Toast.makeText(this, "Saved - press ▶ Go to fill the page", Toast.LENGTH_SHORT).show();
                     return;
                 }
-                goButton.setText("■\nStop");
+                bookButton.setText("■\nStop");
                 handler.postDelayed(() -> { // the keyboard goes down first
                     cancelLinkedTick();
                     booker.setHandOver(linkOn());

@@ -251,7 +251,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -314,7 +314,7 @@ public class MainActivity extends Activity {
         Runnable showSaved = () -> {
             String opt = sp.getString("book_option", ""), radio = sp.getString("book_radio", "");
             saved.setText("Option: " + (opt.isEmpty() ? "-" : opt) + "\nSlot: " + (radio.isEmpty() ? "the first" : radio)
-                    + "\n(choose them from the page's own list: long-press ▶ Go on page 2)");
+                    + "\n(choose them from the page's own list: 📅 Book on page 2)");
         };
         showSaved.run();
         box.addView(saved);
@@ -513,7 +513,8 @@ public class MainActivity extends Activity {
             + "🔍 Scan - what the screen has (long-press: deep scan + screenshot, to send me).\n"
             + "☑ Tick - ticks every sevak on page 3 and clears the pop-up after each.\n"
             + "✖ Clear - clears the pop-ups up now (long-press: Auto-clear on / off).\n"
-            + "▶ Go - fills page 2 with your saved choices. Long-press: choose them (option, date, slot).\n"
+            + "📅 Book - on page 2: choose the dropdown option (from the page's own list), the date and the slot, then Save.\n"
+            + "▶ Go - fills page 2 with those saved choices (long-press: the same form as Book).\n"
             + "🤖 Auto - on: Go → Tick → Continue → Confirm runs by itself (see Settings).\n"
             + "📋 Report - the last run's result; the full report is in this app.\n"
             + "🗑 Delete - only in test mode (Settings).\n\n"
