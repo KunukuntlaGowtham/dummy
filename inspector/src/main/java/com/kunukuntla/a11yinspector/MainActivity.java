@@ -308,6 +308,55 @@ public class MainActivity extends Activity {
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(note("With 🤖 on, one press of ▶ Go runs the booking through:"));
         box.addView(step("Page 2", "▶ Go fills the dropdown, the date, the checkbox and the slot, then Continue."));
+        // Go's saved choices, here too: the date can be typed here; all three by long-pressing ▶ Go.
+        TextView saved = note("");
+        saved.setPadding(dp(16), dp(4), 0, 0);
+        Runnable showSaved = () -> {
+            String opt = sp.getString("book_option", ""), radio = sp.getString("book_radio", "");
+            saved.setText("Option: " + (opt.isEmpty() ? "-" : opt) + "\nSlot: " + (radio.isEmpty() ? "the first" : radio)
+                    + "\n(choose them from the page's own list: long-press ▶ Go on page 2)");
+        };
+        showSaved.run();
+        box.addView(saved);
+        LinearLayout dateRow = new LinearLayout(this);
+        dateRow.setGravity(Gravity.CENTER_VERTICAL);
+        dateRow.setPadding(dp(16), dp(2), 0, 0);
+        TextView dateLabel = new TextView(this);
+        dateLabel.setText("Date:");
+        dateLabel.setTextColor(0xFF4A4F4A);
+        dateLabel.setTextSize(13);
+        dateRow.addView(dateLabel);
+        android.widget.EditText date = new android.widget.EditText(this);
+        date.setSingleLine(true);
+        date.setText(sp.getString("book_date", ""));
+        date.setHint("15/11/2026");
+        date.setTextSize(14);
+        date.setMinWidth(dp(140));
+        date.setInputType(android.text.InputType.TYPE_CLASS_DATETIME | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
+        TextView dateOk = new TextView(this);
+        dateOk.setTextSize(12);
+        dateOk.setPadding(dp(8), 0, 0, 0);
+        date.addTextChangedListener(new android.text.TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence c, int a, int b, int d) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence c, int a, int b, int d) {
+            }
+
+            @Override
+            public void afterTextChanged(android.text.Editable e) {
+                String d = e.toString().trim();
+                boolean ok = d.isEmpty() || Booker.parseDate(d, new Booker.Plan());
+                if (ok) sp.edit().putString("book_date", d).apply();
+                dateOk.setText(d.isEmpty() ? "no date: left as the page has it" : ok ? "✓ saved" : "type it like 15/11/2026");
+                dateOk.setTextColor(ok ? GREEN : 0xFFC62828);
+            }
+        });
+        dateRow.addView(date);
+        dateRow.addView(dateOk);
+        box.addView(dateRow);
         TextView dateHead = note("If the date isn't open (green / yellow), take:");
         dateHead.setPadding(dp(16), dp(4), 0, 0);
         box.addView(dateHead);
