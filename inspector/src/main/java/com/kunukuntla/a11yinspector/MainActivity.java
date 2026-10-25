@@ -108,6 +108,7 @@ public class MainActivity extends Activity {
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
         settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
         settings.addView(card("🧪 Test mode", 0xFFC62828, testMode()));
+        settings.addView(card("📱 Phone setup", 0xFF1565C0, phoneSetup()));
         ScrollView settingsTab = new ScrollView(this);
         settingsTab.addView(settings);
 
@@ -446,6 +447,42 @@ public class MainActivity extends Activity {
         box.addView(note("• 🗑 tap: the same trip now. 🗑 long-press: only delete, here on page 1."));
         box.addView(note("• Numbers go in order, each as numbered on screen at its turn (2, 5: 2, then whoever is 5 after)."));
         return box;
+    }
+
+    /** What other phones may need: battery, restricted settings, and what older Android can't do. */
+    private View phoneSetup() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            TextView old = note("⚠ Android " + Build.VERSION.RELEASE + ": screenshots need Android 11+. Hidden "
+                    + "pop-ups are cleared only at their remembered OK place, and Go can't see green / yellow days.");
+            old.setTextColor(0xFFC62828);
+            box.addView(old);
+        }
+        box.addView(note("• Buttons disappear after a while (Xiaomi, Redmi, POCO, Oppo, Realme, Vivo, OnePlus): "
+                + "set Battery to No restrictions and allow Autostart."));
+        box.addView(note("• Android 13+: the Accessibility switch is greyed out (\"Restricted setting\"): App info → ⋮ → "
+                + "Allow restricted settings."));
+        box.addView(note("• Dark mode or a vivid screen colour setting can change colours: if Go picks the wrong "
+                + "day, its 📋 Report lists each day's colour."));
+        LinearLayout row = new LinearLayout(this);
+        row.setPadding(0, dp(8), 0, 0);
+        row.addView(pill("Battery settings", v -> open(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))));
+        row.addView(pill("App info", v -> open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:" + getPackageName())))));
+        HorizontalScrollView wide = new HorizontalScrollView(this);
+        wide.setHorizontalScrollBarEnabled(false);
+        wide.addView(row);
+        box.addView(wide);
+        return box;
+    }
+
+    private void open(Intent i) {
+        try {
+            startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "This phone has no such settings screen", Toast.LENGTH_SHORT).show();
+        }
     }
 
     /** A titled white card with a coloured edge. */

@@ -655,6 +655,18 @@ public class InspectorService extends AccessibilityService {
     private void applyShown() {
         android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
         View[] views = shownButtons();
+        // As far apart as the screen allows (up to 20 dp between): every shown button fits, any phone.
+        int shown = 0;
+        for (int i = 0; i < views.length; i++) {
+            if (views[i] == null || !sp.getBoolean("show_" + SHOWN_KEYS[i], true)) continue;
+            if (SHOWN_KEYS[i].equals("delete") && !sp.getBoolean("test_mode", false)) continue;
+            shown++;
+        }
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        int screenDp = Math.round(dm.heightPixels / dm.density);
+        int top = Math.min(140, Math.max(60, screenDp / 6));
+        int step = shown <= 1 ? BUTTON_STEP
+                : Math.max(58, Math.min(BUTTON_STEP, (screenDp - top - 56 - 48) / (shown - 1)));
         int k = 0;
         for (int i = 0; i < views.length; i++) {
             View v = views[i];
@@ -669,7 +681,7 @@ public class InspectorService extends AccessibilityService {
                 if (on) {
                     lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                     lp.x = dp(12);
-                    lp.y = dp(140 + BUTTON_STEP * k);
+                    lp.y = dp(top + step * k);
                 } else {
                     lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                 }
@@ -731,13 +743,17 @@ public class InspectorService extends AccessibilityService {
             if (flow != null) flow.holdConfirm(false);
         }
         booker.setHandOver(linkOn() || retrying);
-        // Go on page 3 with every box ticked already: only its Continue is left.
+        // One read of the page for Go's checks (page 3, page 1) - Go isn't held up by a second.
+        PageKind.Facts goFacts = null;
         if (!retrying) {
-            PageKind.Facts f3 = null;
             try {
-                f3 = PageKind.read(this);
+                goFacts = PageKind.read(this);
             } catch (RuntimeException ignored) {
             }
+        }
+        // Go on page 3 with every box ticked already: only its Continue is left.
+        if (!retrying) {
+            PageKind.Facts f3 = goFacts;
             // Empty boxes: Tick ticks them (it clears each pop-up) - with 🤖 on or off.
             if (f3 != null && PageKind.decide(f3) == PageKind.Kind.TICKING && f3.empty() > 0 && !f3.contOn) {
                 goButton.setText("▶\nGo");
@@ -760,7 +776,7 @@ public class InspectorService extends AccessibilityService {
             }
         }
         // Go on page 1: its Continue first, then page 2 is filled the moment it shows.
-        if (!retrying && onPage1()) {
+        if (!retrying && onPage1(goFacts)) {
             AccessibilityNodeInfo c = pressableButton(PageKind::isContinue);
             if (c == null) {
                 goButton.setText("▶\nGo");
@@ -783,9 +799,9 @@ public class InspectorService extends AccessibilityService {
     }
 
     /** Page 1 open now: the page kept as the one before page 2, or the booking app's page with only a Continue. */
-    private boolean onPage1() {
+    private boolean onPage1(PageKind.Facts f) {
+        if (f == null) return false;
         try {
-            PageKind.Facts f = PageKind.read(this);
             PageKind.Kind k = kindOf(f);
             if (k == PageKind.Kind.SEVAK_LIST || PageKind.isPage1(f.texts)) return true;
             String booking = getSharedPreferences("settings", MODE_PRIVATE).getString("booking_pkg", "");

@@ -275,9 +275,15 @@ final class DeleteRun {
         return out;
     }
 
+    /** Profiles with this profile's name before the delete (it counts as gone once there is one fewer). */
+    private int sameNameBefore;
+
     private void tapBin(SevakDeleter.Card card, int count, Rect r) {
         name = card.name;
         lateCloses = 0;
+        sameNameBefore = 0;
+        for (SevakDeleter.Card c : SevakDeleter.cards(service)) if (c.name.equals(name)) sameNameBefore++;
+        if (sameNameBefore == 0) sameNameBefore = 1;
         cardsBefore = count;
         stepStart = SystemClock.uptimeMillis();
         before = new Page.Before(service);
@@ -309,14 +315,14 @@ final class DeleteRun {
                 Rect b = Page.bounds(p.button);
                 log("  pressing \"" + Page.label(p.button) + "\"");
                 if (!p.button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(b);
-                afterPress(stage, null);
+                afterPress(stage, null, false);
                 return;
             }
             Rect spot = spot(stage);
             if (spot != null) {
                 log("  tapping its kept place " + spot.centerX() + "," + spot.centerY());
                 tap(spot);
-                afterPress(stage, spot);
+                afterPress(stage, spot, true);
                 return;
             }
             shot(stage, until);
@@ -341,14 +347,15 @@ final class DeleteRun {
             }
             log("  purple button at " + r.centerX() + "," + r.centerY() + " - tapping it");
             tap(r);
-            afterPress(stage, r);
+            afterPress(stage, r, false);
         }, why -> {
             if (g == gen) log("  screenshot: " + why);
         }, before);
     }
 
     /** After a press: the pop-up gone (place kept) -> next; still up -> the next pop-up is on it. */
-    private void afterPress(int stage, Rect tapped) {
+    /** {@code kept}: the tap was at the place kept from last time (not found now). */
+    private void afterPress(int stage, Rect tapped, boolean kept) {
         int g = gen;
         long pressed = SystemClock.uptimeMillis();
         when(() -> Page.popup(service, before) == null && !Page.coverCame(service, before),
@@ -361,8 +368,15 @@ final class DeleteRun {
                 else checkGone();
                 return;
             }
+            if (kept) {
+                // The kept place didn't close it: forgotten, and the button found on a screenshot.
+                forget(stage);
+                log("  its kept place didn't close it - looking for the button (screenshot)");
+                shot(stage, SystemClock.uptimeMillis() + 1500);
+                return;
+            }
             if (stage == 1) {
-                // Still covered: pop-up 2 came straight on top of pop-up 1 (or the tap missed).
+                // Still covered after a found button: pop-up 2 came straight on top of pop-up 1.
                 log("  still covered - taking it as pop-up 2");
                 popup(2, true, SystemClock.uptimeMillis() + 1500);
             } else {
@@ -383,24 +397,32 @@ final class DeleteRun {
     private void checkGone() {
         int g = gen;
         int[] last = {-1};
+        int[] covered = {0};
         boolean[] late = {false};
         when(() -> {
             if (Page.popup(service, before) != null || Page.coverCame(service, before)) {
+                // A pop-up only when it is there on two looks in a row (not the page redrawing).
                 last[0] = -1;
-                late[0] = true;
-                return true;
+                late[0] = ++covered[0] >= 2;
+                return late[0];
             }
+            covered[0] = 0;
             late[0] = false;
-            int n = SevakDeleter.cards(service).size();
-            boolean ok = n > 0 && n < cardsBefore && n == last[0];
+            List<SevakDeleter.Card> now = SevakDeleter.cards(service);
+            int n = now.size();
+            // Gone: fewer profiles, and fewer with its name (two people may share a name).
+            int same = 0;
+            for (SevakDeleter.Card c : now) if (c.name.equals(name)) same++;
+            boolean ok = n > 0 && n < cardsBefore && same < sameNameBefore && n == last[0];
             last[0] = n;
             return ok;
         }, SystemClock.uptimeMillis() + 3000, gone -> {
             if (g != gen) return;
             if (late[0] && lateCloses < 2) {
                 lateCloses++;
-                log("  a pop-up came late - closing it");
-                popup(2, true, SystemClock.uptimeMillis() + 1500);
+                // Found on a screenshot - never a blind tap at a kept place.
+                log("  a pop-up came late - finding its button (screenshot)");
+                shot(2, SystemClock.uptimeMillis() + 1500);
                 return;
             }
             if (late[0]) gone = false;
