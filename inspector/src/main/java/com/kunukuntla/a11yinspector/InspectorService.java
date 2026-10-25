@@ -426,6 +426,7 @@ public class InspectorService extends AccessibilityService {
                             Toast.LENGTH_SHORT).show();
                 }
                 retryUsed = false; // a new booking: its one retry again
+                if (flow != null) flow.holdConfirm(false);
                 tickButton.setText("■\nStop");
                 ticker.start();
             }
@@ -703,7 +704,10 @@ public class InspectorService extends AccessibilityService {
                 + (plan.radio.isEmpty() ? "" : " · " + plan.radio), Toast.LENGTH_SHORT).show();
         goButton.setText("■\nStop");
         cancelLinkedTick();
-        if (!retrying) retryUsed = false; // a new booking: its one retry again
+        if (!retrying) {
+            retryUsed = false; // a new booking: its one retry again
+            if (flow != null) flow.holdConfirm(false);
+        }
         booker.setHandOver(linkOn() || retrying);
         // Go on page 1: its Continue first, then page 2 is filled the moment it shows.
         if (!retrying && onPage1()) {
@@ -777,6 +781,11 @@ public class InspectorService extends AccessibilityService {
     // Test mode (set in the app): the numbers to delete on the trip instead of the rows not
     // added - "0" deletes none - and after any Tick run (all ticked too) the trip runs once.
 
+    /** This trip is a test (Confirm never pressed): set when it starts, kept until a new booking. */
+    private boolean testTrip() {
+        return flow != null && flow.confirmHeld();
+    }
+
     private boolean testMode() {
         return getSharedPreferences("settings", MODE_PRIVATE).getBoolean("test_mode", false);
     }
@@ -823,8 +832,7 @@ public class InspectorService extends AccessibilityService {
         return m;
     }
 
-    private static final java.util.Set<String> NOT_NAMES = new java.util.HashSet<>(java.util.Arrays.asList(
-            "female", "male", "yrs", "years", "sevak", "sevaks", "confirm", "select", "add", "edit", "dob"));
+
 
     /** Each checkbox's row (page order): the first word-like text around it that isn't a label word. */
     private List<String> readRowNames() {
@@ -859,10 +867,7 @@ public class InspectorService extends AccessibilityService {
     private static String firstName(AccessibilityNodeInfo n, int depth) {
         if (n == null || depth > 3) return "";
         String l = Page.label(n);
-        if (l.matches(".*[A-Za-z]{3,}.*") && !Page.isCheckbox(n)) {
-            String first = l.trim().split("\\s+")[0].toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z]", "");
-            if (!NOT_NAMES.contains(first) && l.length() <= 60) return l;
-        }
+        if (DeleteRun.looksLikeName(l) && !Page.isCheckbox(n)) return l;
         for (int i = 0; i < n.getChildCount(); i++) {
             String c = firstName(n.getChild(i), depth + 1);
             if (!c.isEmpty()) return c;
@@ -883,6 +888,7 @@ public class InspectorService extends AccessibilityService {
         retryUsed = false;
         tripNumbers = numbers;
         tripNames = test ? null : m.names;
+        flow.holdConfirm(test); // a test trip never presses Confirm
         PageKind.Kind k;
         try {
             k = PageKind.decide(PageKind.read(this));
@@ -922,6 +928,7 @@ public class InspectorService extends AccessibilityService {
         if (!testMode() || retryUsed) return false;
         tripNumbers = testNumbers();
         tripNames = null;
+        if (flow != null) flow.holdConfirm(true); // a test never books
         // One test trip, then test mode is off: a later Tick never deletes test numbers again.
         getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("test_mode", false).apply();
         Toast.makeText(this, "🧪 Test trip " + (tripNumbers.isEmpty() ? "(no delete)" : "deleting " + tripNumbers)
@@ -1151,10 +1158,11 @@ public class InspectorService extends AccessibilityService {
                 return;
             }
             String pkg = c.getPackageName() == null ? "" : c.getPackageName().toString();
-            if (flow != null) flow.watchConfirm(pkg); // page 4's Confirm pressed the moment it comes
+            if (flow != null && !testTrip()) flow.watchConfirm(pkg); // page 4's Confirm pressed the moment it comes
             press(c);
-            rlog("page 3: Continue pressed - Confirm next");
-            Toast.makeText(this, "↻ Page 3: Continue pressed - Confirm next", Toast.LENGTH_SHORT).show();
+            rlog("page 3: Continue pressed - " + (testTrip() ? "test: Confirm left for you" : "Confirm next"));
+            Toast.makeText(this, "↻ Page 3: Continue pressed - " + (testTrip() ? "test: Confirm left for you" : "Confirm next"),
+                    Toast.LENGTH_SHORT).show();
             // The retry stays on (Auto's own steps paused) until page 3 has gone: no second Continue.
             waitUntil(() -> PageKind.decide(PageKind.read(this)) != PageKind.Kind.TICKING, 6000, gone -> {
                 retrying = false;

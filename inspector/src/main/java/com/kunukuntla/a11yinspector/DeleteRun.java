@@ -232,6 +232,24 @@ final class DeleteRun {
         for (int i = 0; i < todo.size(); i++) if (todo.get(i) >= failedAt) todo.set(i, todo.get(i) + 1);
     }
 
+    static final java.util.Set<String> NOT_NAMES = new java.util.HashSet<>(java.util.Arrays.asList(
+            "female", "male", "yrs", "years", "sevak", "sevaks", "confirm", "select", "add", "edit", "dob"));
+
+    /**
+     * A person's name: letters only (no digits - never "22 yrs", a date or a masked number like
+     * XXXXXX2596), at least two words of two letters, and not a label word (Female, DOB ...).
+     */
+    static boolean looksLikeName(String l) {
+        String t = l.trim();
+        if (t.isEmpty() || t.length() > 60 || !t.matches("[A-Za-z .'-]+")) return false;
+        String[] words = t.split("[\\s.'-]+");
+        int real = 0;
+        for (String w : words) if (w.length() >= 2) real++;
+        if (real < 2) return false;
+        if (t.replaceAll("[^A-Za-z]", "").matches("X+")) return false; // a masked number
+        return !NOT_NAMES.contains(words[0].toLowerCase(java.util.Locale.ROOT));
+    }
+
     /** The card at {@code number} if it still has {@code name}, else null. */
     private SevakDeleter.Card sameCard(int number, String name) {
         SevakDeleter.Card c = SevakDeleter.card(service, number);

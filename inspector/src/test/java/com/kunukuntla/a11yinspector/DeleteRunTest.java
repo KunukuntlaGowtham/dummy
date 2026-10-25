@@ -49,4 +49,17 @@ public class DeleteRunTest {
         assertFalse(DeleteRun.sameName("Mellacheruvu", "Mellacheruvu Greeshma"));
         assertFalse(DeleteRun.sameName("Kumar Ravi", "Ravindra Kumar"));
     }
+
+    @Test
+    public void onlyRealNamesAreTakenFromPage3() {
+        assertTrue(DeleteRun.looksLikeName("Mellacheruvu Tejasree"));
+        assertTrue(DeleteRun.looksLikeName("K. Ravi Kumar"));
+        assertFalse(DeleteRun.looksLikeName("22 yrs"));
+        assertFalse(DeleteRun.looksLikeName("XXXXXX2596"));
+        assertFalse(DeleteRun.looksLikeName("XXXXXXXX XXXX"));
+        assertFalse(DeleteRun.looksLikeName("DOB:18/09/2004"));
+        assertFalse(DeleteRun.looksLikeName("Female"));
+        assertFalse(DeleteRun.looksLikeName("Tejasree"));
+        assertFalse(DeleteRun.looksLikeName("Confirm sevak"));
+    }
 }

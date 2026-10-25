@@ -48,7 +48,7 @@ final class AutoFlow {
     }
 
     static boolean enabled(Context c) {
-        return c.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("auto_flow", true);
+        return c.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("auto_flow", false); // off until turned on: Go never books through by surprise
     }
 
     private final AccessibilityService service;
@@ -90,7 +90,16 @@ final class AutoFlow {
         if (kind != PageKind.Kind.CONFIRM) confirmDone = false;
         if (kind != PageKind.Kind.TICKING) offSince = 0;
         if (bookingPkg == null || !bookingPkg.equals(f.pkg)) return;
+        // A test trip's page 4: Confirm is left for you (said once), until a new booking starts.
+        if (holdConfirm && (kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.SEVAK_LIST)) holdConfirm = false;
         if (kind == PageKind.Kind.CONFIRM) {
+            if (holdConfirm) {
+                if (!confirmDone) {
+                    confirmDone = true;
+                    host.say("🧪 Test: page 4 reached - Confirm is left for you");
+                }
+                return;
+            }
             // Only page 4 reached from page 3: a Confirm met anywhere else is left alone.
             if (!confirmDone && confirmInOrder) pressConfirm();
             return;
@@ -135,6 +144,7 @@ final class AutoFlow {
 
     /** A page change in {@code pkg}: right after page 3's Continue, Confirm is pressed the moment it comes. */
     void onEvent(String pkg) {
+        if (holdConfirm) return;
         if (confirmQueued || confirmDone || SystemClock.uptimeMillis() > watchUntil || !pkg.equals(watchPkg)) return;
         confirmQueued = true;
         handler.post(() -> {
@@ -144,6 +154,18 @@ final class AutoFlow {
     }
 
     // ---- page 4: Confirm ----------------------------------------------------------------
+
+    /** A test trip runs: page 4's Confirm is never pressed (until a new booking starts). */
+    private boolean holdConfirm;
+
+    boolean confirmHeld() {
+        return holdConfirm;
+    }
+
+    void holdConfirm(boolean hold) {
+        holdConfirm = hold;
+        if (hold) watchUntil = 0;
+    }
 
     /** How long after page 3's Continue page 4's Confirm is waited for. */
     private static final long WATCH_MS = 20000;
