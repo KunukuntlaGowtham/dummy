@@ -461,6 +461,9 @@ public class InspectorService extends AccessibilityService {
             finished(summary);
             if (retrying) {
                 rlog("page 2: Go - " + summary.replace('\n', ' '));
+                // Its own steps too (slot, checkbox, Continue), so the report shows what happened.
+                int steps = log.indexOf("STEPS");
+                if (steps >= 0) retryLog.append("    ").append(log.substring(steps).replace("\n", "\n    ")).append('\n');
                 // The retry's page 2 needed a full Go: on to page 3.
                 if (booker.handedOver()) retryPage3(0);
                 else endRetry("Go didn't get past page 2");

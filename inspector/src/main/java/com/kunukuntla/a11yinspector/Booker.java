@@ -623,8 +623,16 @@ final class Booker {
      * done - a slot / radio not chosen yet, the checkbox not ticked - and Continue is pressed
      * the moment it turns on. Up to 10 s for the page to show what it needs.
      */
+    private boolean reticked;
+
+    private boolean continueOn() {
+        AccessibilityNodeInfo c = continueButton();
+        return c != null && c.isEnabled();
+    }
+
     private void afterDate() {
         radioDone = boxDone = false;
+        reticked = false;
         restStart = SystemClock.uptimeMillis();
         rest(0);
     }
@@ -660,6 +668,33 @@ final class Booker {
             if (!radioDone) log("slot: none on the page");
             pressContinue(0);
             return;
+        }
+        // The checkbox reads ticked but Continue stays off: the page may show it empty while
+        // still reporting it ticked (page 2 opened again) - ticked again, checked by Continue.
+        if (polls == 19 && boxDone && !reticked) {
+            AccessibilityNodeInfo b = findBox();
+            if (b != null && isChecked(b)) {
+                reticked = true;
+                log("checkbox: reads ticked but Continue is still off - ticking it again");
+                b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                waitFor(() -> continueOn() || !isChecked(b), 600, changed -> {
+                    if (continueOn()) {
+                        log("checkbox: Continue on after the click ✓");
+                        rest(0);
+                    } else if (!isChecked(b)) {
+                        log("checkbox: it was ticked - now off, ticking it once more");
+                        tickIt(b, () -> rest(0));
+                    } else {
+                        // The click changed nothing: a real tap where it is drawn.
+                        inView(b, 0, r -> {
+                            log("checkbox: tapping it at " + r.centerX() + "," + r.centerY());
+                            tap(r.centerX(), r.centerY());
+                            later(() -> rest(0), 500);
+                        });
+                    }
+                });
+                return;
+            }
         }
         if (polls >= 125) { // 10 s
             stop("✗ Continue stayed off" + (radioDone ? "" : " - no slot / radio found")
