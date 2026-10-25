@@ -43,6 +43,9 @@ final class AutoFlow {
         /** Back on page 1 because Tick missed rows (the retry starts here). */
         void missedAtPage1();
 
+        /** The Back presses for the retry / test trip stopped before page 1. */
+        void backFailed();
+
         /** Tick ended: test mode's trip (back to page 1 and forward) instead of going on? */
         boolean testTripAfterTick();
     }
@@ -272,6 +275,7 @@ final class AutoFlow {
                 backTo2(tries + 1); // a pop-up on top took the first Back
             } else {
                 host.say("↩ Back: page 2 didn't come - stopped");
+                if (missed) host.backFailed();
                 missed = false;
                 done();
             }
@@ -293,6 +297,7 @@ final class AutoFlow {
                 backTo1(tries + 1);
             } else {
                 host.say("↩ Back: still on page 2 - stopped");
+                if (missed) host.backFailed();
                 missed = false;
                 done();
             }

@@ -94,6 +94,11 @@ final class MissedBox {
         box.setContentDescription("Not added: " + join(moved));
     }
 
+    /** The box's view (null when not shown) - hidden around the calendar's screenshot. */
+    android.view.View view() {
+        return box;
+    }
+
     void hide() {
         if (box == null) return;
         try {

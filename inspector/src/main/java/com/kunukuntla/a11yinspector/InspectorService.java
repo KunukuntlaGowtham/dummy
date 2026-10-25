@@ -261,6 +261,11 @@ public class InspectorService extends AccessibilityService {
             }
 
             @Override
+            public void backFailed() {
+                testTripEnded(); // a test trip that stopped early still turns test mode off
+            }
+
+            @Override
             public boolean testTripAfterTick() {
                 return InspectorService.this.testTripAfterTick();
             }
@@ -474,7 +479,10 @@ public class InspectorService extends AccessibilityService {
 
             @Override
             public void accept(Boolean hide) {
-                View[] vs = shownButtons();
+                View[] round = shownButtons();
+                View[] vs = java.util.Arrays.copyOf(round, round.length + 2);
+                vs[round.length] = pageBadge;
+                vs[round.length + 1] = missedBox == null ? null : missedBox.view();
                 if (hide) {
                     was = new int[vs.length];
                     for (int i = 0; i < vs.length; i++) {
@@ -695,6 +703,12 @@ public class InspectorService extends AccessibilityService {
         });
     }
 
+    /** Choices saved for Go (an option or a date). */
+    private boolean hasSavedPlan() {
+        android.content.SharedPreferences p = getSharedPreferences("settings", MODE_PRIVATE);
+        return !p.getString("book_option", "").isEmpty() || !p.getString("book_date", "").isEmpty();
+    }
+
     /** Starts Book with the choices saved in its form; with none saved, opens the form. */
     private void startSaved() {
         android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
@@ -723,6 +737,14 @@ public class InspectorService extends AccessibilityService {
             try {
                 f3 = PageKind.read(this);
             } catch (RuntimeException ignored) {
+            }
+            // Empty boxes: Tick ticks them (it clears each pop-up) - with 🤖 on or off.
+            if (f3 != null && PageKind.decide(f3) == PageKind.Kind.TICKING && f3.empty() > 0 && !f3.contOn) {
+                goButton.setText("▶\nGo");
+                Toast.makeText(this, "Go: already on page 3 - Tick", Toast.LENGTH_SHORT).show();
+                tickButton.setText("■\nStop");
+                ticker.start();
+                return;
             }
             if (f3 != null && PageKind.decide(f3) == PageKind.Kind.TICKING && f3.empty() == 0 && f3.contOn) {
                 AccessibilityNodeInfo c3 = pressableButton(PageKind::isContinue);
@@ -974,6 +996,7 @@ public class InspectorService extends AccessibilityService {
         } else {
             if (deleting() || !retryOn() || retryUsed || lastMissed.isEmpty()) {
                 tripNumbers = null;
+                testTripEnded();
                 checkPage();
                 return;
             }
@@ -984,6 +1007,7 @@ public class InspectorService extends AccessibilityService {
         tripNumbers = null;
         tripNames = null;
         if (deleting() || !given && numbers.isEmpty()) {
+            testTripEnded();
             checkPage();
             return;
         }
@@ -1011,7 +1035,13 @@ public class InspectorService extends AccessibilityService {
 
     /** Tick ended in test mode with Auto off: on page 3, the test trip now (back, delete, forward). */
     private void startTestTripNow() {
-        if (flow == null || flow.busy() || retrying || busy()) return;
+        boolean running = scanning || deleting() || pendingTick != null || ticker.isRunning()
+                || clearer.isRunning() || booker.isRunning();
+        if (flow == null || flow.busy() || retrying || running) {
+            Toast.makeText(this, "🧪 Test trip not started - something else was running", Toast.LENGTH_SHORT).show();
+            testTripEnded();
+            return;
+        }
         PageKind.Kind k;
         try {
             k = PageKind.decide(PageKind.read(this));
@@ -1183,6 +1213,10 @@ public class InspectorService extends AccessibilityService {
     private void page2Continue() {
         waitUntil(() -> pressableButton(PageKind::isContinue) != null, 2500, on -> {
             if (!on) {
+                if (!hasSavedPlan()) {
+                    endRetry("page 2 needs Go, but nothing is saved in 📅 Book");
+                    return;
+                }
                 rlog("page 2: Continue stayed off - filling it with Go");
                 Toast.makeText(this, "↻ Page 2: Continue stayed off - filling it with Go", Toast.LENGTH_SHORT).show();
                 startSaved();

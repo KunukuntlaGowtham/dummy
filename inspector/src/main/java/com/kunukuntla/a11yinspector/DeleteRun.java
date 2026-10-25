@@ -277,6 +277,7 @@ final class DeleteRun {
 
     private void tapBin(SevakDeleter.Card card, int count, Rect r) {
         name = card.name;
+        lateCloses = 0;
         cardsBefore = count;
         stepStart = SystemClock.uptimeMillis();
         before = new Page.Before(service);
@@ -372,22 +373,37 @@ final class DeleteRun {
         });
     }
 
-    /** The profile gone from the list? Then the next one. */
-    /** The profile gone: fewer profiles, the same on two looks in a row, no pop-up up. */
+    /** Pop-ups closed late for this profile (one that came after its watch ended). */
+    private int lateCloses;
+
+    /**
+     * The profile gone: fewer profiles, the same on two looks in a row, no pop-up up. A pop-up
+     * that comes meanwhile (late) is closed first - up to twice - then the profile is looked at.
+     */
     private void checkGone() {
         int g = gen;
         int[] last = {-1};
+        boolean[] late = {false};
         when(() -> {
             if (Page.popup(service, before) != null || Page.coverCame(service, before)) {
                 last[0] = -1;
-                return false;
+                late[0] = true;
+                return true;
             }
+            late[0] = false;
             int n = SevakDeleter.cards(service).size();
             boolean ok = n > 0 && n < cardsBefore && n == last[0];
             last[0] = n;
             return ok;
         }, SystemClock.uptimeMillis() + 3000, gone -> {
             if (g != gen) return;
+            if (late[0] && lateCloses < 2) {
+                lateCloses++;
+                log("  a pop-up came late - closing it");
+                popup(2, true, SystemClock.uptimeMillis() + 1500);
+                return;
+            }
+            if (late[0]) gone = false;
             long ms = SystemClock.uptimeMillis() - stepStart;
             if (gone) {
                 runBase = new Page.Before(service); // the page as it is now, rebuilt, no pop-up
