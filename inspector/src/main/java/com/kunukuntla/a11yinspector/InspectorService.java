@@ -276,7 +276,7 @@ public class InspectorService extends AccessibilityService {
         handler.postDelayed(() -> {
             pageCheckQueued = false;
             checkPage();
-        }, 350);
+        }, 120); // the page read soon after it changes (it was 350 ms)
     }
 
     // Auto: page 3's Continue (or Back to pages 2 and 1), page 4's Confirm.
@@ -544,8 +544,27 @@ public class InspectorService extends AccessibilityService {
             Toast.makeText(this, on
                     ? "🤖 Auto ON: Go → Tick → Continue → Confirm runs by itself"
                     : "🤖 Auto OFF - each button runs on its own", Toast.LENGTH_SHORT).show();
-        });
+        }, v -> markPage1());
         showAuto();
+    }
+
+    /** Long press on 🤖: this page is page 1 - pages 2, 3, 4 follow it in order from here. */
+    private void markPage1() {
+        closeCard();
+        try {
+            PageKind.Facts f = PageKind.read(this);
+            rememberPage1(f);
+            PageOrder order = orders.get(f.pkg);
+            if (order == null) orders.put(f.pkg, order = new PageOrder());
+            order.set(1);
+            lastFacts = f;
+            lastKind = PageKind.Kind.SEVAK_LIST;
+            pageKind = PageKind.Kind.SEVAK_LIST;
+            Toast.makeText(this, "📍 This is page 1 - pages 2, 3, 4 follow in order", Toast.LENGTH_SHORT).show();
+            checkPage();
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "📍 Couldn't read this page", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void showAuto() {
@@ -1152,56 +1171,51 @@ public class InspectorService extends AccessibilityService {
     }
 
     /**
-     * Page 2 again: everything is still chosen but its checkbox. The checkbox shows a moment
-     * after the calendar: up to 3 s for it, then ticked (a click, checked; else a tap where it
-     * is drawn, checked), then Continue the moment it is on.
+     * Page 2 again: everything is still chosen. Continue tells what is missing, not the
+     * checkbox's own state (the page may report it late): Continue on - pressed, nothing
+     * touched. Off - the checkbox ticked only if it reads empty (never unticked), and Continue
+     * pressed the moment it turns on; still off - a full Go.
      */
     private void retryPage2() {
-        rlog("page 2: waiting for its checkbox");
-        waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
-            AccessibilityNodeInfo box = emptyBox();
-            if (box == null) {
-                rlog(seen ? "page 2: checkbox already ticked" : "page 2: no checkbox came in 3 s");
+        rlog("page 2: waiting for Continue / its checkbox");
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null || emptyBox() != null || anyBoxTicked(), 3000, seen -> {
+            if (pressableButton(PageKind::isContinue) != null) {
+                rlog("page 2: Continue already on - pressed (checkbox left as it is)");
                 page2Continue();
                 return;
             }
-            rlog("page 2: checkbox \"" + cutLabel(box) + "\" - clicking it");
+            AccessibilityNodeInfo box = emptyBox();
+            if (box == null || isTickedNow(box)) {
+                rlog(anyBoxTicked() ? "page 2: checkbox reads ticked - left as it is" : "page 2: no checkbox");
+                page2Continue();
+                return;
+            }
+            rlog("page 2: checkbox \"" + cutLabel(box) + "\" empty - clicking it");
             box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            waitUntil(() -> emptyBox() == null && anyBoxTicked(), 600, ok -> {
+            waitUntil(() -> pressableButton(PageKind::isContinue) != null || anyBoxTicked() && emptyBox() == null, 700, ok -> {
                 if (ok) {
-                    rlog("page 2: checkbox ticked ✓");
+                    rlog("page 2: ticked ✓");
                     page2Continue();
                     return;
                 }
                 AccessibilityNodeInfo again = emptyBox();
                 android.graphics.Rect r = again == null ? null : Page.visible(again);
-                if (r == null) {
-                    rlog("page 2: checkbox not ticked and not on screen ✗");
-                    page2Continue();
-                    return;
+                if (r != null && !isTickedNow(again)) {
+                    rlog("page 2: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
+                    tapAt(r.centerX(), r.centerY());
                 }
-                rlog("page 2: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
-                tapAt(r.centerX(), r.centerY());
-                waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok2 -> {
-                    if (!ok2) {
-                        // The box's own left edge (where the square is drawn) as a last try.
-                        AccessibilityNodeInfo last = emptyBox();
-                        android.graphics.Rect lr = last == null ? null : Page.visible(last);
-                        if (lr != null) {
-                            rlog("page 2: still not ticked - tapping its left edge at " + (lr.left + lr.height() / 2) + "," + lr.centerY());
-                            tapAt(lr.left + lr.height() / 2, lr.centerY());
-                        }
-                        waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok3 -> {
-                            rlog(ok3 ? "page 2: checkbox ticked ✓" : "page 2: checkbox still not ticked ✗");
-                            page2Continue();
-                        });
-                        return;
-                    }
-                    rlog("page 2: checkbox ticked ✓");
-                    page2Continue();
-                });
+                page2Continue();
             });
         });
+    }
+
+    /** The checkbox's state read afresh (the page's report can lag a moment). */
+    private static boolean isTickedNow(AccessibilityNodeInfo n) {
+        try {
+            n.refresh();
+        } catch (RuntimeException ignored) {
+        }
+        return n.isChecked();
     }
 
     private static String cutLabel(AccessibilityNodeInfo n) {
@@ -1218,9 +1232,9 @@ public class InspectorService extends AccessibilityService {
                 .build(), null, null);
     }
 
-    /** Page 2's Continue the moment it is on; still off after 2.5 s: a full Go. */
+    /** Page 2's Continue the moment it is on; still off after 1.5 s: a full Go. */
     private void page2Continue() {
-        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 2500, on -> {
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 1500, on -> {
             if (!on) {
                 if (!hasSavedPlan()) {
                     endRetry("page 2 needs Go, but nothing is saved in 📅 Book");
@@ -1548,9 +1562,61 @@ public class InspectorService extends AccessibilityService {
                 if (t.getText().toString().equals(saved)) sc.post(() -> sc.scrollTo(0, t.getTop()));
             }
         }
-        android.widget.EditText date = field(box, "Date", "e.g. 15/10/2026",
-                prefs.getString("book_date", ""), android.text.InputType.TYPE_CLASS_DATETIME
-                        | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
+        // The date: picked on a calendar (tap the date to open / close it) - no typing.
+        String[] picked = {prefs.getString("book_date", "")};
+        TextView dateLabel = new TextView(this);
+        dateLabel.setTextColor(0xFFC7C6FF);
+        dateLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        dateLabel.setPadding(0, dp(8), 0, 0);
+        dateLabel.setText("Date");
+        box.addView(dateLabel);
+        TextView dateShown = new TextView(this);
+        dateShown.setTextColor(Color.WHITE);
+        dateShown.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        dateShown.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        dateShown.setPadding(dp(14), dp(10), dp(14), dp(10));
+        GradientDrawable dbg = new GradientDrawable();
+        dbg.setCornerRadius(dp(14));
+        dbg.setColor(0x26FFFFFF);
+        dbg.setStroke(dp(1), 0x66FFFFFF);
+        dateShown.setBackground(dbg);
+        Runnable showDate = () -> dateShown.setText(picked[0].isEmpty()
+                ? "📅 Pick a date  (none: left as the page has it)" : "📅 " + picked[0] + "   ▾");
+        showDate.run();
+        box.addView(dateShown);
+        android.widget.FrameLayout calHolder = new android.widget.FrameLayout(this);
+        calHolder.setBackground(Glass.lightCard(getResources().getDisplayMetrics().density));
+        calHolder.setVisibility(View.GONE);
+        android.widget.CalendarView cal = new android.widget.CalendarView(this);
+        cal.setMinDate(System.currentTimeMillis() - 1000);
+        Booker.Plan was = new Booker.Plan();
+        if (Booker.parseDate(picked[0], was)) {
+            java.util.Calendar c = java.util.Calendar.getInstance();
+            c.set(was.year, was.month - 1, was.day);
+            try {
+                cal.setDate(c.getTimeInMillis(), false, true);
+            } catch (RuntimeException ignored) {
+            }
+        }
+        cal.setOnDateChangeListener((v, y, m, d) -> {
+            picked[0] = d + "/" + (m + 1) + "/" + y;
+            showDate.run();
+            calHolder.setVisibility(View.GONE);
+        });
+        calHolder.addView(cal, new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.MATCH_PARENT, dp(300)));
+        LinearLayout.LayoutParams calLp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        calLp.topMargin = dp(6);
+        box.addView(calHolder, calLp);
+        dateShown.setOnClickListener(v -> calHolder.setVisibility(
+                calHolder.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE));
+        dateShown.setOnLongClickListener(v -> {
+            picked[0] = "";
+            showDate.run();
+            Toast.makeText(this, "No date: Go leaves it as the page has it", Toast.LENGTH_SHORT).show();
+            return true;
+        });
         android.widget.EditText radio = field(box, "Radio button (a few of its words; empty = the first)",
                 "e.g. Batch A", prefs.getString("book_radio", ""), android.text.InputType.TYPE_CLASS_TEXT);
 
@@ -1567,11 +1633,8 @@ public class InspectorService extends AccessibilityService {
                 Booker.Plan plan = new Booker.Plan();
                 plan.option = option.getText().toString().trim();
                 plan.radio = radio.getText().toString().trim();
-                String d = date.getText().toString().trim();
-                if (!d.isEmpty() && !Booker.parseDate(d, plan)) {
-                    Toast.makeText(this, "Type the date like 15/10/2026", Toast.LENGTH_SHORT).show();
-                    return;
-                }
+                String d = picked[0];
+                if (!d.isEmpty() && !Booker.parseDate(d, plan)) d = "";
                 prefs.edit().putString("book_option", plan.option).putString("book_date", d)
                         .putString("book_radio", plan.radio).apply();
                 closeAsk();
@@ -1593,15 +1656,17 @@ public class InspectorService extends AccessibilityService {
                 getResources().getDisplayMetrics().widthPixels * 90 / 100,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                0, // kept inside the screen: a tall form scrolls
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
         lp.y = dp(90);
         lp.softInputMode = choices.isEmpty() ? WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
                 : WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN;
+        ScrollView formScroll = new ScrollView(this);
+        formScroll.addView(box);
         try {
-            windowManager.addView(box, lp);
-            ask = box;
+            windowManager.addView(formScroll, lp);
+            ask = formScroll;
             if (choices.isEmpty()) option.requestFocus();
         } catch (RuntimeException e) {
             Toast.makeText(this, "Couldn't show the form: " + e.getMessage(), Toast.LENGTH_LONG).show();

@@ -324,40 +324,39 @@ public class MainActivity extends Activity {
         dateRow.setGravity(Gravity.CENTER_VERTICAL);
         dateRow.setPadding(dp(16), dp(2), 0, 0);
         TextView dateLabel = new TextView(this);
-        dateLabel.setText("Date:");
+        dateLabel.setText("Date: ");
         dateLabel.setTextColor(0xFF4A4F4A);
         dateLabel.setTextSize(13);
         dateRow.addView(dateLabel);
-        android.widget.EditText date = new android.widget.EditText(this);
-        date.setSingleLine(true);
-        date.setText(sp.getString("book_date", ""));
-        date.setHint("15/11/2026");
-        date.setTextSize(14);
-        date.setMinWidth(dp(140));
-        date.setInputType(android.text.InputType.TYPE_CLASS_DATETIME | android.text.InputType.TYPE_DATETIME_VARIATION_DATE);
-        TextView dateOk = new TextView(this);
-        dateOk.setTextSize(12);
-        dateOk.setPadding(dp(8), 0, 0, 0);
-        date.addTextChangedListener(new android.text.TextWatcher() {
-            @Override
-            public void beforeTextChanged(CharSequence c, int a, int b, int d) {
-            }
-
-            @Override
-            public void onTextChanged(CharSequence c, int a, int b, int d) {
-            }
-
-            @Override
-            public void afterTextChanged(android.text.Editable e) {
-                String d = e.toString().trim();
-                boolean ok = d.isEmpty() || Booker.parseDate(d, new Booker.Plan());
-                if (ok) sp.edit().putString("book_date", d).apply();
-                dateOk.setText(d.isEmpty() ? "no date: left as the page has it" : ok ? "✓ saved" : "type it like 15/11/2026");
-                dateOk.setTextColor(ok ? GREEN : 0xFFC62828);
-            }
+        // The date picked on a calendar (no typing): tap the pill.
+        TextView datePill = (TextView) pill("", null);
+        Runnable showDate = () -> {
+            String d = sp.getString("book_date", "");
+            datePill.setText(d.isEmpty() ? "📅 Pick a date" : "📅 " + d);
+        };
+        showDate.run();
+        datePill.setOnClickListener(v -> {
+            java.util.Calendar c = java.util.Calendar.getInstance();
+            Booker.Plan p = new Booker.Plan();
+            if (Booker.parseDate(sp.getString("book_date", ""), p)) c.set(p.year, p.month - 1, p.day);
+            android.app.DatePickerDialog dlg = new android.app.DatePickerDialog(this, (view, y, m, d) -> {
+                sp.edit().putString("book_date", d + "/" + (m + 1) + "/" + y).apply();
+                showDate.run();
+            }, c.get(java.util.Calendar.YEAR), c.get(java.util.Calendar.MONTH), c.get(java.util.Calendar.DAY_OF_MONTH));
+            dlg.getDatePicker().setMinDate(System.currentTimeMillis() - 1000);
+            dlg.show();
         });
-        dateRow.addView(date);
-        dateRow.addView(dateOk);
+        TextView clear = new TextView(this);
+        clear.setText("✕ no date");
+        clear.setTextColor(0xFF6A6F6A);
+        clear.setTextSize(12);
+        clear.setPadding(dp(4), dp(8), dp(8), dp(8));
+        clear.setOnClickListener(v -> {
+            sp.edit().putString("book_date", "").apply();
+            showDate.run();
+        });
+        dateRow.addView(datePill);
+        dateRow.addView(clear);
         box.addView(dateRow);
         TextView dateHead = note("If the date isn't open (green / yellow), take:");
         dateHead.setPadding(dp(16), dp(4), 0, 0);
@@ -561,7 +560,7 @@ public class MainActivity extends Activity {
             + "✖ Clear - clears the pop-ups up now (long-press: Auto-clear on / off).\n"
             + "📅 Book - on page 2: choose the dropdown option (from the page's own list), the date and the slot, then Save.\n"
             + "▶ Go - fills page 2 with those saved choices (long-press: the same form as Book). On page 1 it presses Continue first; on page 3 (with 🤖 on) Tick starts at once.\n"
-            + "🤖 Auto - on: Go → Tick → Continue → Confirm runs by itself (see Settings).\n"
+            + "🤖 Auto - on: Go → Tick → Continue → Confirm runs by itself (see Settings). Long-press: \"this is page 1\" (pages 2, 3, 4 follow in order).\n"
             + "📋 Report - the last run's result; the full report is in this app.\n"
             + "🗑 Delete - only in test mode (Settings).\n\n"
             + "AT THE TOP OF THE SCREEN\n"
@@ -624,7 +623,7 @@ public class MainActivity extends Activity {
         bg.setColor(0xE6FFFFFF);
         bg.setStroke(dp(1), 0xFFFFFFFF);
         b.setBackground(bg);
-        b.setOnClickListener(onClick);
+        if (onClick != null) b.setOnClickListener(onClick);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.rightMargin = dp(10);

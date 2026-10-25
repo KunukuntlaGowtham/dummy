@@ -11,7 +11,7 @@ package com.kunukuntla.a11yinspector;
 final class PageOrder {
 
     /** Readings in a row a jump must hold before it counts. */
-    static final int JUMP_READS = 3;
+    static final int JUMP_READS = 2;
 
     private int pos, jumpTo, jumpCount;
 

@@ -318,8 +318,12 @@ final class AutoFlow {
                 f = PageKind.read(service);
             } catch (RuntimeException ignored) {
             }
-            boolean ok = f != null && f.texts.size() >= 3 && want.test(PageKind.decide(f));
-            if (ok && last[0] != null && last[0].texts.equals(f.texts)) {
+            PageKind.Kind k = f == null ? PageKind.Kind.OTHER : PageKind.decide(f);
+            boolean ok = f != null && f.texts.size() >= 3 && want.test(k);
+            // A page known by what it has (page 2's calendar, page 1's own words) is taken at once;
+            // anything else when it reads the same twice (not half drawn).
+            boolean clear = k == PageKind.Kind.CALENDAR || k == PageKind.Kind.SEVAK_LIST;
+            if (ok && (clear || last[0] != null && last[0].texts.equals(f.texts))) {
                 then.accept(f);
                 return;
             }
@@ -328,9 +332,9 @@ final class AutoFlow {
                 then.accept(null);
                 return;
             }
-            handler.postDelayed(look[0], 150);
+            handler.postDelayed(look[0], 60);
         };
-        handler.postDelayed(look[0], 250);
+        handler.postDelayed(look[0], 80);
     }
 
     private void tap(Rect r) {

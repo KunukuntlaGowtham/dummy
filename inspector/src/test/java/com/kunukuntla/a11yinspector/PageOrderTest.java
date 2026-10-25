@@ -44,8 +44,7 @@ public class PageOrderTest {
         assertEquals(0, o.next(3));
         assertEquals(2, o.next(2));
         assertEquals(2, o.pos());
-        // A real jump 2 → 4 holds: taken on the third reading.
-        assertEquals(0, o.next(4));
+        // A real jump 2 → 4 holds: taken on the second reading.
         assertEquals(0, o.next(4));
         assertEquals(4, o.next(4));
     }
