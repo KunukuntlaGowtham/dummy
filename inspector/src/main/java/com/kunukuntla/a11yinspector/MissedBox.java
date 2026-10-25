@@ -67,11 +67,7 @@ final class MissedBox {
             box.setGravity(Gravity.CENTER);
             int p = dp(8);
             box.setPadding(dp(12), p, dp(12), p);
-            GradientDrawable bg = new GradientDrawable();
-            bg.setColor(0xF0C62828);
-            bg.setCornerRadius(dp(10));
-            bg.setStroke(dp(2), Color.WHITE);
-            box.setBackground(bg);
+            box.setBackground(Glass.pill(0xC62828, context.getResources().getDisplayMetrics().density));
             box.setElevation(dp(6));
             WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,

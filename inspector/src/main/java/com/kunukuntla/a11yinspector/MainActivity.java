@@ -32,24 +32,27 @@ import java.nio.charset.StandardCharsets;
 /** The app's own screen: whether the Scan button is on, and the last scan's full report. */
 public class MainActivity extends Activity {
 
-    private static final int GREEN = 0xFF2E7D32;
+    /** The accent (iOS indigo) - the name kept from the green it was. */
+    private static final int GREEN = Glass.ACCENT;
+    /** An unchosen chip: clear glass tinted with the accent. */
+    private static final int CHIP_OFF = 0x1F5856D6;
     private TextView status;
     private TextView report;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        getWindow().setStatusBarColor(GREEN);
+        getWindow().setStatusBarColor(0xFF3A2FA8);
+        getWindow().setNavigationBarColor(0xFF3D8BD9);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
-        page.setBackgroundColor(0xFFF4F6F4);
+        page.setBackground(Glass.wallpaper()); // glass panels sit on an indigo-blue wash
 
         // Head: the name, whether the service is on (tap: Accessibility settings), the tabs.
         LinearLayout head = new LinearLayout(this);
         head.setOrientation(LinearLayout.VERTICAL);
         head.setPadding(dp(20), dp(22), dp(20), dp(12));
-        head.setBackgroundColor(GREEN);
         TextView title = new TextView(this);
         title.setText(R.string.app_name);
         title.setTextColor(Color.WHITE);
@@ -91,11 +94,7 @@ public class MainActivity extends Activity {
         wide.addView(report);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(wide);
-        GradientDrawable sheet = new GradientDrawable();
-        sheet.setColor(Color.WHITE);
-        sheet.setCornerRadius(dp(14));
-        sheet.setStroke(dp(1), 0xFFDCE3DC);
-        scroll.setBackground(sheet);
+        scroll.setBackground(Glass.lightCard(getResources().getDisplayMetrics().density));
         scroll.setClipToOutline(true);
         LinearLayout.LayoutParams sheetLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1);
         sheetLp.setMargins(dp(12), dp(10), dp(12), dp(12));
@@ -120,7 +119,8 @@ public class MainActivity extends Activity {
         help.setLineSpacing(dp(3), 1f);
         help.setPadding(dp(18), dp(14), dp(18), dp(24));
         ScrollView helpTab = new ScrollView(this);
-        helpTab.addView(help);
+        help.setBackground(Glass.lightCard(getResources().getDisplayMetrics().density));
+        FrameLayoutHolder.wrap(helpTab, help, dp(12));
 
         View[] panes = {reportTab, settingsTab, helpTab};
         String[] names = {"📋 Report", "⚙ Settings", "❓ Help"};
@@ -141,7 +141,8 @@ public class MainActivity extends Activity {
                 tabViews[i].setTextColor(on ? GREEN : Color.WHITE);
                 GradientDrawable bg = new GradientDrawable();
                 bg.setCornerRadius(dp(18));
-                bg.setColor(on ? Color.WHITE : 0x33FFFFFF);
+                bg.setColor(on ? 0xF2FFFFFF : 0x2EFFFFFF);
+                if (!on) bg.setStroke(dp(1), 0x59FFFFFF);
                 tabViews[i].setBackground(bg);
             }
         };
@@ -279,7 +280,7 @@ public class MainActivity extends Activity {
                 chip.setTextColor(on ? Color.WHITE : GREEN);
                 GradientDrawable bg = new GradientDrawable();
                 bg.setCornerRadius(dp(18));
-                bg.setColor(on ? GREEN : 0xFFDDEEDD);
+                bg.setColor(on ? GREEN : CHIP_OFF);
                 chip.setBackground(bg);
                 chip.setContentDescription(name + (on ? ", shown" : ", hidden"));
             };
@@ -375,7 +376,7 @@ public class MainActivity extends Activity {
                 chip.setTextColor(on ? Color.WHITE : GREEN);
                 GradientDrawable bg = new GradientDrawable();
                 bg.setCornerRadius(dp(18));
-                bg.setColor(on ? GREEN : 0xFFDDEEDD);
+                bg.setColor(on ? GREEN : CHIP_OFF);
                 chip.setBackground(bg);
                 chip.setContentDescription(DayPick.label(mode) + (on ? ", chosen" : ""));
             };
@@ -485,16 +486,23 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** A titled white card with a coloured edge. */
+    /** Puts a card in a scroll view with a margin round it. */
+    private static final class FrameLayoutHolder {
+        static void wrap(ScrollView scroll, View card, int margin) {
+            android.widget.FrameLayout f = new android.widget.FrameLayout(scroll.getContext());
+            f.setPadding(margin, margin, margin, margin);
+            f.addView(card);
+            scroll.addView(f);
+        }
+    }
+
+    /** A titled frosted card; its title in the card's colour. */
     private View card(String title, int colour, View content) {
         LinearLayout c = new LinearLayout(this);
         c.setOrientation(LinearLayout.VERTICAL);
         c.setPadding(dp(14), dp(12), dp(14), dp(12));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(Color.WHITE);
-        bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(2), colour);
-        c.setBackground(bg);
+        c.setBackground(Glass.lightCard(getResources().getDisplayMetrics().density));
+        c.setElevation(dp(4));
         TextView t = new TextView(this);
         t.setText(title);
         t.setTextColor(colour);
@@ -532,7 +540,7 @@ public class MainActivity extends Activity {
         p.setPadding(dp(8), dp(3), dp(8), dp(3));
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(10));
-        bg.setColor(0xFF37474F);
+        bg.setColor(GREEN);
         p.setBackground(bg);
         r.addView(p);
         TextView w = new TextView(this);
@@ -584,7 +592,7 @@ public class MainActivity extends Activity {
             chip.setTextColor(on ? Color.WHITE : GREEN);
             GradientDrawable bg = new GradientDrawable();
             bg.setCornerRadius(dp(18));
-            bg.setColor(on ? GREEN : 0xFFDDEEDD);
+            bg.setColor(on ? GREEN : CHIP_OFF);
             chip.setBackground(bg);
             chip.setContentDescription(spoken + (on ? ", on" : ", off"));
         };
@@ -610,9 +618,11 @@ public class MainActivity extends Activity {
         b.setTypeface(Typeface.DEFAULT_BOLD);
         b.setGravity(Gravity.CENTER);
         b.setPadding(dp(16), dp(9), dp(16), dp(9));
+        // A white glass pill: readable on the wash and inside the cards.
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(20));
-        bg.setColor(0xFFDDEEDD);
+        bg.setColor(0xE6FFFFFF);
+        bg.setStroke(dp(1), 0xFFFFFFFF);
         b.setBackground(bg);
         b.setOnClickListener(onClick);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(

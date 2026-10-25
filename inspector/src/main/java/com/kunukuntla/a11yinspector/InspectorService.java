@@ -132,12 +132,8 @@ public class InspectorService extends AccessibilityService {
         button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         button.setLineSpacing(0, 0.9f);
         button.setGravity(Gravity.CENTER);
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(0xEE2E7D32);
-        bg.setStroke(dp(2), 0x66FFFFFF);
-        button.setBackground(bg);
-        button.setElevation(dp(4));
+        button.setBackground(Glass.button(0x2E7D32, getResources().getDisplayMetrics().density));
+        button.setElevation(dp(8));
 
         buttonParams = new WindowManager.LayoutParams(dp(56), dp(56),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -345,11 +341,7 @@ public class InspectorService extends AccessibilityService {
                 : kind == PageKind.Kind.CALENDAR ? 0xEE00897B
                 : kind == PageKind.Kind.CONFIRM ? 0xEEE65100
                 : 0xEE2E7D32; // not purple: Tick's screenshots look for the purple OK
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(colour);
-        bg.setCornerRadius(dp(14));
-        bg.setStroke(dp(1), 0x66FFFFFF);
-        pageBadge.setBackground(bg);
+        pageBadge.setBackground(Glass.pill(colour, getResources().getDisplayMetrics().density));
         pageBadge.setText((testMode() ? "🧪 TEST · " : "📍 ") + kind.title() + (auto ? " · auto" : ""));
         pageBadge.setContentDescription(kind.title() + ": " + f.describe());
         pageBadge.setVisibility(View.VISIBLE);
@@ -562,7 +554,8 @@ public class InspectorService extends AccessibilityService {
         autoButton.setText(on ? "🤖\nOn" : "🤖\nAuto");
         autoButton.setContentDescription(on ? "Auto on" : "Auto off");
         GradientDrawable bg = (GradientDrawable) autoButton.getBackground();
-        bg.setStroke(on ? dp(4) : dp(2), on ? 0xFF7CFC00 : 0x66FFFFFF);
+        bg.setStroke(on ? dp(3) : Math.round(1.5f * getResources().getDisplayMetrics().density),
+                on ? 0xFF34C759 : 0x99FFFFFF);
     }
 
     // ---- 🗑 Delete (testing): sevak profiles by their numbers, each with its 2 pop-ups --------
@@ -1293,13 +1286,13 @@ public class InspectorService extends AccessibilityService {
             autoLastKey = "";
             clearButton.setText("✖\nAuto");
             GradientDrawable bg = (GradientDrawable) clearButton.getBackground();
-            bg.setStroke(dp(4), 0xFF7CFC00);
+            bg.setStroke(dp(3), 0xFF34C759);
             Toast.makeText(this, "Auto-clear ON: the OK of every new pop-up is pressed. Long-press again to stop.",
                     Toast.LENGTH_LONG).show();
         } else {
             clearButton.setText("✖\nClear");
             GradientDrawable bg = (GradientDrawable) clearButton.getBackground();
-            bg.setStroke(dp(2), 0x66FFFFFF);
+            bg.setStroke(Math.round(1.5f * getResources().getDisplayMetrics().density), 0x99FFFFFF);
             Toast.makeText(this, "Auto-clear OFF - " + autoPressed + " pop-up(s) cleared", Toast.LENGTH_SHORT).show();
         }
     }
@@ -1429,12 +1422,8 @@ public class InspectorService extends AccessibilityService {
         b.setLineSpacing(0, 0.9f);
         b.setGravity(Gravity.CENTER);
         b.setContentDescription(label.replace('\n', ' '));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        bg.setColor(colour);
-        bg.setStroke(dp(2), 0x66FFFFFF);
-        b.setBackground(bg);
-        b.setElevation(dp(4));
+        b.setBackground(Glass.button(colour, getResources().getDisplayMetrics().density));
+        b.setElevation(dp(8));
         WindowManager.LayoutParams lp = new WindowManager.LayoutParams(dp(56), dp(56),
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -1499,10 +1488,8 @@ public class InspectorService extends AccessibilityService {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(18), dp(16), dp(18), dp(10));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xF81B1D22);
-        bg.setCornerRadius(dp(16));
-        box.setBackground(bg);
+        box.setBackground(Glass.darkPanel(getResources().getDisplayMetrics().density));
+        box.setElevation(dp(12));
         TextView title = new TextView(this);
         title.setText("Book: what to fill");
         title.setTextColor(Color.WHITE);
@@ -1624,7 +1611,7 @@ public class InspectorService extends AccessibilityService {
     private android.widget.EditText field(LinearLayout box, String label, String hint, String value, int type) {
         TextView l = new TextView(this);
         l.setText(label);
-        l.setTextColor(0xFF9AE6A1);
+        l.setTextColor(0xFFC7C6FF);
         l.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         l.setPadding(0, dp(8), 0, 0);
         box.addView(l);
@@ -1865,10 +1852,8 @@ public class InspectorService extends AccessibilityService {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.setPadding(dp(16), dp(14), dp(16), dp(12));
-        GradientDrawable bg = new GradientDrawable();
-        bg.setColor(0xF01B1D22);
-        bg.setCornerRadius(dp(16));
-        box.setBackground(bg);
+        box.setBackground(Glass.darkPanel(getResources().getDisplayMetrics().density));
+        box.setElevation(dp(12));
 
         TextView text = new TextView(this);
         text.setText(summary);
@@ -1934,18 +1919,19 @@ public class InspectorService extends AccessibilityService {
     private TextView cardButton(String label, View.OnClickListener onClick, boolean main) {
         TextView b = new TextView(this);
         b.setText(label);
-        b.setTextColor(main ? 0xFF10301A : 0xFF9AE6A1);
+        b.setTextColor(main ? Glass.ACCENT : Color.WHITE);
         b.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         b.setGravity(Gravity.CENTER);
         b.setMinHeight(dp(44));
         b.setPadding(dp(12), dp(8), dp(12), dp(8));
+        // Glass buttons: the main one bright white, the others clear with a white rim.
         GradientDrawable bg = new GradientDrawable();
         bg.setCornerRadius(dp(22));
-        if (main) bg.setColor(0xFF9AE6A1);
+        if (main) bg.setColor(0xF2FFFFFF);
         else {
-            bg.setColor(0x149AE6A1);
-            bg.setStroke(dp(1), 0x999AE6A1);
+            bg.setColor(0x26FFFFFF);
+            bg.setStroke(dp(1), 0x66FFFFFF);
         }
         b.setBackground(bg);
         b.setOnClickListener(onClick);
