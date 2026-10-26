@@ -248,7 +248,8 @@ public class InspectorService extends AccessibilityService {
 
             @Override
             public boolean mayGoBack() {
-                return !retryOn() || !retryUsed;
+                // Tick and Delete not linked: Tick only notes the rows - you go back and press 🗑.
+                return retryOn() && !retryUsed;
             }
 
             @Override
@@ -608,7 +609,7 @@ public class InspectorService extends AccessibilityService {
         deleteButton = floating("🗑\nDelete", 0xEEC62828, 688, v -> {
             closeCard();
             if (deleter.isRunning()) deleter.stop("Stopped");
-            else if (!busy()) deleteNow();
+            else if (!busy()) deleteTap();
         }, v -> {
             closeCard();
             if (!deleter.isRunning() && !busy()) deleteHere();
@@ -677,7 +678,7 @@ public class InspectorService extends AccessibilityService {
                     applyShown();
                     checkPage();
                 } else if ("test_mode".equals(key)) {
-                    applyShown(); // 🗑 shows only in test mode
+                    applyShown();
                     checkPage(); // the badge's 🧪 TEST
                 } else if ("auto_flow".equals(key)) {
                     showAuto();
@@ -693,7 +694,6 @@ public class InspectorService extends AccessibilityService {
         int shown = 0;
         for (int i = 0; i < views.length; i++) {
             if (views[i] == null || !sp.getBoolean("show_" + SHOWN_KEYS[i], true)) continue;
-            if (SHOWN_KEYS[i].equals("delete") && !sp.getBoolean("test_mode", false)) continue;
             shown++;
         }
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
@@ -707,7 +707,6 @@ public class InspectorService extends AccessibilityService {
             if (v == null) continue;
             boolean on = sp.getBoolean("show_" + SHOWN_KEYS[i], true);
             // 🗑 only in test mode: no stray tap can delete.
-            if (SHOWN_KEYS[i].equals("delete")) on = on && sp.getBoolean("test_mode", false);
             v.setVisibility(on ? View.VISIBLE : View.GONE);
             try {
                 WindowManager.LayoutParams lp = (WindowManager.LayoutParams) v.getLayoutParams();
@@ -874,7 +873,7 @@ public class InspectorService extends AccessibilityService {
     private boolean retrying;
 
     private boolean retryOn() {
-        return getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_delete_missed", true);
+        return getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_delete_missed", false);
     }
 
     /** Back on page 1 for rows Tick missed: delete them (numbered as after each delete), then Continue. */
@@ -973,6 +972,29 @@ public class InspectorService extends AccessibilityService {
             if (!c.isEmpty()) return c;
         }
         return "";
+    }
+
+    /**
+     * 🗑 tapped: on page 1 - the rows the last Tick didn't add (test mode: its numbers) are
+     * deleted right here. On page 2 / 3 - the trip back to page 1 and forward, when Tick and
+     * Delete are linked (Settings) or in test mode; else you're told to go back first.
+     */
+    private void deleteTap() {
+        PageKind.Kind k;
+        try {
+            k = PageKind.decide(PageKind.read(this));
+        } catch (RuntimeException e) {
+            k = PageKind.Kind.OTHER;
+        }
+        boolean inBooking = k == PageKind.Kind.CALENDAR || k == PageKind.Kind.TICKING || k == PageKind.Kind.CONFIRM;
+        if (!inBooking) {
+            deleteHere();
+        } else if (retryOn() || testMode()) {
+            deleteNow();
+        } else {
+            Toast.makeText(this, "🗑 Go back to page 1 and press 🗑 there (or link Tick and Delete in Settings)",
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     /** 🗑 Delete: the trip now - test mode's numbers, else the rows the last Tick didn't add. */

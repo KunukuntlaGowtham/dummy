@@ -135,7 +135,7 @@ final class AutoFlow {
             if (afterTick) {
                 String why = f.empty() + (f.empty() == 1 ? " checkbox" : " checkboxes") + " not ticked after Tick";
                 if (!host.mayGoBack()) {
-                    host.say("📍 Page 3: " + why + " again - left here (the retry was used)");
+                    host.say("📍 Page 3: " + why + " - left here (🗑 on page 1 deletes them)");
                     return;
                 }
                 missed = true;
