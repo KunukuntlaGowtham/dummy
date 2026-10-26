@@ -19,8 +19,7 @@ import java.util.function.Consumer;
  */
 final class SlotLook {
 
-    private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static Handler worker;
+    private static Handler main, worker;
 
     private SlotLook() {
     }
@@ -38,6 +37,7 @@ final class SlotLook {
             done.accept(null);
             return;
         }
+        if (main == null) main = new Handler(Looper.getMainLooper());
         if (worker == null) {
             HandlerThread t = new HandlerThread("slot-look");
             t.start();
@@ -48,7 +48,7 @@ final class SlotLook {
 
     private static void shoot(AccessibilityService service, Consumer<Boolean> hide, Consumer<Bitmap> done, int tries) {
         hide.accept(true);
-        MAIN.postDelayed(() -> {
+        main.postDelayed(() -> {
             try {
                 service.takeScreenshot(Display.DEFAULT_DISPLAY, worker::post,
                         new AccessibilityService.TakeScreenshotCallback() {
@@ -67,7 +67,7 @@ final class SlotLook {
                                     hb.close();
                                 }
                                 Bitmap bmp = out;
-                                MAIN.post(() -> {
+                                main.post(() -> {
                                     hide.accept(false);
                                     done.accept(bmp);
                                 });
@@ -75,13 +75,13 @@ final class SlotLook {
 
                             @Override
                             public void onFailure(int errorCode) {
-                                MAIN.post(() -> {
+                                main.post(() -> {
                                     hide.accept(false);
                                     // Screenshots come at most ~3 a second: one just before may
                                     // be too close - tried again shortly.
                                     if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
                                             && tries < 4) {
-                                        MAIN.postDelayed(() -> shoot(service, hide, done, tries + 1), 350);
+                                        main.postDelayed(() -> shoot(service, hide, done, tries + 1), 350);
                                     } else {
                                         done.accept(null);
                                     }
