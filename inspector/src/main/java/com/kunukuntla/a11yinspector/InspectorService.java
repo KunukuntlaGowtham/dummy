@@ -1192,17 +1192,110 @@ public class InspectorService extends AccessibilityService {
         retryLog.setLength(0);
     }
 
+    /** Page 2's first empty checkbox, or null (not drawn yet). */
+    private AccessibilityNodeInfo emptyBox() {
+        for (AccessibilityNodeInfo n : Page.nodes(this)) if (Page.isCheckbox(n) && !n.isChecked()) return n;
+        return null;
+    }
+
+    private boolean anyBoxTicked() {
+        for (AccessibilityNodeInfo n : Page.nodes(this)) if (Page.isCheckbox(n) && n.isChecked()) return true;
+        return false;
+    }
+
     /**
-     * Page 2 again: a full Go straight away (what gets it through) - no checkbox tries and
-     * no wait for Continue first.
+     * Page 2 again: everything is still chosen but its checkbox. The checkbox shows a moment
+     * after the calendar: up to 3 s for it, then ticked (a click, checked; else a tap where it
+     * is drawn, checked), then Continue the moment it is on.
      */
     private void retryPage2() {
-        if (!hasSavedPlan()) {
-            endRetry("page 2 needs Go, but nothing is saved in 📅 Book");
-            return;
+        rlog("page 2: waiting for its checkbox");
+        waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
+            AccessibilityNodeInfo box = emptyBox();
+            if (box == null) {
+                rlog(seen ? "page 2: checkbox already ticked" : "page 2: no checkbox came in 3 s");
+                page2Continue();
+                return;
+            }
+            rlog("page 2: checkbox \"" + cutLabel(box) + "\" - clicking it");
+            box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            waitUntil(() -> emptyBox() == null && anyBoxTicked(), 600, ok -> {
+                if (ok) {
+                    rlog("page 2: checkbox ticked ✓");
+                    page2Continue();
+                    return;
+                }
+                AccessibilityNodeInfo again = emptyBox();
+                android.graphics.Rect r = again == null ? null : Page.visible(again);
+                if (r == null) {
+                    rlog("page 2: checkbox not ticked and not on screen ✗");
+                    page2Continue();
+                    return;
+                }
+                rlog("page 2: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
+                tapAt(r.centerX(), r.centerY());
+                waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok2 -> {
+                    if (!ok2) {
+                        // The box's own left edge (where the square is drawn) as a last try.
+                        AccessibilityNodeInfo last = emptyBox();
+                        android.graphics.Rect lr = last == null ? null : Page.visible(last);
+                        if (lr != null) {
+                            rlog("page 2: still not ticked - tapping its left edge at " + (lr.left + lr.height() / 2) + "," + lr.centerY());
+                            tapAt(lr.left + lr.height() / 2, lr.centerY());
+                        }
+                        waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok3 -> {
+                            rlog(ok3 ? "page 2: checkbox ticked ✓" : "page 2: checkbox still not ticked ✗");
+                            page2Continue();
+                        });
+                        return;
+                    }
+                    rlog("page 2: checkbox ticked ✓");
+                    page2Continue();
+                });
+            });
+        });
+    }
+
+    private static String cutLabel(AccessibilityNodeInfo n) {
+        String l = Page.label(n);
+        if (l.isEmpty() && n.getParent() != null) l = Page.label(n.getParent());
+        return l.length() > 40 ? l.substring(0, 40) + "…" : l;
+    }
+
+    private void tapAt(int x, int y) {
+        android.graphics.Path p = new android.graphics.Path();
+        p.moveTo(x, y);
+        dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50))
+                .build(), null, null);
+    }
+
+    /** A button with these words that is on and on screen now (as build 76 read page 2's Continue). */
+    private AccessibilityNodeInfo shownButton(java.util.function.Predicate<String> words) {
+        for (AccessibilityNodeInfo n : Page.nodes(this)) {
+            if (!n.isVisibleToUser() || !words.test(Page.label(n))) continue;
+            AccessibilityNodeInfo b = PageKind.pressable(n);
+            if (b != null && b.isEnabled() && n.isEnabled()) return b;
         }
-        rlog("page 2: full Go at once");
-        startSaved();
+        return null;
+    }
+
+    /** Page 2's Continue the moment it is on; still off after 2.5 s: a full Go (as build 76). */
+    private void page2Continue() {
+        waitUntil(() -> shownButton(PageKind::isContinue) != null, 2500, on -> {
+            if (!on) {
+                rlog("page 2: Continue stayed off - filling it with Go");
+                Toast.makeText(this, "↻ Page 2: Continue stayed off - filling it with Go", Toast.LENGTH_SHORT).show();
+                startSaved();
+                return;
+            }
+            rlog("page 2: Continue pressed");
+            press(shownButton(PageKind::isContinue));
+            waitUntil(() -> PageKind.decide(PageKind.read(this)) == PageKind.Kind.TICKING, 6000, at3 -> {
+                if (at3) retryPage3(0);
+                else endRetry("page 3 didn't come after Continue");
+            });
+        });
     }
 
     /** Page 3 again: nothing ticked - Continue the moment it is on, then Confirm on page 4 at once. */

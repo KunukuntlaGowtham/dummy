@@ -93,6 +93,7 @@ final class Booker {
 
     void start(Plan p) {
         if (running) return;
+        secondPass = false;
         running = true;
         gen++;
         plan = p;
@@ -105,6 +106,27 @@ final class Booker {
         log("Book: option \"" + p.option + "\", date " + p.day + "/" + p.month + "/" + p.year
                 + (p.radio.isEmpty() ? "" : ", radio \"" + p.radio + "\""));
         later(() -> pickOption(0), 50);
+    }
+
+    /**
+     * Page 2 again (the retry's second pass): the dropdown and the date are still chosen, so
+     * only what follows them - the slot if it was reset, the checkbox, Continue - the same way
+     * as after the date on the first pass.
+     */
+    void finishPage(Plan p) {
+        if (running) return;
+        running = true;
+        gen++;
+        plan = p;
+        sevakPage = false;
+        handedOver = false;
+        startedOnSevaks = false;
+        start = SystemClock.uptimeMillis();
+        log.setLength(0);
+        done.setLength(0);
+        log("Page 2 again: only the checkbox, then Continue (option, date and slot still chosen)");
+        secondPass = true;
+        later(this::afterDate, 30);
     }
 
     void stop(String why) {
@@ -602,12 +624,105 @@ final class Booker {
         return c != null && c.isEnabled();
     }
 
+    /** Page 2 opened again (the retry / test trip): only the checkbox, then Continue. */
+    private boolean secondPass;
+
     private void afterDate() {
         radioDone = false;
         boxDone = false;
         restStart = SystemClock.uptimeMillis();
-        // As build 76: the slot tapped, then the checkbox (the retry's page 2 too: a full Go).
-        first(0);
+        // First visit: as build 76 (it worked there) - the slot tapped, then the checkbox.
+        // Page 2 again: the slot is still chosen (a tap would undo it) - only the checkbox.
+        if (!secondPass) first(0);
+        else second(0);
+    }
+
+    // ---- page 2 again (after Back and the deletes, test trips too): only the checkbox -----
+
+    private int secondTries;
+
+    /**
+     * Page 2 opened again keeps the dropdown, the date and the slot: only "I hereby declare" is
+     * ticked and Continue pressed - the slot is never touched. Continue on: pressed at once.
+     */
+    private void second(int polls) {
+        if (continueOn()) {
+            log("continue: on - pressing it");
+            pressContinue(0);
+            return;
+        }
+        AccessibilityNodeInfo box = findBox();
+        if (box == null) {
+            if (polls < 50) later(() -> second(polls + 1), 80); // up to 4 s for it to draw
+            else stop("✗ Page 2 again: no checkbox found");
+            return;
+        }
+        secondTries = 0;
+        log("checkbox: found after " + (SystemClock.uptimeMillis() - restStart) + " ms - ticking it");
+        tickAgain(box);
+    }
+
+    /**
+     * One try, then up to 1.5 s for Continue to come on. Not on: the screen is looked at - the
+     * box already looks ticked: only waited for (a second tap would untick it); else tried
+     * again another way (click, tap on it, tap its left edge).
+     */
+    private void tickAgain(AccessibilityNodeInfo box) {
+        secondTries++;
+        Page.Before before = new Page.Before(service);
+        if (secondTries == 1) {
+            log("checkbox: clicking it");
+            box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            afterTickAgain(box, before);
+            return;
+        }
+        inView(box, 0, at -> {
+            int x = secondTries == 2 ? at.centerX() : at.left + at.height() / 2;
+            log("checkbox: tapping it at " + x + "," + at.centerY());
+            tap(x, at.centerY());
+            afterTickAgain(box, before);
+        });
+    }
+
+    private void afterTickAgain(AccessibilityNodeInfo box, Page.Before before) {
+        waitFor(() -> continueOn() || Page.popup(service, before) != null, 1500, seen -> {
+            if (continueOn()) {
+                log("checkbox: ticked - Continue on ✓");
+                done.append("✓ Checkbox ticked\n");
+                pressContinue(0);
+                return;
+            }
+            if (Page.popup(service, before) != null) {
+                afterTickPopup(before, () -> afterTickAgain(box, new Page.Before(service)));
+                return;
+            }
+            if (secondTries >= 3) {
+                stop("✗ Page 2 again: Continue stayed off after ticking the checkbox 3 ways");
+                return;
+            }
+            int g = gen;
+            inView(box, 0, at -> SlotLook.shot(service, hideOverlays, bmp -> {
+                if (!running || g != gen) {
+                    if (bmp != null) bmp.recycle();
+                    return;
+                }
+                boolean looksTicked = false;
+                if (bmp != null) {
+                    int coloured = SlotLook.colouredIn(bmp, new Rect(0, at.top, bmp.getWidth(), at.bottom));
+                    bmp.recycle();
+                    looksTicked = SlotLook.ticked(coloured, at.height());
+                    log("screen: checkbox looks " + (looksTicked ? "ticked" : "empty") + " (" + coloured + " coloured px)");
+                }
+                if (looksTicked) {
+                    waitFor(this::continueOn, 3000, on -> {
+                        if (on) pressContinue(0);
+                        else stop("✗ Page 2 again: checkbox ticked but Continue stayed off");
+                    });
+                } else {
+                    tickAgain(box);
+                }
+            }));
+        });
     }
 
     // ---- page 2, first visit: whatever is ready is done, every 80 ms (as in build 76) ----
