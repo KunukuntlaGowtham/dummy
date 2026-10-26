@@ -632,15 +632,53 @@ final class Booker {
         return c != null && c.isEnabled();
     }
 
-    /** Page 2 again: the slot is still chosen - its round button is tapped only when needed. */
+    /** Some text on the page has these words (any case). */
+    private boolean pageSays(String words) {
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (Page.label(n).toLowerCase(Locale.ROOT).contains(words)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The slot's round button, brought on screen and looked at: chosen - left (a tap would
+     * unchoose it); empty - tapped. Can't be told (no screenshot): tapped only when
+     * {@code unsure} says so (Continue off / the page asks for a slot).
+     */
+    private void chooseSlot(AccessibilityNodeInfo r, boolean unsure, Runnable then) {
+        int g = gen;
+        inView(r, 0, v -> SlotLook.chosen(service, v, hideOverlays, chosen -> {
+            if (!running || g != gen) return;
+            if (Boolean.TRUE.equals(chosen)) {
+                log("slot: already chosen (seen on screen) - left as it is");
+                done.append("✓ Slot (already chosen)\n");
+                then.run();
+                return;
+            }
+            if (chosen == null && !unsure) {
+                log("slot: can't see it (no screenshot) - left until Continue says it's needed");
+                then.run();
+                return;
+            }
+            Rect at = visible(r);
+            if (at == null) at = v;
+            log("slot: " + (chosen == null ? "unknown" : "empty") + " - tapping its round button at "
+                    + at.centerX() + "," + at.centerY());
+            tap(at.centerX(), at.centerY());
+            done.append("✓ Slot (round button)\n");
+            later(then, 300);
+        }));
+    }
+
+    /** Page 2 again: the slot may still be chosen - its round button is tapped only when empty. */
     private boolean secondPass;
-    private int slotTaps;
+    private int slotChecks;
 
     private void afterDate() {
-        radioDone = false; // a real radio is chosen; a round slot button only when Continue needs it
+        radioDone = false;
         boxDone = false;
         reticked = false;
-        slotTaps = 0;
+        slotChecks = 0;
         restStart = SystemClock.uptimeMillis();
         rest(0);
     }
@@ -650,16 +688,25 @@ final class Booker {
     private void rest(int polls) {
         if (!radioDone) {
             AccessibilityNodeInfo r = findRadio();
-            // A real radio is chosen now (it can't be unchosen by a tap); the page's round slot
-            // button toggles - it may be chosen already - so it waits until Continue says it's needed.
+            // A real radio is chosen now (it can't be unchosen by a tap).
             if (r != null && isRadio(r)) {
                 radioDone = true;
                 log("slot: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
                 chooseRadio(r, () -> rest(0));
                 return;
             }
+            // The page's round slot button: TTD needs it before the checkbox. It reports no
+            // state, so the screen shows whether it's chosen - tapped only when empty.
+            if (r != null) {
+                radioDone = true;
+                log("slot: round button ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
+                chooseSlot(r, false, () -> rest(0));
+                return;
+            }
         }
-        if (!boxDone) {
+        // The slot comes first (TTD turns the checkbox down without one): the box waits up to
+        // half a second for the slot to show.
+        if (!boxDone && (radioDone || polls >= 6)) {
             AccessibilityNodeInfo b = findBox();
             if (b != null) {
                 boxDone = true;
@@ -681,18 +728,20 @@ final class Booker {
             pressContinue(0);
             return;
         }
-        // Second pass, checkbox done, Continue still off: the slot may have been reset - tapped
-        // once; still off a second later - tapped again to put it back (its button toggles).
-        boolean firstSlotTap = slotTaps == 0 && (boxDone && polls >= 6 || polls >= 12);
-        boolean undoSlotTap = slotTaps == 1 && boxDone && polls == 25;
-        if (!continueOn() && (firstSlotTap || undoSlotTap)) {
+        // Safety net: the page says "Please select an available slot" (the checkbox was turned
+        // down for it), or Continue is still off with no screenshot to tell - the slot is looked
+        // at again, tapped if empty, and the checkbox ticked again after it.
+        if (boxDone && slotChecks < 2 && !continueOn()
+                && (pageSays("select an available slot") || polls == 12 && slotChecks == 0)) {
             AccessibilityNodeInfo slot = findRadio();
             if (slot != null && !isRadio(slot)) {
-                slotTaps++;
-                radioDone = true;
-                log(slotTaps == 1 ? "slot: Continue still off - tapping the slot's round button"
-                        : "slot: no change - tapping it back (it was chosen already)");
-                chooseRadio(slot, () -> rest(0));
+                slotChecks++;
+                log("slot: Continue off" + (pageSays("select an available slot")
+                        ? " and the page asks for a slot" : "") + " - looking at the slot again");
+                chooseSlot(slot, true, () -> {
+                    boxDone = false;
+                    rest(0);
+                });
                 return;
             }
         }
