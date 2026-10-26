@@ -637,7 +637,7 @@ final class Booker {
     private int slotTaps;
 
     private void afterDate() {
-        radioDone = secondPass; // second pass: the slot left as it is, unless Continue stays off
+        radioDone = false; // a real radio is chosen; a round slot button only when Continue needs it
         boxDone = false;
         reticked = false;
         slotTaps = 0;
@@ -650,7 +650,9 @@ final class Booker {
     private void rest(int polls) {
         if (!radioDone) {
             AccessibilityNodeInfo r = findRadio();
-            if (r != null) {
+            // A real radio is chosen now (it can't be unchosen by a tap); the page's round slot
+            // button toggles - it may be chosen already - so it waits until Continue says it's needed.
+            if (r != null && isRadio(r)) {
                 radioDone = true;
                 log("slot: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
                 chooseRadio(r, () -> rest(0));
@@ -681,11 +683,15 @@ final class Booker {
         }
         // Second pass, checkbox done, Continue still off: the slot may have been reset - tapped
         // once; still off a second later - tapped again to put it back (its button toggles).
-        if (secondPass && boxDone && (polls == 12 && slotTaps == 0 || polls == 25 && slotTaps == 1)) {
+        boolean firstSlotTap = slotTaps == 0 && (boxDone && polls >= 6 || polls >= 12);
+        boolean undoSlotTap = slotTaps == 1 && boxDone && polls == 25;
+        if (!continueOn() && (firstSlotTap || undoSlotTap)) {
             AccessibilityNodeInfo slot = findRadio();
-            if (slot != null) {
+            if (slot != null && !isRadio(slot)) {
                 slotTaps++;
-                log(slotTaps == 1 ? "slot: Continue still off - choosing the slot" : "slot: no change - tapping it back");
+                radioDone = true;
+                log(slotTaps == 1 ? "slot: Continue still off - tapping the slot's round button"
+                        : "slot: no change - tapping it back (it was chosen already)");
                 chooseRadio(slot, () -> rest(0));
                 return;
             }
