@@ -110,7 +110,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, linkButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -405,7 +405,12 @@ public class InspectorService extends AccessibilityService {
                 } catch (RuntimeException e) {
                     rowNames = new ArrayList<>();
                 }
-                if (flow != null && !summary.startsWith("Stopped")) {
+                boolean autoRun = tickAuto;
+                tickAuto = false;
+                if (autoRun && !summary.startsWith("Stopped") && !lastMissed.isEmpty() && !testMode()) {
+                    // Long-pressed Tick: the rows it couldn't add - back, deleted, forward by itself.
+                    handler.postDelayed(InspectorService.this::deleteNow, 300);
+                } else if (flow != null && !summary.startsWith("Stopped")) {
                     if (AutoFlow.enabled(InspectorService.this)) {
                         flow.tickEnded(); // Auto decides on page 3: Continue, the retry, or the test trip
                     } else if (testMode()) {
@@ -423,24 +428,7 @@ public class InspectorService extends AccessibilityService {
                 lastMissed = new ArrayList<>(rows);
             }
         });
-        tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> {
-            closeCard();
-            if (ticker.isRunning()) {
-                ticker.stop("Stopped");
-            } else if (!busy()) {
-                // The badge's last reading: no extra page read before Tick starts.
-                PageKind.Kind kind = pageKind;
-                if (kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.SEVAK_LIST) {
-                    // Only said: Tick still runs (the page may be read wrongly).
-                    Toast.makeText(this, "📍 This looks like " + kind.title() + " - Tick is for Page 3",
-                            Toast.LENGTH_SHORT).show();
-                }
-                retryUsed = false; // a new booking: its one retry again
-                if (flow != null) flow.holdConfirm(false);
-                tickButton.setText("■\nStop");
-                ticker.start();
-            }
-        });
+        tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> tickTap(false), v -> tickTap(true));
         clearer = new Ticker(this, (summary, log) -> {
             saveReport(log);
             clearButton.setText("✖\nClear");
@@ -524,7 +512,6 @@ public class InspectorService extends AccessibilityService {
         showReportButton();
         showAutoButton();
         showDeleteButton();
-        showLinkButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -587,36 +574,6 @@ public class InspectorService extends AccessibilityService {
                 on ? 0xFF34C759 : 0x99FFFFFF);
     }
 
-    // ---- ✋ Manual / 🔗 Linked: how Tick and Delete work together ---------------------------
-
-    private TextView linkButton;
-
-    /**
-     * One tap switches: ✋ Manual - Tick only ticks and notes who it couldn't add, you go back
-     * and tap 🗑 on page 1; 🔗 Linked - with 🤖 Auto on, back, delete and retry run by themselves.
-     */
-    private void showLinkButton() {
-        linkButton = floating("✋\nManual", 0xEE8D6E63, 754, v -> {
-            closeCard();
-            boolean on = !retryOn();
-            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_delete_missed", on).apply();
-            Toast.makeText(this, on
-                    ? "🔗 LINKED: rows Tick can't add → back, 🗑 delete, forward - by itself (with 🤖 Auto on)"
-                    : "✋ MANUAL: Tick only ticks - go back yourself and tap 🗑 on page 1", Toast.LENGTH_LONG).show();
-        });
-        showLink();
-    }
-
-    private void showLink() {
-        if (linkButton == null) return;
-        boolean on = retryOn();
-        linkButton.setText(on ? "🔗\nLinked" : "✋\nManual");
-        linkButton.setContentDescription(on ? "Tick and Delete linked" : "Tick and Delete manual");
-        linkButton.setBackground(Glass.button(on ? 0xC62828 : 0x8D6E63, getResources().getDisplayMetrics().density));
-        GradientDrawable bg = (GradientDrawable) linkButton.getBackground();
-        if (on) bg.setStroke(dp(3), 0xFF34C759);
-    }
-
     // ---- 🗑 Delete (testing): sevak profiles by their numbers, each with its 2 pop-ups --------
 
     private TextView deleteButton;
@@ -642,9 +599,45 @@ public class InspectorService extends AccessibilityService {
             if (deleter.isRunning()) deleter.stop("Stopped");
             else if (!busy()) deleteTap();
         }, v -> {
+            // Long-press (automatic): back to page 1 if needed, delete, forward to page 4 by itself.
             closeCard();
-            if (!deleter.isRunning() && !busy()) deleteHere();
+            if (deleter.isRunning() || busy()) return;
+            Toast.makeText(this, "🗑 Delete AUTOMATIC: back to page 1, delete, forward", Toast.LENGTH_SHORT).show();
+            deleteNow();
         });
+    }
+
+    /** The running Tick was long-pressed: when it ends, the rows it couldn't add are deleted by itself. */
+    private boolean tickAuto;
+
+    /**
+     * ☑ Tick. Tap (manual): only ticks, and notes who it couldn't add. Long-press (automatic):
+     * ticks, then - rows not added - back to page 1, delete them, forward to page 4 by itself.
+     * While it runs, either one stops it.
+     */
+    private void tickTap(boolean auto) {
+        closeCard();
+        if (ticker.isRunning()) {
+            ticker.stop("Stopped");
+            return;
+        }
+        if (busy()) return;
+        // The badge's last reading: no extra page read before Tick starts.
+        PageKind.Kind kind = pageKind;
+        if (kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.SEVAK_LIST) {
+            // Only said: Tick still runs (the page may be read wrongly).
+            Toast.makeText(this, "📍 This looks like " + kind.title() + " - Tick is for Page 3",
+                    Toast.LENGTH_SHORT).show();
+        }
+        if (auto) {
+            Toast.makeText(this, "☑ Tick AUTOMATIC: rows it can't add → back, 🗑 delete, forward by itself",
+                    Toast.LENGTH_SHORT).show();
+        }
+        tickAuto = auto;
+        retryUsed = false; // a new booking: its one retry again
+        if (flow != null) flow.holdConfirm(false);
+        tickButton.setText(auto ? "■\nStop\nauto" : "■\nStop");
+        ticker.start();
     }
 
     /** Go got past the slot page: Tick starts 1 s from now (tap Go in the gap to cancel it). */
@@ -695,13 +688,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, linkButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "link"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
@@ -711,8 +704,6 @@ public class InspectorService extends AccessibilityService {
                 } else if ("test_mode".equals(key)) {
                     applyShown();
                     checkPage(); // the badge's 🧪 TEST
-                } else if ("auto_delete_missed".equals(key)) {
-                    showLink();
                 } else if ("auto_flow".equals(key)) {
                     showAuto();
                     checkPage(); // the badge's "· auto", and a page already ready goes on
@@ -1008,9 +999,9 @@ public class InspectorService extends AccessibilityService {
     }
 
     /**
-     * 🗑 tapped: on page 1 - the rows the last Tick didn't add (test mode: its numbers) are
-     * deleted right here. On page 2 / 3 - the trip back to page 1 and forward, when Tick and
-     * Delete are linked (Settings) or in test mode; else you're told to go back first.
+     * 🗑 tapped (manual): on page 1 - the rows the last Tick didn't add (test mode: its numbers)
+     * are deleted right here, nothing else pressed. On page 2 / 3 - you're told to go back first
+     * (test mode: the trip). Long-press is the automatic trip.
      */
     private void deleteTap() {
         PageKind.Kind k;
@@ -1022,10 +1013,10 @@ public class InspectorService extends AccessibilityService {
         boolean inBooking = k == PageKind.Kind.CALENDAR || k == PageKind.Kind.TICKING || k == PageKind.Kind.CONFIRM;
         if (!inBooking) {
             deleteHere();
-        } else if (retryOn() || testMode()) {
+        } else if (testMode()) {
             deleteNow();
         } else {
-            Toast.makeText(this, "🗑 Go back to page 1 and press 🗑 there (or link Tick and Delete in Settings)",
+            Toast.makeText(this, "🗑 Go back to page 1 and tap 🗑 there - or long-press 🗑 for the automatic trip",
                     Toast.LENGTH_LONG).show();
         }
     }

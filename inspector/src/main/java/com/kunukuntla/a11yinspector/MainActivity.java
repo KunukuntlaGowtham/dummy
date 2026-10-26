@@ -248,7 +248,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete", "✋ Manual / 🔗 Linked"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -389,8 +389,8 @@ public class MainActivity extends Activity {
         box.addView(step("Page 3", "☑ Tick starts 1 s later and ticks every sevak. All ticked: Continue."));
         LinearLayout retry = new LinearLayout(this);
         retry.setPadding(dp(16), dp(6), 0, dp(4));
-        retry.addView(settingChip(sp, "auto_delete_missed", "🔗 Link Tick → Delete: rows not ticked - back, delete, retry once",
-                "Tick and Delete linked", false), chipLp());
+        retry.addView(settingChip(sp, "auto_delete_missed", "🤖 After every Tick: rows not ticked - back, delete, retry once",
+                "Auto deletes rows not ticked", false), chipLp());
         HorizontalScrollView wide2 = new HorizontalScrollView(this);
         wide2.setHorizontalScrollBarEnabled(false);
         wide2.addView(retry);
@@ -568,19 +568,19 @@ public class MainActivity extends Activity {
 
         LinearLayout manual = new LinearLayout(this);
         manual.setOrientation(LinearLayout.VERTICAL);
-        manual.addView(note("Round button ✋ Manual (tap it to switch to 🔗 Linked). Tick and Delete are separate: Tick remembers who it couldn't add; you go back and 🗑 deletes them:"));
+        manual.addView(note("👆 TAP = manual. ☑ Tick only ticks and remembers who it couldn't add; you go back and 🗑 deletes them:"));
         manual.addView(flowStep(PAGE3, "Page 3 · you tap ☑ Tick", "it only ticks. Rows not ticked go in the red ❌ box, e.g. 3, 7, 11"));
         manual.addView(flowArrow("you go Back to page 1"));
         manual.addView(flowStep(PAGE1, "Page 1 · you tap 🗑 Delete", "deletes exactly those people: 3, then 6 (old 7), then 9 (old 11) - each checked by its name. Nothing else is pressed"));
         manual.addView(flowArrow("you go on"));
         manual.addView(flowStep(PAGE2, "Page 2 → 3 → 4", "▶ Go, ☑ Tick ... as you like"));
-        manual.addView(note("🗑 on page 2 or 3: it says to go back first (unless 🔗 Linked)."));
-        h.addView(card("✋ Tick and Delete by hand", 0xFF6A2C91, manual));
+        manual.addView(note("🗑 tapped on page 2 or 3: it says to go back first."));
+        h.addView(card("👆 Manual: tap ☑ Tick, then tap 🗑", 0xFF6A2C91, manual));
 
         LinearLayout retry = new LinearLayout(this);
         retry.setOrientation(LinearLayout.VERTICAL);
-        retry.addView(note("Round button 🔗 Linked (green ring) and 🤖 Auto on: it all runs by itself, once per booking:"));
-        retry.addView(flowStep(PAGE3, "Page 3", "Rows not ticked are shown in the red ❌ box, e.g. rows 3, 7, 11"));
+        retry.addView(note("✋ LONG-PRESS = automatic. Long-press ☑ Tick (or long-press 🗑 after a Tick) and it all runs by itself:"));
+        retry.addView(flowStep(PAGE3, "Page 3 · you long-press ☑ Tick", "it ticks; rows not ticked go in the red ❌ box, e.g. rows 3, 7, 11"));
         retry.addView(flowArrow("Back"));
         retry.addView(flowStep(PAGE2, "Page 2", "passed straight through"));
         retry.addView(flowArrow("Back"));
@@ -591,7 +591,8 @@ public class MainActivity extends Activity {
         retry.addView(flowStep(PAGE3, "Page 3", "nothing to tick - Continue at once"));
         retry.addView(flowArrow());
         retry.addView(flowStep(PAGE4, "Page 4", "Confirm at once"));
-        h.addView(card("🔗 Linked: if a row isn't ticked", 0xFFC62828, retry));
+        retry.addView(note("All rows ticked: nothing to delete - with 🤖 Auto on, Continue → Confirm as usual. ⚙ Settings can make 🤖 Auto do this trip after every Tick."));
+        h.addView(card("✋ Automatic: long-press ☑ Tick", 0xFFC62828, retry));
 
         LinearLayout test = new LinearLayout(this);
         test.setOrientation(LinearLayout.VERTICAL);
@@ -613,8 +614,8 @@ public class MainActivity extends Activity {
                 "what the screen has, in a card",
                 "deep scan + screenshot, saved in 📋 Report - send it when something goes wrong"));
         buttons.addView(buttonHelp(0x6A2C91, "☑", "Tick", "page 3",
-                "ticks every sevak and clears the pop-up after each; rows it couldn't add go in the red ❌ box. Tap again: stop",
-                null));
+                "MANUAL - ticks every sevak and clears the pop-up after each; rows it couldn't add go in the red ❌ box. Tap again: stop",
+                "AUTOMATIC - ticks, then rows not added → back to page 1, delete them, forward to page 4 by itself"));
         buttons.addView(buttonHelp(0xE65100, "✖", "Clear", "any page",
                 "closes the pop-ups on the screen now",
                 "Auto-clear on / off (thick green ring = on): every new pop-up closed by itself"));
@@ -631,11 +632,8 @@ public class MainActivity extends Activity {
                 "the last run's result; tap again to close. The full reports are in this app's 📋 Report tab",
                 null));
         buttons.addView(buttonHelp(0xC62828, "🗑", "Delete", "page 1",
-                "deletes the people the last Tick couldn't add (the red ❌ box) - test mode: its numbers. On page 2 / 3 when 🔗 Linked (or test mode): the whole trip back, delete, forward",
-                "on page 1: delete only, never the trip"));
-        buttons.addView(buttonHelp(0x8D6E63, "✋", "Manual", "any page",
-                "switches ✋ Manual ⇄ 🔗 Linked. Manual: ☑ Tick only ticks, 🗑 only deletes - you go back yourself. Linked (red, green ring): with 🤖 Auto on, Tick's missed rows → back, delete, forward by itself",
-                null));
+                "MANUAL (on page 1) - deletes the people the last Tick couldn't add (the red ❌ box; test mode: its numbers), nothing else pressed",
+                "AUTOMATIC (any page) - back to page 1, delete them, forward to page 4 by itself"));
         h.addView(card("🔘 The round buttons", 0xFF2E7D32, buttons));
 
         LinearLayout screen = new LinearLayout(this);
