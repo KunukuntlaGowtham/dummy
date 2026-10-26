@@ -248,7 +248,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete", "✋ Manual / 🔗 Linked"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -262,7 +262,6 @@ public class MainActivity extends Activity {
         row.setPadding(0, dp(6), 0, 0);
         android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
         for (int i = 0; i < InspectorService.SHOWN_KEYS.length; i++) {
-            if (InspectorService.SHOWN_KEYS[i].equals("delete")) continue;
             String key = "show_" + InspectorService.SHOWN_KEYS[i];
             String name = SHOWN_NAMES[i];
             TextView chip = new TextView(this);
@@ -569,18 +568,18 @@ public class MainActivity extends Activity {
 
         LinearLayout manual = new LinearLayout(this);
         manual.setOrientation(LinearLayout.VERTICAL);
-        manual.addView(note("Tick and Delete are separate (as they start). Tick remembers who it couldn't add; you go back and 🗑 deletes them:"));
+        manual.addView(note("Round button ✋ Manual (tap it to switch to 🔗 Linked). Tick and Delete are separate: Tick remembers who it couldn't add; you go back and 🗑 deletes them:"));
         manual.addView(flowStep(PAGE3, "Page 3 · you tap ☑ Tick", "it only ticks. Rows not ticked go in the red ❌ box, e.g. 3, 7, 11"));
         manual.addView(flowArrow("you go Back to page 1"));
         manual.addView(flowStep(PAGE1, "Page 1 · you tap 🗑 Delete", "deletes exactly those people: 3, then 6 (old 7), then 9 (old 11) - each checked by its name. Nothing else is pressed"));
         manual.addView(flowArrow("you go on"));
         manual.addView(flowStep(PAGE2, "Page 2 → 3 → 4", "▶ Go, ☑ Tick ... as you like"));
-        manual.addView(note("🗑 on page 2 or 3: it says to go back first (unless linked)."));
+        manual.addView(note("🗑 on page 2 or 3: it says to go back first (unless 🔗 Linked)."));
         h.addView(card("✋ Tick and Delete by hand", 0xFF6A2C91, manual));
 
         LinearLayout retry = new LinearLayout(this);
         retry.setOrientation(LinearLayout.VERTICAL);
-        retry.addView(note("With ⚙ Settings → 🔗 Link Tick → Delete on (and 🤖 Auto on), it all runs by itself, once per booking:"));
+        retry.addView(note("Round button 🔗 Linked (green ring) and 🤖 Auto on: it all runs by itself, once per booking:"));
         retry.addView(flowStep(PAGE3, "Page 3", "Rows not ticked are shown in the red ❌ box, e.g. rows 3, 7, 11"));
         retry.addView(flowArrow("Back"));
         retry.addView(flowStep(PAGE2, "Page 2", "passed straight through"));
@@ -632,8 +631,11 @@ public class MainActivity extends Activity {
                 "the last run's result; tap again to close. The full reports are in this app's 📋 Report tab",
                 null));
         buttons.addView(buttonHelp(0xC62828, "🗑", "Delete", "page 1",
-                "deletes the people the last Tick couldn't add (the red ❌ box) - test mode: its numbers. On page 2 / 3 with 🔗 Link on (or test mode): the whole trip back, delete, forward",
+                "deletes the people the last Tick couldn't add (the red ❌ box) - test mode: its numbers. On page 2 / 3 when 🔗 Linked (or test mode): the whole trip back, delete, forward",
                 "on page 1: delete only, never the trip"));
+        buttons.addView(buttonHelp(0x8D6E63, "✋", "Manual", "any page",
+                "switches ✋ Manual ⇄ 🔗 Linked. Manual: ☑ Tick only ticks, 🗑 only deletes - you go back yourself. Linked (red, green ring): with 🤖 Auto on, Tick's missed rows → back, delete, forward by itself",
+                null));
         h.addView(card("🔘 The round buttons", 0xFF2E7D32, buttons));
 
         LinearLayout screen = new LinearLayout(this);

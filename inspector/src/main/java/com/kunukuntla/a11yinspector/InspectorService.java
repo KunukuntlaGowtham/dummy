@@ -110,7 +110,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, linkButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -524,6 +524,7 @@ public class InspectorService extends AccessibilityService {
         showReportButton();
         showAutoButton();
         showDeleteButton();
+        showLinkButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -584,6 +585,36 @@ public class InspectorService extends AccessibilityService {
         GradientDrawable bg = (GradientDrawable) autoButton.getBackground();
         bg.setStroke(on ? dp(3) : Math.round(1.5f * getResources().getDisplayMetrics().density),
                 on ? 0xFF34C759 : 0x99FFFFFF);
+    }
+
+    // ---- ✋ Manual / 🔗 Linked: how Tick and Delete work together ---------------------------
+
+    private TextView linkButton;
+
+    /**
+     * One tap switches: ✋ Manual - Tick only ticks and notes who it couldn't add, you go back
+     * and tap 🗑 on page 1; 🔗 Linked - with 🤖 Auto on, back, delete and retry run by themselves.
+     */
+    private void showLinkButton() {
+        linkButton = floating("✋\nManual", 0xEE8D6E63, 754, v -> {
+            closeCard();
+            boolean on = !retryOn();
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_delete_missed", on).apply();
+            Toast.makeText(this, on
+                    ? "🔗 LINKED: rows Tick can't add → back, 🗑 delete, forward - by itself (with 🤖 Auto on)"
+                    : "✋ MANUAL: Tick only ticks - go back yourself and tap 🗑 on page 1", Toast.LENGTH_LONG).show();
+        });
+        showLink();
+    }
+
+    private void showLink() {
+        if (linkButton == null) return;
+        boolean on = retryOn();
+        linkButton.setText(on ? "🔗\nLinked" : "✋\nManual");
+        linkButton.setContentDescription(on ? "Tick and Delete linked" : "Tick and Delete manual");
+        linkButton.setBackground(Glass.button(on ? 0xC62828 : 0x8D6E63, getResources().getDisplayMetrics().density));
+        GradientDrawable bg = (GradientDrawable) linkButton.getBackground();
+        if (on) bg.setStroke(dp(3), 0xFF34C759);
     }
 
     // ---- 🗑 Delete (testing): sevak profiles by their numbers, each with its 2 pop-ups --------
@@ -664,13 +695,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, linkButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "link"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
@@ -680,6 +711,8 @@ public class InspectorService extends AccessibilityService {
                 } else if ("test_mode".equals(key)) {
                     applyShown();
                     checkPage(); // the badge's 🧪 TEST
+                } else if ("auto_delete_missed".equals(key)) {
+                    showLink();
                 } else if ("auto_flow".equals(key)) {
                     showAuto();
                     checkPage(); // the badge's "· auto", and a page already ready goes on
