@@ -112,16 +112,9 @@ public class MainActivity extends Activity {
         ScrollView settingsTab = new ScrollView(this);
         settingsTab.addView(settings);
 
-        // Tab 3: how to use, short.
-        TextView help = new TextView(this);
-        help.setText(HELP);
-        help.setTextColor(0xFF22262A);
-        help.setTextSize(14);
-        help.setLineSpacing(dp(3), 1f);
-        help.setPadding(dp(18), dp(14), dp(18), dp(24));
+        // Tab 3: how to use - the flows drawn step by step, and every button.
         ScrollView helpTab = new ScrollView(this);
-        help.setBackground(Glass.lightCard(getResources().getDisplayMetrics().density));
-        FrameLayoutHolder.wrap(helpTab, help, dp(12));
+        helpTab.addView(helpGuide());
 
         View[] panes = {reportTab, settingsTab, helpTab};
         String[] names = {"📋 Report", "⚙ Settings", "❓ Help"};
@@ -488,16 +481,6 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Puts a card in a scroll view with a margin round it. */
-    private static final class FrameLayoutHolder {
-        static void wrap(ScrollView scroll, View card, int margin) {
-            android.widget.FrameLayout f = new android.widget.FrameLayout(scroll.getContext());
-            f.setPadding(margin, margin, margin, margin);
-            f.addView(card);
-            scroll.addView(f);
-        }
-    }
-
     /** A titled frosted card; its title in the card's colour. */
     private View card(String title, int colour, View content) {
         LinearLayout c = new LinearLayout(this);
@@ -554,28 +537,213 @@ public class MainActivity extends Activity {
         return r;
     }
 
-    private static final String HELP =
-            "1. Turn A11y Inspector on in Accessibility (tap the chip at the top).\n"
-            + "2. Open the TTD app. The round buttons float on the left; drag them anywhere.\n\n"
-            + "ROUND BUTTONS\n"
-            + "🔍 Scan - what the screen has (long-press: deep scan + screenshot, to send me).\n"
-            + "☑ Tick - ticks every sevak on page 3 and clears the pop-up after each.\n"
-            + "✖ Clear - clears the pop-ups up now (long-press: Auto-clear on / off).\n"
-            + "📅 Book - on page 2: choose the dropdown option (from the page's own list), the date and the slot, then Save.\n"
-            + "▶ Go - fills page 2 with those saved choices (long-press: the same form as Book). On page 1 it presses Continue first; on page 3 (with 🤖 on) Tick starts at once.\n"
-            + "🤖 Auto - on: Go → Tick → Continue → Confirm runs by itself (see Settings). Long-press: \"this is page 1\" (pages 2, 3, 4 follow in order).\n"
-            + "📋 Report - the last run's result; the full report is in this app.\n"
-            + "🗑 Delete - only in test mode (Settings).\n\n"
-            + "AT THE TOP OF THE SCREEN\n"
-            + "📍 Page 1-4 - which page of the booking is open (🧪 TEST when test mode is on).\n"
-            + "❌ Not added - the rows Tick couldn't add, numbered as after each delete.\n\n"
-            + "THE PAGES\n"
-            + "Page 1 - the sevaks list (the page before page 2).\n"
-            + "Page 2 - dropdown, calendar, checkbox, slot.\n"
-            + "Page 3 - the sevak rows to tick.\n"
-            + "Page 4 - Confirm.\n\n"
-            + "SENDING ME A PROBLEM\n"
-            + "📋 Report → Share, or a deep scan (long-press 🔍) with its screenshot.";
+    // ---- ❓ Help: the flows, drawn step by step, and every button ------------------------
+
+    private static final int PAGE1 = 0xFF1565C0, PAGE2 = 0xFF00897B, PAGE3 = 0xFF6A2C91, PAGE4 = 0xFFC62828;
+
+    private View helpGuide() {
+        LinearLayout h = new LinearLayout(this);
+        h.setOrientation(LinearLayout.VERTICAL);
+        h.setPadding(0, dp(4), 0, dp(24));
+
+        LinearLayout start = new LinearLayout(this);
+        start.setOrientation(LinearLayout.VERTICAL);
+        start.addView(numbered(1, "Turn A11y Inspector on in Accessibility (the chip at the top of this app)."));
+        start.addView(numbered(2, "⚙ Settings → 🤖 Auto flow: choose page 2's option, date and slot (or 📅 Book on page 2)."));
+        start.addView(numbered(3, "Open the TTD app. The round buttons float at the side - drag them anywhere."));
+        start.addView(numbered(4, "Tap 🤖 Auto to turn it on, then ▶ Go on page 1, 2 or 3."));
+        h.addView(card("🚀 Getting started", 0xFF2E7D32, start));
+
+        LinearLayout flow = new LinearLayout(this);
+        flow.setOrientation(LinearLayout.VERTICAL);
+        flow.addView(note("With 🤖 Auto on, one tap on ▶ Go runs it all:"));
+        flow.addView(flowStep(PAGE1, "Page 1 · Sevaks list", "▶ Go presses Continue"));
+        flow.addView(flowArrow());
+        flow.addView(flowStep(PAGE2, "Page 2 · Calendar & slot", "Go picks the option, the date, the slot, ticks \"I hereby declare\" once, then Continue"));
+        flow.addView(flowArrow());
+        flow.addView(flowStep(PAGE3, "Page 3 · Ticking sevaks", "☑ Tick starts 1 s later, ticks every sevak and clears each pop-up. All ticked → Continue"));
+        flow.addView(flowArrow());
+        flow.addView(flowStep(PAGE4, "Page 4 · Confirm", "Confirm is pressed the moment it shows"));
+        flow.addView(note("Go can also start on page 2 (fills it) or page 3 (Tick at once). Auto off: each button only does its own job."));
+        h.addView(card("🤖 A booking, start to end", 0xFF37474F, flow));
+
+        LinearLayout retry = new LinearLayout(this);
+        retry.setOrientation(LinearLayout.VERTICAL);
+        retry.addView(note("When Tick couldn't add some rows (once per booking, Settings → \"Rows not ticked\"):"));
+        retry.addView(flowStep(PAGE3, "Page 3", "Rows not ticked are shown in the red ❌ box, e.g. rows 3, 7, 11"));
+        retry.addView(flowArrow("Back"));
+        retry.addView(flowStep(PAGE2, "Page 2", "passed straight through"));
+        retry.addView(flowArrow("Back"));
+        retry.addView(flowStep(PAGE1, "Page 1", "🗑 deletes them one by one: 3, then 6 (old 7), then 9 (old 11) - each checked by its name. Then Continue"));
+        retry.addView(flowArrow());
+        retry.addView(flowStep(PAGE2, "Page 2", "only the checkbox (ticked once), then Continue"));
+        retry.addView(flowArrow());
+        retry.addView(flowStep(PAGE3, "Page 3", "nothing to tick - Continue at once"));
+        retry.addView(flowArrow());
+        retry.addView(flowStep(PAGE4, "Page 4", "Confirm at once"));
+        h.addView(card("↻ If a row isn't ticked", 0xFFC62828, retry));
+
+        LinearLayout test = new LinearLayout(this);
+        test.setOrientation(LinearLayout.VERTICAL);
+        test.addView(note("Try the trip back and forward without booking:"));
+        test.addView(flowStep(0xFF455A64, "⚙ Settings", "🧪 Test mode on, type the numbers to delete (\"2,5\"; 0 = delete nobody)"));
+        test.addView(flowArrow());
+        test.addView(flowStep(PAGE3, "Page 3", "☑ Tick (or 🗑 Delete) - the trip starts by itself"));
+        test.addView(flowArrow("Back, Back"));
+        test.addView(flowStep(PAGE1, "Page 1", "deletes your numbers (2, then whoever is 5 now), Continue"));
+        test.addView(flowArrow());
+        test.addView(flowStep(PAGE2, "Page 2 → 3", "checkbox, Continue, Continue"));
+        test.addView(flowArrow());
+        test.addView(flowStep(PAGE4, "Page 4", "Confirm is NOT pressed - left for you. Test mode turns off"));
+        h.addView(card("🧪 Test mode", 0xFFC62828, test));
+
+        LinearLayout buttons = new LinearLayout(this);
+        buttons.setOrientation(LinearLayout.VERTICAL);
+        buttons.addView(buttonHelp(0x2E7D32, "🔍", "Scan", "any page",
+                "what the screen has, in a card",
+                "deep scan + screenshot, saved in 📋 Report - send it when something goes wrong"));
+        buttons.addView(buttonHelp(0x6A2C91, "☑", "Tick", "page 3",
+                "ticks every sevak and clears the pop-up after each; rows it couldn't add go in the red ❌ box. Tap again: stop",
+                null));
+        buttons.addView(buttonHelp(0xE65100, "✖", "Clear", "any page",
+                "closes the pop-ups on the screen now",
+                "Auto-clear on / off (thick green ring = on): every new pop-up closed by itself"));
+        buttons.addView(buttonHelp(0x1565C0, "📅", "Book", "page 2",
+                "a form: the option (from the page's own list), the date (calendar) and the slot - Save fills the page",
+                null));
+        buttons.addView(buttonHelp(0x00897B, "▶", "Go", "page 1, 2 or 3",
+                "fills page 2 with your saved choices (page 1: Continue first; page 3: Tick at once). While it shows ⏱ Cancel: tap to stop the Tick that follows",
+                "the same form as 📅 Book"));
+        buttons.addView(buttonHelp(0x37474F, "🤖", "Auto", "any page",
+                "Auto on / off: Go → Tick → Continue → Confirm by itself",
+                "\"this page is page 1\" - pages 2, 3, 4 follow it in order"));
+        buttons.addView(buttonHelp(0x455A64, "📋", "Report", "any page",
+                "the last run's result; tap again to close. The full reports are in this app's 📋 Report tab",
+                null));
+        buttons.addView(buttonHelp(0xC62828, "🗑", "Delete", "test mode only",
+                "the trip: back to page 1, delete, forward to page 4",
+                "on page 1: only delete, no trip"));
+        h.addView(card("🔘 The round buttons", 0xFF2E7D32, buttons));
+
+        LinearLayout screen = new LinearLayout(this);
+        screen.setOrientation(LinearLayout.VERTICAL);
+        screen.addView(note("📍 Page 1-4 - the pill at the top: which page is open (🧪 TEST in test mode)."));
+        screen.addView(note("❌ Not added - the red box: the rows Tick couldn't add, numbered as they will be after each delete."));
+        h.addView(card("👀 On the screen", 0xFF1565C0, screen));
+
+        LinearLayout problem = new LinearLayout(this);
+        problem.setOrientation(LinearLayout.VERTICAL);
+        problem.addView(numbered(1, "Right after it goes wrong: open this app → 📋 Report."));
+        problem.addView(numbered(2, "Share that report (Book, Tick, Delete or Auto retry)."));
+        problem.addView(numbered(3, "On a page that looks wrong: long-press 🔍 for a deep scan and send it with its screenshot."));
+        h.addView(card("🛠 Something wrong?", 0xFF455A64, problem));
+        return h;
+    }
+
+    /** A page of a flow: its coloured pill and what happens there. */
+    private View flowStep(int colour, String page, String what) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.VERTICAL);
+        r.setPadding(dp(12), dp(8), dp(12), dp(9));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(14));
+        bg.setColor((colour & 0x00FFFFFF) | 0x1F000000);
+        bg.setStroke(dp(1), (colour & 0x00FFFFFF) | 0x66000000);
+        r.setBackground(bg);
+        TextView p = new TextView(this);
+        p.setText(page);
+        p.setTextColor(Color.WHITE);
+        p.setTypeface(Typeface.DEFAULT_BOLD);
+        p.setTextSize(12);
+        p.setPadding(dp(9), dp(3), dp(9), dp(3));
+        GradientDrawable pill = new GradientDrawable();
+        pill.setCornerRadius(dp(10));
+        pill.setColor(colour | 0xFF000000);
+        p.setBackground(pill);
+        LinearLayout.LayoutParams plp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        r.addView(p, plp);
+        TextView w = new TextView(this);
+        w.setText(what);
+        w.setTextColor(0xFF22262A);
+        w.setTextSize(13);
+        w.setLineSpacing(dp(2), 1f);
+        w.setPadding(dp(2), dp(5), 0, 0);
+        r.addView(w);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(4);
+        r.setLayoutParams(lp);
+        return r;
+    }
+
+    private View flowArrow() {
+        return flowArrow(null);
+    }
+
+    /** ↓ between two steps, with what takes it there ("Back"). */
+    private View flowArrow(String how) {
+        TextView a = new TextView(this);
+        a.setText(how == null ? "↓" : "↓  " + how);
+        a.setTextColor(0xFF5F6368);
+        a.setTypeface(Typeface.DEFAULT_BOLD);
+        a.setTextSize(15);
+        a.setPadding(dp(22), dp(2), 0, 0);
+        return a;
+    }
+
+    /** "1  Turn it on ..." - a numbered step. */
+    private View numbered(int n, String text) {
+        LinearLayout r = new LinearLayout(this);
+        r.setPadding(0, dp(6), 0, dp(2));
+        TextView num = new TextView(this);
+        num.setText(String.valueOf(n));
+        num.setTextColor(Color.WHITE);
+        num.setTypeface(Typeface.DEFAULT_BOLD);
+        num.setTextSize(12);
+        num.setGravity(Gravity.CENTER);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(GREEN);
+        num.setBackground(bg);
+        r.addView(num, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        TextView t = new TextView(this);
+        t.setText(text);
+        t.setTextColor(0xFF22262A);
+        t.setTextSize(13);
+        t.setLineSpacing(dp(2), 1f);
+        t.setPadding(dp(10), dp(2), 0, 0);
+        r.addView(t, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        return r;
+    }
+
+    /** A round button as it floats on the screen, with where it works, its tap and its long-press. */
+    private View buttonHelp(int colour, String icon, String name, String where, String tap, String longPress) {
+        LinearLayout r = new LinearLayout(this);
+        r.setPadding(0, dp(10), 0, dp(8));
+        TextView b = new TextView(this);
+        b.setText(icon + "\n" + name);
+        b.setTextColor(Color.WHITE);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setTextSize(10.5f);
+        b.setGravity(Gravity.CENTER);
+        b.setBackground(Glass.button(colour, getResources().getDisplayMetrics().density));
+        r.addView(b, new LinearLayout.LayoutParams(dp(58), dp(58)));
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.setPadding(dp(12), 0, 0, 0);
+        TextView title = new TextView(this);
+        title.setText(name + "  ·  " + where);
+        title.setTextColor(colour | 0xFF000000);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setTextSize(14);
+        text.addView(title);
+        text.addView(note("👆 Tap: " + tap));
+        if (longPress != null) text.addView(note("✋ Long-press: " + longPress));
+        r.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        return r;
+    }
+
 
     /** A chip turning a setting (on until turned off) on / off. */
     private TextView settingChip(android.content.SharedPreferences sp, String key, String name, String spoken) {
