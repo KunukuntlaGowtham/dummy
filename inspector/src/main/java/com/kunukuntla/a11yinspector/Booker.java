@@ -1174,10 +1174,10 @@ final class Booker {
     }
 
     private void finish(boolean onSevaks) {
-        // Off page 2 once its calendar has gone (page 3 has a Continue of its own, so that
-        // alone doesn't say it stayed).
+        // As build 76: still here while a Continue shows - page 3 is handed over only once the
+        // sevak page is seen (a calendar hidden behind a message never counts as page 3).
         boolean stillHere = onSevaks ? isSevakPage() || !findBoxes().isEmpty() && continueShown()
-                : continueShown() && !dayCells().isEmpty();
+                : continueShown();
         done.append(stillHere ? "• Stayed on this page\n" : "• Moved to the next screen\n");
         // Past the slot page (the sevak page not seen in 3 s, or another screen): Tick may go on.
         if (!onSevaks && !stillHere) handedOver = true;
@@ -1200,8 +1200,11 @@ final class Booker {
     private boolean isSevakPage() {
         AccessibilityNodeInfo cont = continueButton();
         if (cont == null || cont.isEnabled() || !dayCells().isEmpty()) return false;
-        for (AccessibilityNodeInfo b : findBoxes()) if (!b.isChecked()) return true;
-        return false;
+        boolean empty = false;
+        for (AccessibilityNodeInfo b : findBoxes()) if (!b.isChecked()) empty = true;
+        // Page 2 with its calendar hidden (a message over it) and "I hereby declare" empty is
+        // never the sevak page: Tick there would untick the declaration.
+        return empty && PageKind.decide(PageKind.read(service)) == PageKind.Kind.TICKING;
     }
 
     private void sevaks() {
