@@ -124,7 +124,7 @@ final class Booker {
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.setLength(0);
-        log("Page 2 again: checkbox, Continue - the slot only if Continue stays off (option and date still chosen)");
+        log("Page 2 again: the slot and the checkbox judged from the screen (option and date still chosen)");
         secondPass = true;
         later(this::afterDate, 30);
     }
@@ -690,8 +690,75 @@ final class Booker {
         slotTaps = 0;
         boxTries = 0;
         restStart = SystemClock.uptimeMillis();
-        if (SlotLook.canShoot()) look2(0);
+        // First visit: as build 76 (it worked there) - the slot tapped, then the checkbox.
+        // Page 2 again (the slot may still be chosen - a tap would undo it): by the screen.
+        if (!secondPass) first(0);
+        else if (SlotLook.canShoot()) look2(0);
         else rest(0);
+    }
+
+    // ---- page 2, first visit: whatever is ready is done, every 80 ms (as in build 76) ----
+
+    private void first(int polls) {
+        if (!radioDone) {
+            AccessibilityNodeInfo r = findRadio();
+            if (r != null) {
+                radioDone = true;
+                log("slot: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
+                chooseRadio(r, () -> first(0));
+                return;
+            }
+        }
+        if (!boxDone) {
+            AccessibilityNodeInfo b = findBox();
+            if (b != null) {
+                boxDone = true;
+                if (b.isChecked()) {
+                    log("checkbox: already ticked");
+                    done.append("✓ Checkbox (already ticked)\n");
+                } else {
+                    log("checkbox: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
+                    tickFirst(b, () -> first(0));
+                    return;
+                }
+            }
+        }
+        AccessibilityNodeInfo cont = continueButton();
+        if (cont != null && cont.isEnabled()) {
+            if (!radioDone) log("slot: none on the page");
+            pressContinue(0);
+            return;
+        }
+        if (polls >= 125) { // 10 s
+            stop("✗ Continue stayed off" + (radioDone ? "" : " - no slot / radio found")
+                    + (boxDone ? "" : " - no checkbox found"));
+            return;
+        }
+        later(() -> first(polls + 1), 80);
+    }
+
+    /** The checkbox ticked where it is: a click, else a tap on what you see (as in build 76). */
+    private void tickFirst(AccessibilityNodeInfo b, Runnable then) {
+        log("checkbox: clicking it (where it is)");
+        b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        waitFor(() -> isChecked(b), 600, ok -> {
+            if (ok) {
+                log("checkbox: ticked ✓");
+                done.append("✓ Checkbox ticked\n");
+                then.run();
+                return;
+            }
+            Rect r = visible(b);
+            if (r != null) {
+                log("checkbox: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
+                tap(r.centerX(), r.centerY());
+            }
+            waitFor(() -> isChecked(b), 600, ok2 -> {
+                log("checkbox: " + (ok2 ? "ticked ✓" : "still not ticked ✗"));
+                done.append(ok2 ? "✓ Checkbox ticked\n" : "✗ Checkbox not ticked\n");
+                then.run();
+            });
+        });
     }
 
     // ---- page 2 by what the screen shows (every time: first visit and back again) -------
