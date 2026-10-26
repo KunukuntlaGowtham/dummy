@@ -464,7 +464,7 @@ public class InspectorService extends AccessibilityService {
                 // Its own steps too (slot, checkbox, Continue), so the report shows what happened.
                 int steps = log.indexOf("STEPS");
                 if (steps >= 0) retryLog.append("    ").append(log.substring(steps).replace("\n", "\n    ")).append('\n');
-                // The retry's page 2 needed a full Go: on to page 3.
+                // Page 2 done (moved on): on to page 3.
                 if (booker.handedOver()) retryPage3(0);
                 else endRetry("Go didn't get past page 2");
             } else if (linkOn() && booker.handedOver()) {
@@ -1178,87 +1178,19 @@ public class InspectorService extends AccessibilityService {
         retryLog.setLength(0);
     }
 
-    /** Page 2's first empty checkbox, or null (not drawn yet). */
-    private AccessibilityNodeInfo emptyBox() {
-        for (AccessibilityNodeInfo n : Page.nodes(this)) if (Page.isCheckbox(n) && !n.isChecked()) return n;
-        return null;
-    }
-
-    private boolean anyBoxTicked() {
-        for (AccessibilityNodeInfo n : Page.nodes(this)) if (Page.isCheckbox(n) && n.isChecked()) return true;
-        return false;
-    }
-
     /**
-     * Page 2 again: everything is still chosen. Continue tells what is missing, not the
-     * checkbox's own state (the page may report it late): Continue on - pressed, nothing
-     * touched. Off - the checkbox ticked only if it reads empty (never unticked), and Continue
-     * pressed the moment it turns on; still off - a full Go.
+     * Page 2 again: the dropdown, the date and the slot are still chosen - only "I hereby
+     * declare" is ticked and Continue pressed (Go's page-2 routine, in its second-pass mode).
      */
     private void retryPage2() {
-        rlog("page 2: waiting for it to settle");
-        waitUntil(() -> pressableButton(PageKind::isContinue) != null || emptyBox() != null || anyBoxTicked(), 3000, seen -> {
-            if (pressableButton(PageKind::isContinue) != null) {
-                rlog("page 2: Continue already on - pressed (nothing else touched)");
-                page2Continue();
-                return;
-            }
-            // Go's own page-2 routine, after the date: the slot if it was reset, the checkbox
-            // (brought on screen, clicked, tapped), Continue - as on the first pass.
-            rlog("page 2: slot / checkbox / Continue - as on the first pass");
-            Booker.Plan plan = new Booker.Plan();
-            android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
-            plan.option = prefs.getString("book_option", "");
-            plan.radio = prefs.getString("book_radio", "");
-            goButton.setText("■\nStop");
-            booker.setHandOver(true); // at page 3 it stops, and the retry goes on
-            booker.finishPage(plan);
-        });
-    }
-
-    /** The checkbox's state read afresh (the page's report can lag a moment). */
-    private static boolean isTickedNow(AccessibilityNodeInfo n) {
-        try {
-            n.refresh();
-        } catch (RuntimeException ignored) {
-        }
-        return n.isChecked();
-    }
-
-    private static String cutLabel(AccessibilityNodeInfo n) {
-        String l = Page.label(n);
-        if (l.isEmpty() && n.getParent() != null) l = Page.label(n.getParent());
-        return l.length() > 40 ? l.substring(0, 40) + "…" : l;
-    }
-
-    private void tapAt(int x, int y) {
-        android.graphics.Path p = new android.graphics.Path();
-        p.moveTo(x, y);
-        dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
-                .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 50))
-                .build(), null, null);
-    }
-
-    /** Page 2's Continue the moment it is on; still off after 3 s: a full Go. */
-    private void page2Continue() {
-        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 3000, on -> {
-            if (!on) {
-                if (!hasSavedPlan()) {
-                    endRetry("page 2 needs Go, but nothing is saved in 📅 Book");
-                    return;
-                }
-                rlog("page 2: Continue stayed off - filling it with Go");
-                Toast.makeText(this, "↻ Page 2: Continue stayed off - filling it with Go", Toast.LENGTH_SHORT).show();
-                startSaved();
-                return;
-            }
-            rlog("page 2: Continue pressed");
-            press(pressableButton(PageKind::isContinue));
-            waitUntil(() -> PageKind.decide(PageKind.read(this)) == PageKind.Kind.TICKING, 6000, at3 -> {
-                if (at3) retryPage3(0);
-                else endRetry("page 3 didn't come after Continue");
-            });
-        });
+        rlog("page 2: only the checkbox, then Continue (the slot is never touched)");
+        Booker.Plan plan = new Booker.Plan();
+        android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        plan.option = prefs.getString("book_option", "");
+        plan.radio = prefs.getString("book_radio", "");
+        goButton.setText("■\nStop");
+        booker.setHandOver(true); // at page 3 it stops, and the retry goes on
+        booker.finishPage(plan);
     }
 
     /** Page 3 again: nothing ticked - Continue the moment it is on, then Confirm on page 4 at once. */

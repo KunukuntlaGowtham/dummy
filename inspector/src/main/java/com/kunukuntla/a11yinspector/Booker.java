@@ -124,7 +124,7 @@ final class Booker {
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.setLength(0);
-        log("Page 2 again: the slot and the checkbox judged from the screen (option and date still chosen)");
+        log("Page 2 again: only the checkbox, then Continue (option, date and slot still chosen)");
         secondPass = true;
         later(this::afterDate, 30);
     }
@@ -619,82 +619,110 @@ final class Booker {
 
     private boolean radioDone, boxDone;
 
-    /**
-     * After the date the page loads its slots; the checkbox may come only once a slot is
-     * chosen. So no fixed order and no waiting for one thing: every 80 ms whatever is ready is
-     * done - a slot / radio not chosen yet, the checkbox not ticked - and Continue is pressed
-     * the moment it turns on. Up to 10 s for the page to show what it needs.
-     */
-    private boolean reticked;
-
     private boolean continueOn() {
         AccessibilityNodeInfo c = continueButton();
         return c != null && c.isEnabled();
     }
 
-    /** Some text on the page has these words (any case). */
-    private boolean pageSays(String words) {
-        for (AccessibilityNodeInfo n : Page.nodes(service)) {
-            if (Page.label(n).toLowerCase(Locale.ROOT).contains(words)) return true;
-        }
-        return false;
-    }
-
-    /**
-     * The slot's round button, brought on screen and looked at: chosen - left (a tap would
-     * unchoose it); empty - tapped. Can't be told (no screenshot): tapped only when
-     * {@code unsure} says so (Continue off / the page asks for a slot).
-     */
-    private void chooseSlot(AccessibilityNodeInfo r, boolean unsure, Runnable then) {
-        int g = gen;
-        inView(r, 0, v -> SlotLook.shot(service, hideOverlays, bmp -> {
-            if (!running || g != gen) {
-                if (bmp != null) bmp.recycle();
-                return;
-            }
-            Boolean chosen = null;
-            if (bmp != null) {
-                chosen = SlotLook.filled(bmp, v);
-                bmp.recycle();
-            }
-            if (Boolean.TRUE.equals(chosen)) {
-                log("slot: already chosen (seen on screen) - left as it is");
-                done.append("✓ Slot (already chosen)\n");
-                then.run();
-                return;
-            }
-            if (chosen == null && !unsure) {
-                log("slot: can't see it (no screenshot) - left until Continue says it's needed");
-                then.run();
-                return;
-            }
-            Rect at = visible(r);
-            if (at == null) at = v;
-            log("slot: " + (chosen == null ? "unknown" : "empty") + " - tapping its round button at "
-                    + at.centerX() + "," + at.centerY());
-            tap(at.centerX(), at.centerY());
-            done.append("✓ Slot (round button)\n");
-            later(then, 300);
-        }));
-    }
-
-    /** Page 2 again: the slot may still be chosen - its round button is tapped only when empty. */
+    /** Page 2 opened again (the retry / test trip): only the checkbox, then Continue. */
     private boolean secondPass;
-    private int slotChecks;
 
     private void afterDate() {
         radioDone = false;
         boxDone = false;
-        reticked = false;
-        slotChecks = 0;
-        slotTaps = 0;
-        boxTries = 0;
         restStart = SystemClock.uptimeMillis();
         // First visit: as build 76 (it worked there) - the slot tapped, then the checkbox.
-        // Page 2 again (the slot may still be chosen - a tap would undo it): by the screen.
+        // Page 2 again: the slot is still chosen (a tap would undo it) - only the checkbox.
         if (!secondPass) first(0);
-        else if (SlotLook.canShoot()) look2(0);
-        else rest(0);
+        else second(0);
+    }
+
+    // ---- page 2 again (after Back and the deletes, test trips too): only the checkbox -----
+
+    private int secondTries;
+
+    /**
+     * Page 2 opened again keeps the dropdown, the date and the slot: only "I hereby declare" is
+     * ticked and Continue pressed - the slot is never touched. Continue on: pressed at once.
+     */
+    private void second(int polls) {
+        if (continueOn()) {
+            log("continue: on - pressing it");
+            pressContinue(0);
+            return;
+        }
+        AccessibilityNodeInfo box = findBox();
+        if (box == null) {
+            if (polls < 50) later(() -> second(polls + 1), 80); // up to 4 s for it to draw
+            else stop("✗ Page 2 again: no checkbox found");
+            return;
+        }
+        secondTries = 0;
+        log("checkbox: found after " + (SystemClock.uptimeMillis() - restStart) + " ms - ticking it");
+        tickAgain(box);
+    }
+
+    /**
+     * One try, then up to 1.5 s for Continue to come on. Not on: the screen is looked at - the
+     * box already looks ticked: only waited for (a second tap would untick it); else tried
+     * again another way (click, tap on it, tap its left edge).
+     */
+    private void tickAgain(AccessibilityNodeInfo box) {
+        secondTries++;
+        Page.Before before = new Page.Before(service);
+        if (secondTries == 1) {
+            log("checkbox: clicking it");
+            box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            afterTickAgain(box, before);
+            return;
+        }
+        inView(box, 0, at -> {
+            int x = secondTries == 2 ? at.centerX() : at.left + at.height() / 2;
+            log("checkbox: tapping it at " + x + "," + at.centerY());
+            tap(x, at.centerY());
+            afterTickAgain(box, before);
+        });
+    }
+
+    private void afterTickAgain(AccessibilityNodeInfo box, Page.Before before) {
+        waitFor(() -> continueOn() || Page.popup(service, before) != null, 1500, seen -> {
+            if (continueOn()) {
+                log("checkbox: ticked - Continue on ✓");
+                done.append("✓ Checkbox ticked\n");
+                pressContinue(0);
+                return;
+            }
+            if (Page.popup(service, before) != null) {
+                afterTickPopup(before, () -> afterTickAgain(box, new Page.Before(service)));
+                return;
+            }
+            if (secondTries >= 3) {
+                stop("✗ Page 2 again: Continue stayed off after ticking the checkbox 3 ways");
+                return;
+            }
+            int g = gen;
+            inView(box, 0, at -> SlotLook.shot(service, hideOverlays, bmp -> {
+                if (!running || g != gen) {
+                    if (bmp != null) bmp.recycle();
+                    return;
+                }
+                boolean looksTicked = false;
+                if (bmp != null) {
+                    int coloured = SlotLook.colouredIn(bmp, new Rect(0, at.top, bmp.getWidth(), at.bottom));
+                    bmp.recycle();
+                    looksTicked = SlotLook.ticked(coloured, at.height());
+                    log("screen: checkbox looks " + (looksTicked ? "ticked" : "empty") + " (" + coloured + " coloured px)");
+                }
+                if (looksTicked) {
+                    waitFor(this::continueOn, 3000, on -> {
+                        if (on) pressContinue(0);
+                        else stop("✗ Page 2 again: checkbox ticked but Continue stayed off");
+                    });
+                } else {
+                    tickAgain(box);
+                }
+            }));
+        });
     }
 
     // ---- page 2, first visit: whatever is ready is done, every 80 ms (as in build 76) ----
@@ -761,251 +789,8 @@ final class Booker {
         });
     }
 
-    // ---- page 2 by what the screen shows (every time: first visit and back again) -------
-
-    private int slotTaps, boxTries;
-
-    /**
-     * Page 2 judged from a screenshot each round, not from what the page reports (TTD reports
-     * no state for the slot's round button and a stale one for the checkbox):
-     * <ol>
-     *   <li>the slot first - looked at; tapped only when it looks empty, then looked at again;</li>
-     *   <li>then the checkbox - Continue on: done; else looked at, tapped only when it looks
-     *       empty, then looked at again;</li>
-     *   <li>Continue the moment it turns on.</li>
-     * </ol>
-     */
-    private void look2(int round) {
-        if (round >= 16) {
-            stop("✗ Page 2: Continue stayed off (slot / checkbox as seen on screen: see the steps above)");
-            return;
-        }
-        // Continue on: the slot and the checkbox are both set - a tap would only undo one.
-        if (continueOn()) {
-            log("continue: on - pressing it");
-            pressContinue(0);
-            return;
-        }
-        long waited = SystemClock.uptimeMillis() - restStart;
-        AccessibilityNodeInfo slot = findRadio();
-        AccessibilityNodeInfo box = findBox();
-        // Still drawing: up to 1.5 s for both the slot and the checkbox to show.
-        if ((slot == null || box == null) && waited < 1500) {
-            later(() -> look2(round), 100);
-            return;
-        }
-        if (slot != null && isRadio(slot)) {
-            // A real radio reports its state: chosen through it, as before.
-            if (!radioDone && !slot.isChecked()) {
-                radioDone = true;
-                chooseRadio(slot, () -> look2(round + 1));
-                return;
-            }
-            look2Box(round);
-            return;
-        }
-        if (slot == null) {
-            if (round == 0) log("slot: none on the page");
-            look2Box(round);
-            return;
-        }
-        int g = gen;
-        inView(slot, 0, at -> SlotLook.shot(service, hideOverlays, bmp -> {
-            if (!running || g != gen) {
-                if (bmp != null) bmp.recycle();
-                return;
-            }
-            if (bmp == null) {
-                log("screen: no screenshot - going on by what the page reports");
-                rest(0);
-                return;
-            }
-            int pct = SlotLook.fill(bmp, at);
-            bmp.recycle();
-            if (pct >= 40) {
-                if (slotTaps == 0) done.append("✓ Slot (already chosen)\n");
-                log("screen: slot chosen (" + pct + "% filled)");
-                look2Box(round);
-            } else if (slotTaps < 3) {
-                slotTaps++;
-                log("screen: slot empty (" + pct + "% filled) - tapping its round button at "
-                        + at.centerX() + "," + at.centerY());
-                tap(at.centerX(), at.centerY());
-                if (slotTaps == 1) done.append("✓ Slot (round button)\n");
-                later(() -> look2(round + 1), 350);
-            } else {
-                log("screen: slot still looks empty (" + pct + "% filled) after 3 taps - going on");
-                look2Box(round);
-            }
-        }));
-    }
-
-    private void look2Box(int round) {
-        if (continueOn()) {
-            log("continue: on - pressing it");
-            pressContinue(0);
-            return;
-        }
-        AccessibilityNodeInfo box = findBox();
-        if (box == null) {
-            if (SystemClock.uptimeMillis() - restStart < 4000) later(() -> look2(round + 1), 150);
-            else stop("✗ Continue stayed off - no checkbox found");
-            return;
-        }
-        int g = gen;
-        inView(box, 0, at -> SlotLook.shot(service, hideOverlays, bmp -> {
-            if (!running || g != gen) {
-                if (bmp != null) bmp.recycle();
-                return;
-            }
-            if (bmp == null) {
-                rest(0);
-                return;
-            }
-            // The checkbox's row across the screen (its square may be drawn left of its box).
-            Rect row = new Rect(0, at.top, bmp.getWidth(), at.bottom);
-            int coloured = SlotLook.colouredIn(bmp, row);
-            bmp.recycle();
-            boolean ticked = SlotLook.ticked(coloured, at.height());
-            if (continueOn()) {
-                log("continue: on - pressing it");
-                pressContinue(0);
-                return;
-            }
-            if (ticked) {
-                log("screen: checkbox ticked (" + coloured + " coloured px) - Continue off, waiting");
-                // The page asks for the slot again: looked at again; else Continue awaited.
-                waitFor(this::continueOn, 600, on -> {
-                    if (on) pressContinue(0);
-                    else look2(round + 1);
-                });
-                return;
-            }
-            if (boxTries >= 4) {
-                stop("✗ Checkbox still looks empty after 4 tries (" + coloured + " coloured px)");
-                return;
-            }
-            boxTries++;
-            Page.Before before = new Page.Before(service);
-            switch (boxTries) {
-                case 1:
-                case 4:
-                    log("screen: checkbox empty (" + coloured + " coloured px) - clicking it");
-                    box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                    break;
-                case 2:
-                    log("screen: checkbox still empty - tapping it at " + at.centerX() + "," + at.centerY());
-                    tap(at.centerX(), at.centerY());
-                    break;
-                default:
-                    int x = at.left + at.height() / 2;
-                    log("screen: checkbox still empty - tapping its left edge at " + x + "," + at.centerY());
-                    tap(x, at.centerY());
-            }
-            if (boxTries == 1) done.append("✓ Checkbox ticked\n");
-            waitFor(() -> continueOn() || Page.popup(service, before) != null, 700, seen -> {
-                if (Page.popup(service, before) != null) afterTickPopup(before, () -> look2(round + 1));
-                else look2(round + 1);
-            });
-        }));
-    }
 
     private long restStart;
-
-    private void rest(int polls) {
-        if (!radioDone) {
-            AccessibilityNodeInfo r = findRadio();
-            // A real radio is chosen now (it can't be unchosen by a tap).
-            if (r != null && isRadio(r)) {
-                radioDone = true;
-                log("slot: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
-                chooseRadio(r, () -> rest(0));
-                return;
-            }
-            // The page's round slot button: TTD needs it before the checkbox. It reports no
-            // state, so the screen shows whether it's chosen - tapped only when empty.
-            if (r != null) {
-                radioDone = true;
-                log("slot: round button ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
-                chooseSlot(r, false, () -> rest(0));
-                return;
-            }
-        }
-        // The slot comes first (TTD turns the checkbox down without one): the box waits up to
-        // half a second for the slot to show.
-        if (!boxDone && (radioDone || polls >= 6)) {
-            AccessibilityNodeInfo b = findBox();
-            if (b != null) {
-                boxDone = true;
-                // Continue already on: the page has the box as ticked, whatever it reports
-                // (opened again, TTD reports it empty) - never tapped, a tap would untick it.
-                if (b.isChecked() || continueOn()) {
-                    log(b.isChecked() ? "checkbox: already ticked" : "checkbox: reads empty but Continue is on - left as it is");
-                    done.append("✓ Checkbox (already ticked)\n");
-                } else {
-                    log("checkbox: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
-                    tickIt(b, () -> rest(0));
-                    return;
-                }
-            }
-        }
-        AccessibilityNodeInfo cont = continueButton();
-        if (cont != null && cont.isEnabled()) {
-            if (!radioDone) log("slot: none on the page");
-            pressContinue(0);
-            return;
-        }
-        // Safety net: the page says "Please select an available slot" (the checkbox was turned
-        // down for it), or Continue is still off with no screenshot to tell - the slot is looked
-        // at again, tapped if empty, and the checkbox ticked again after it.
-        if (boxDone && slotChecks < 2 && !continueOn()
-                && (pageSays("select an available slot") || polls == 12 && slotChecks == 0)) {
-            AccessibilityNodeInfo slot = findRadio();
-            if (slot != null && !isRadio(slot)) {
-                slotChecks++;
-                log("slot: Continue off" + (pageSays("select an available slot")
-                        ? " and the page asks for a slot" : "") + " - looking at the slot again");
-                chooseSlot(slot, true, () -> {
-                    boxDone = false;
-                    rest(0);
-                });
-                return;
-            }
-        }
-        // The checkbox reads ticked but Continue stays off: the page may show it empty while
-        // still reporting it ticked (page 2 opened again) - ticked again, checked by Continue.
-        if (polls == 19 && boxDone && !reticked) {
-            AccessibilityNodeInfo b = findBox();
-            if (b != null && isChecked(b)) {
-                reticked = true;
-                log("checkbox: reads ticked but Continue is still off - ticking it again");
-                b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-                waitFor(() -> continueOn() || !isChecked(b), 600, changed -> {
-                    if (continueOn()) {
-                        log("checkbox: Continue on after the click ✓");
-                        rest(0);
-                    } else if (!isChecked(b)) {
-                        log("checkbox: it was ticked - now off, ticking it once more");
-                        tickIt(b, () -> rest(0));
-                    } else {
-                        // The click changed nothing: a real tap where it is drawn.
-                        inView(b, 0, r -> {
-                            log("checkbox: tapping it at " + r.centerX() + "," + r.centerY());
-                            tap(r.centerX(), r.centerY());
-                            later(() -> rest(0), 500);
-                        });
-                    }
-                });
-                return;
-            }
-        }
-        if (polls >= 125) { // 10 s
-            stop("✗ Continue stayed off" + (radioDone ? "" : " - no slot / radio found")
-                    + (boxDone ? "" : " - no checkbox found"));
-            return;
-        }
-        later(() -> rest(polls + 1), 80);
-    }
 
     private AccessibilityNodeInfo continueButton() {
         AccessibilityNodeInfo button = null;
