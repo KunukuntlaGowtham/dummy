@@ -661,8 +661,10 @@ final class Booker {
             AccessibilityNodeInfo b = findBox();
             if (b != null) {
                 boxDone = true;
-                if (b.isChecked()) {
-                    log("checkbox: already ticked");
+                // Continue already on: the page has the box as ticked, whatever it reports
+                // (opened again, TTD reports it empty) - never tapped, a tap would untick it.
+                if (b.isChecked() || continueOn()) {
+                    log(b.isChecked() ? "checkbox: already ticked" : "checkbox: reads empty but Continue is on - left as it is");
                     done.append("✓ Checkbox (already ticked)\n");
                 } else {
                     log("checkbox: ready after " + (SystemClock.uptimeMillis() - restStart) + " ms");
@@ -749,10 +751,15 @@ final class Booker {
     }
 
     /** Ticks the checkbox where it is: a click, else a tap on what you see; then {@code then}. */
+    /**
+     * Ticks the checkbox; it counts as ticked when it reads ticked OR Continue comes on - on
+     * page 2 opened again TTD keeps reporting it empty after it took the tick, and a second
+     * tap would untick it.
+     */
     private void tickIt(AccessibilityNodeInfo b, Runnable then) {
         log("checkbox: clicking it (where it is)");
         b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-        waitFor(() -> isChecked(b), 600, ok -> {
+        waitFor(() -> isChecked(b) || continueOn(), 600, ok -> {
             if (ok) {
                 log("checkbox: ticked ✓");
                 done.append("✓ Checkbox ticked\n");
@@ -763,7 +770,7 @@ final class Booker {
             inView(b, 0, r -> {
                 log("checkbox: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
                 tap(r.centerX(), r.centerY());
-                waitFor(() -> isChecked(b), 600, ok2 -> {
+                waitFor(() -> isChecked(b) || continueOn(), 600, ok2 -> {
                     if (ok2) {
                         log("checkbox: ticked ✓");
                         done.append("✓ Checkbox ticked\n");
@@ -776,7 +783,7 @@ final class Booker {
                         log("checkbox: still not ticked - tapping its left edge at " + (l.left + l.height() / 2) + "," + l.centerY());
                         tap(l.left + l.height() / 2, l.centerY());
                     }
-                    waitFor(() -> isChecked(b), 700, ok3 -> {
+                    waitFor(() -> isChecked(b) || continueOn(), 700, ok3 -> {
                         log("checkbox: " + (ok3 ? "ticked ✓" : "still not ticked ✗"));
                         done.append(ok3 ? "✓ Checkbox ticked\n" : "✗ Checkbox not ticked\n");
                         then.run();
@@ -871,7 +878,7 @@ final class Booker {
         later(() -> {
             log("checkbox: clicking it (where it is)");
             b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            waitFor(() -> isChecked(b), 800, ok -> {
+            waitFor(() -> isChecked(b) || continueOn(), 800, ok -> {
                 if (!ok) {
                     // A real tap on what you see (its label, when the box itself is hidden).
                     Rect r = visible(b);
@@ -879,7 +886,7 @@ final class Booker {
                         log("checkbox: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
                         tap(r.centerX(), r.centerY());
                     }
-                    waitFor(() -> isChecked(b), 800, ok2 -> {
+                    waitFor(() -> isChecked(b) || continueOn(), 800, ok2 -> {
                         if (!ok2) {
                             stop("✗ The checkbox didn't tick");
                             return;
