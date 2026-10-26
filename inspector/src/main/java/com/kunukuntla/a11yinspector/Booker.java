@@ -762,7 +762,10 @@ final class Booker {
      * page 2 opened again TTD keeps reporting it empty after it took the tick, and a second
      * tap would untick it.
      */
-    private void tickIt(AccessibilityNodeInfo b, Runnable then) {
+    private void tickIt(AccessibilityNodeInfo b, Runnable next) {
+        // Ticking it may bring a pop-up (the instructions to agree to): handled before going on.
+        Page.Before beforeTick = new Page.Before(service);
+        Runnable then = () -> afterTickPopup(beforeTick, next);
         log("checkbox: clicking it (where it is)");
         b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         waitFor(() -> isChecked(b) || continueOn(), 600, ok -> {
@@ -797,6 +800,54 @@ final class Booker {
                 });
             });
         });
+    }
+
+    /**
+     * After the checkbox: a pop-up it brings (seen up to 2.6 s, unless Continue comes on) is
+     * accepted only by a button that accepts - I agree, Agree, Accept, OK, Proceed, Continue,
+     * Yes - never an unnamed one or a close ✕. Without one it is left for you, its buttons logged.
+     */
+    private void afterTickPopup(Page.Before before, Runnable then) {
+        waitFor(() -> continueOn() || Page.popup(service, before) != null, 2600, seen -> {
+            Page.Popup p = Page.popup(service, before);
+            if (p == null) {
+                then.run();
+                return;
+            }
+            String l = p.button == null ? "" : Page.label(p.button);
+            if (p.button != null && isAccept(l)) {
+                log("checkbox: a pop-up came (" + p.how + ") - pressing \"" + l + "\"");
+                click(p.button);
+                done.append("✓ Pop-up after the checkbox: ").append(l).append('\n');
+                later(then, 400);
+                return;
+            }
+            log("checkbox: a pop-up came (" + p.how + ") with no accept button - left for you. Its buttons: "
+                    + newButtons(before));
+            done.append("? Pop-up after the checkbox left open (no accept button)\n");
+            then.run();
+        });
+    }
+
+    private static boolean isAccept(String label) {
+        String t = norm(label);
+        return t.equals("ok") || t.equals("okay") || t.equals("yes") || t.equals("agree") || t.equals("i agree")
+                || t.equals("accept") || t.equals("i accept") || t.equals("proceed") || t.equals("continue")
+                || t.startsWith("i agree ") || t.startsWith("accept ") || t.startsWith("agree ");
+    }
+
+    /** The buttons that came with the pop-up (for the report): words and place. */
+    private String newButtons(Page.Before before) {
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (AccessibilityNodeInfo node : Page.nodes(service)) {
+            if (!node.isClickable() || before.clickables.contains(Page.key(node))) continue;
+            Rect r = Page.bounds(node);
+            sb.append(n++ == 0 ? "" : ", ").append('"').append(Page.label(node)).append("\" @")
+                    .append(r.centerX()).append(',').append(r.centerY());
+            if (n >= 8) break;
+        }
+        return n == 0 ? "none reported" : sb.toString();
     }
 
     /** The radio / slot to choose (your words, else the first), or null when none is shown yet. */
