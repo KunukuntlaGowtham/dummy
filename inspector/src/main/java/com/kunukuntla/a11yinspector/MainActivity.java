@@ -399,8 +399,6 @@ public class MainActivity extends Activity {
         retry.setPadding(dp(16), dp(6), 0, dp(4));
         retry.addView(settingChip(sp, "auto_delete_missed", "Rows not ticked: back, delete them, retry once",
                 "Retry after rows not ticked"), chipLp());
-        retry.addView(settingChip(sp, "retry_quick_go", "Page 2 again: tick, then Go at once",
-                "Quick page 2 on the retry", false), chipLp());
         HorizontalScrollView wide2 = new HorizontalScrollView(this);
         wide2.setHorizontalScrollBarEnabled(false);
         wide2.addView(retry);

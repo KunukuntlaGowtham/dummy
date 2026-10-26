@@ -1204,40 +1204,11 @@ public class InspectorService extends AccessibilityService {
     }
 
     /**
-     * Page 2 again, quick (Settings): the same order as the usual way - the checkbox clicked
-     * first - then the full Go at once, with no waiting for the checkbox to read ticked or for
-     * Continue (that wait is what took the ~5 s).
-     */
-    private void retryPage2Quick() {
-        rlog("page 2 (quick): waiting for its checkbox");
-        waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
-            AccessibilityNodeInfo box = emptyBox();
-            if (box != null) {
-                rlog("page 2 (quick): checkbox \"" + cutLabel(box) + "\" - clicked, then Go at once");
-                box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            } else {
-                rlog(seen ? "page 2 (quick): checkbox already ticked - Go at once" : "page 2 (quick): no checkbox in 3 s - Go");
-            }
-            if (!hasSavedPlan()) {
-                endRetry("page 2 needs Go, but nothing is saved in 📅 Book");
-                return;
-            }
-            handler.postDelayed(() -> {
-                if (!destroyed && retrying) startSaved();
-            }, 150);
-        });
-    }
-
-    /**
-     * Page 2 again: everything is still chosen but its checkbox. The checkbox shows a moment
-     * after the calendar: up to 3 s for it, then ticked (a click, checked; else a tap where it
-     * is drawn, checked), then Continue the moment it is on.
+     * Page 2 again: everything is still chosen but its checkbox. TTD keeps Continue on all the
+     * time and its checkbox doesn't report a tick (it reads empty after it) - so the checkbox is
+     * ticked with ONE action (a second try would untick it) and Continue pressed right after.
      */
     private void retryPage2() {
-        if (getSharedPreferences("settings", MODE_PRIVATE).getBoolean("retry_quick_go", false)) {
-            retryPage2Quick();
-            return;
-        }
         rlog("page 2: waiting for its checkbox");
         waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
             AccessibilityNodeInfo box = emptyBox();
@@ -1246,42 +1217,16 @@ public class InspectorService extends AccessibilityService {
                 page2Continue();
                 return;
             }
-            rlog("page 2: checkbox \"" + cutLabel(box) + "\" - clicking it");
-            box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-            waitUntil(() -> emptyBox() == null && anyBoxTicked(), 600, ok -> {
-                if (ok) {
-                    rlog("page 2: checkbox ticked ✓");
-                    page2Continue();
-                    return;
-                }
-                AccessibilityNodeInfo again = emptyBox();
-                android.graphics.Rect r = again == null ? null : Page.visible(again);
-                if (r == null) {
-                    rlog("page 2: checkbox not ticked and not on screen ✗");
-                    page2Continue();
-                    return;
-                }
-                rlog("page 2: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
-                tapAt(r.centerX(), r.centerY());
-                waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok2 -> {
-                    if (!ok2) {
-                        // The box's own left edge (where the square is drawn) as a last try.
-                        AccessibilityNodeInfo last = emptyBox();
-                        android.graphics.Rect lr = last == null ? null : Page.visible(last);
-                        if (lr != null) {
-                            rlog("page 2: still not ticked - tapping its left edge at " + (lr.left + lr.height() / 2) + "," + lr.centerY());
-                            tapAt(lr.left + lr.height() / 2, lr.centerY());
-                        }
-                        waitUntil(() -> emptyBox() == null && anyBoxTicked(), 800, ok3 -> {
-                            rlog(ok3 ? "page 2: checkbox ticked ✓" : "page 2: checkbox still not ticked ✗");
-                            page2Continue();
-                        });
-                        return;
-                    }
-                    rlog("page 2: checkbox ticked ✓");
-                    page2Continue();
-                });
-            });
+            if (box.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                rlog("page 2: checkbox \"" + cutLabel(box) + "\" - clicked once");
+            } else {
+                android.graphics.Rect r = Page.visible(box);
+                if (r != null) tapAt(r.centerX(), r.centerY());
+                rlog("page 2: checkbox click refused - tapped once" + (r == null ? " (not on screen ✗)" : ""));
+            }
+            handler.postDelayed(() -> {
+                if (!destroyed && retrying) page2Continue();
+            }, 250);
         });
     }
 
@@ -1299,27 +1244,20 @@ public class InspectorService extends AccessibilityService {
                 .build(), null, null);
     }
 
-    /** A button with these words that is on and on screen now (as build 76 read page 2's Continue). */
-    private AccessibilityNodeInfo shownButton(java.util.function.Predicate<String> words) {
-        for (AccessibilityNodeInfo n : Page.nodes(this)) {
-            if (!n.isVisibleToUser() || !words.test(Page.label(n))) continue;
-            AccessibilityNodeInfo b = PageKind.pressable(n);
-            if (b != null && b.isEnabled() && n.isEnabled()) return b;
-        }
-        return null;
-    }
-
-    /** Page 2's Continue the moment it is on; still off after 2.5 s: a full Go (as build 76). */
+    /**
+     * Page 2's Continue (also below the screen - brought up and pressed), then page 3. No
+     * Continue at all in 2.5 s: a full Go.
+     */
     private void page2Continue() {
-        waitUntil(() -> shownButton(PageKind::isContinue) != null, 2500, on -> {
+        waitUntil(() -> pressableButton(PageKind::isContinue) != null, 2500, on -> {
             if (!on) {
-                rlog("page 2: Continue stayed off - filling it with Go");
-                Toast.makeText(this, "↻ Page 2: Continue stayed off - filling it with Go", Toast.LENGTH_SHORT).show();
+                rlog("page 2: no Continue - filling it with Go");
+                Toast.makeText(this, "↻ Page 2: no Continue - filling it with Go", Toast.LENGTH_SHORT).show();
                 startSaved();
                 return;
             }
             rlog("page 2: Continue pressed");
-            press(shownButton(PageKind::isContinue));
+            press(pressableButton(PageKind::isContinue));
             waitUntil(() -> PageKind.decide(PageKind.read(this)) == PageKind.Kind.TICKING, 6000, at3 -> {
                 if (at3) retryPage3(0);
                 else endRetry("page 3 didn't come after Continue");

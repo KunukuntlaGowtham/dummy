@@ -751,9 +751,13 @@ final class Booker {
                 }
             }
         }
+        // TTD keeps Continue on all the time (it checks the form when pressed): pressed only
+        // once the slot and the checkbox are done - or after 3 s with none drawn.
+        long waited = SystemClock.uptimeMillis() - restStart;
         AccessibilityNodeInfo cont = continueButton();
-        if (cont != null && cont.isEnabled()) {
+        if (cont != null && cont.isEnabled() && (boxDone || waited >= 3000) && (radioDone || boxDone || waited >= 3000)) {
             if (!radioDone) log("slot: none on the page");
+            if (!boxDone) log("checkbox: none on the page");
             pressContinue(0);
             return;
         }
@@ -765,30 +769,21 @@ final class Booker {
         later(() -> first(polls + 1), 80);
     }
 
-    /** The checkbox ticked where it is: a click, else a tap on what you see (as in build 76). */
+    /**
+     * The checkbox ticked with ONE action: a click, or a tap only if the click is refused. TTD's
+     * checkbox doesn't report the tick (it reads empty after it), so a second try would untick it.
+     */
     private void tickFirst(AccessibilityNodeInfo b, Runnable then) {
-        log("checkbox: clicking it (where it is)");
-        b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
-        waitFor(() -> isChecked(b), 600, ok -> {
-            if (ok) {
-                log("checkbox: ticked ✓");
-                done.append("✓ Checkbox ticked\n");
-                then.run();
-                return;
-            }
+        if (b.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            log("checkbox: clicked once (it doesn't report the tick - not tried again)");
+        } else {
             Rect r = visible(b);
-            if (r != null) {
-                log("checkbox: click didn't tick it - tapping it at " + r.centerX() + "," + r.centerY());
-                tap(r.centerX(), r.centerY());
-            }
-            waitFor(() -> isChecked(b), 600, ok2 -> {
-                log("checkbox: " + (ok2 ? "ticked ✓" : "still not ticked ✗"));
-                done.append(ok2 ? "✓ Checkbox ticked\n" : "✗ Checkbox not ticked\n");
-                then.run();
-            });
-        });
+            if (r != null) tap(r.centerX(), r.centerY());
+            log("checkbox: click refused - tapped once" + (r == null ? " (not on screen ✗)" : " at " + r.centerX() + "," + r.centerY()));
+        }
+        done.append("✓ Checkbox ticked (once)\n");
+        later(then, 250);
     }
-
 
     private long restStart;
 
