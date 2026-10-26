@@ -48,10 +48,31 @@ final class AutoFlow {
 
         /** Tick ended: test mode's trip (back to page 1 and forward) instead of going on? */
         boolean testTripAfterTick();
+
+        /** This reading is page 1 (the one you marked, or the one learned). */
+        boolean isPage1(PageKind.Facts f);
+
+        /** You marked page 1 yourself (long-press 🤖): Back never goes past it. */
+        boolean page1Locked();
     }
 
+    /** Stops whatever the flow is doing (▶ Go stopped): its waits and Back presses end. */
+    void cancel() {
+        gen++;
+        busy = false;
+        missed = false;
+        tickEnded = false;
+        watchUntil = 0;
+        offSince = 0;
+    }
+
+    private int gen;
+
+    /** ▶ Go is running the booking: the flow goes on by itself until page 4 (or Go is stopped). */
+    static volatile boolean goActive;
+
     static boolean enabled(Context c) {
-        return c.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("auto_flow", false); // off until turned on: Go never books through by surprise
+        return goActive || c.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("auto_flow", false); // off until turned on: Go never books through by surprise
     }
 
     private final AccessibilityService service;
@@ -136,6 +157,7 @@ final class AutoFlow {
                 String why = f.empty() + (f.empty() == 1 ? " checkbox" : " checkboxes") + " not ticked after Tick";
                 if (!host.mayGoBack()) {
                     host.say("📍 Page 3: " + why + " - left here (🗑 on page 1 deletes them)");
+                    goActive = false; // Go's run ends here: finish by hand, then ▶ Go
                     return;
                 }
                 missed = true;
@@ -204,6 +226,7 @@ final class AutoFlow {
         if (!button.isVisibleToUser()) button.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(Page.bounds(button));
         host.say("📍 Page 4: Confirm pressed");
+        goActive = false; // the booking is through: Go's run ends
     }
 
     // ---- page 3: Continue, and Back when it doesn't go on ---------------------------------
@@ -297,8 +320,11 @@ final class AutoFlow {
         if (tries == 0) pressBack();
         else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK); // a pop-up took the first
         waitFor(k -> k == PageKind.Kind.CALENDAR, SystemClock.uptimeMillis(), f -> {
+            PageKind.Facts now = readNow();
             if (f != null) {
                 backTo1(0);
+            } else if (now != null && host.isPage1(now)) {
+                atPage1(now); // already on page 1 (page 2 went by quickly): never a Back more
             } else if (tries < 1) {
                 backTo2(tries + 1); // a pop-up on top took the first Back
             } else {
@@ -314,15 +340,13 @@ final class AutoFlow {
         if (tries == 0) pressBack();
         else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
         waitFor(k -> k != PageKind.Kind.CALENDAR, SystemClock.uptimeMillis(), f -> {
+            PageKind.Facts now = f == null ? readNow() : f;
             if (f != null) {
-                host.page1(f);
-                host.say("↩ Back on page 1");
-                boolean wasMissed = missed;
-                missed = false;
-                busy = false;
-                if (wasMissed) host.missedAtPage1();
-                else host.recheck();
-            } else if (tries < 1) {
+                atPage1(f);
+            } else if (now != null && host.isPage1(now)) {
+                atPage1(now);
+            } else if (tries < 1 && now != null && PageKind.decide(now) == PageKind.Kind.CALENDAR) {
+                // Still page 2 for sure: one Back more (never from a page that isn't page 2).
                 backTo1(tries + 1);
             } else {
                 host.say("↩ Back: still on page 2 - stopped");
@@ -334,6 +358,35 @@ final class AutoFlow {
     }
 
     /**
+     * Arrived after the Backs. With page 1 marked by you, only that page counts: any other page
+     * stops here - Back never goes further than page 1.
+     */
+    private void atPage1(PageKind.Facts f) {
+        if (host.page1Locked() && !host.isPage1(f)) {
+            host.say("↩ Back: this isn't your page 1 - stopped here (never further back)");
+            if (missed) host.backFailed();
+            missed = false;
+            done();
+            return;
+        }
+        host.page1(f);
+        host.say("↩ Back on page 1");
+        boolean wasMissed = missed;
+        missed = false;
+        busy = false;
+        if (wasMissed) host.missedAtPage1();
+        else host.recheck();
+    }
+
+    private PageKind.Facts readNow() {
+        try {
+            return PageKind.read(service);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
      * Up to 3 s for a page of that kind, read the same twice in a row (not half drawn):
      * {@code then} gets its reading, or null.
      */
@@ -341,7 +394,9 @@ final class AutoFlow {
                          Consumer<PageKind.Facts> then) {
         PageKind.Facts[] last = {null};
         Runnable[] look = new Runnable[1];
+        int g = gen;
         look[0] = () -> {
+            if (g != gen) return; // stopped meanwhile
             PageKind.Facts f = null;
             try {
                 f = PageKind.read(service);

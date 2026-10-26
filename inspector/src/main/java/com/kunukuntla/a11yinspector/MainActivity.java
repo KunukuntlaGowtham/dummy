@@ -550,12 +550,13 @@ public class MainActivity extends Activity {
         start.addView(numbered(1, "Turn A11y Inspector on in Accessibility (the chip at the top of this app)."));
         start.addView(numbered(2, "⚙ Settings → 🤖 Auto flow: choose page 2's option, date and slot (or 📅 Book on page 2)."));
         start.addView(numbered(3, "Open the TTD app. The round buttons float at the side - drag them anywhere."));
-        start.addView(numbered(4, "Tap 🤖 Auto to turn it on, then ▶ Go on page 1, 2 or 3."));
+        start.addView(numbered(4, "On the sevaks list, long-press 🤖 once: \"this is page 1\" (locked - Back never goes past it)."));
+        start.addView(numbered(5, "Tap ▶ Go on any page - it runs the rest by itself."));
         h.addView(card("🚀 Getting started", 0xFF2E7D32, start));
 
         LinearLayout flow = new LinearLayout(this);
         flow.setOrientation(LinearLayout.VERTICAL);
-        flow.addView(note("With 🤖 Auto on, one tap on ▶ Go runs it all:"));
+        flow.addView(note("One tap on ▶ Go runs it all from the page you're on (🤖 Auto on or off):"));
         flow.addView(flowStep(PAGE1, "Page 1 · Sevaks list", "▶ Go presses Continue"));
         flow.addView(flowArrow());
         flow.addView(flowStep(PAGE2, "Page 2 · Calendar & slot", "Go picks the option, the date, the slot, ticks \"I hereby declare\" once, then Continue"));
@@ -563,7 +564,7 @@ public class MainActivity extends Activity {
         flow.addView(flowStep(PAGE3, "Page 3 · Ticking sevaks", "☑ Tick starts 1 s later, ticks every sevak and clears each pop-up. All ticked → Continue"));
         flow.addView(flowArrow());
         flow.addView(flowStep(PAGE4, "Page 4 · Confirm", "Confirm is pressed the moment it shows"));
-        flow.addView(note("Go can also start on page 2 (fills it) or page 3 (Tick at once). Auto off: each button only does its own job."));
+        flow.addView(note("Rows Tick couldn't add: back to page 1, deleted, forward - by itself.\n■ Stop (tap Go while it runs) or a step that fails: do that step by hand, then tap ▶ Go again - it goes on from the page you're on."));
         h.addView(card("🤖 A booking, start to end", 0xFF37474F, flow));
 
         LinearLayout manual = new LinearLayout(this);
@@ -623,11 +624,11 @@ public class MainActivity extends Activity {
                 "a form: the option (from the page's own list), the date (calendar) and the slot - Save fills the page",
                 null));
         buttons.addView(buttonHelp(0x00897B, "▶", "Go", "page 1, 2 or 3",
-                "fills page 2 with your saved choices (page 1: Continue first; page 3: Tick at once). While it shows ⏱ Cancel: tap to stop the Tick that follows",
+                "FULLY AUTOMATIC from the page you're on - page 1: Continue, page 2: fills it, page 3: Tick (missed rows: back, delete, forward), page 4: Confirm. While it runs (■ Stop): tap to stop; do a step by hand, tap ▶ Go to go on",
                 "the same form as 📅 Book"));
         buttons.addView(buttonHelp(0x37474F, "🤖", "Auto", "any page",
                 "Auto on / off: Go → Tick → Continue → Confirm by itself",
-                "\"this page is page 1\" - pages 2, 3, 4 follow it in order"));
+                "\"this page is page 1\" (locked) - pages 2, 3, 4 follow in order, and Back never goes past page 1"));
         buttons.addView(buttonHelp(0x455A64, "📋", "Report", "any page",
                 "the last run's result; tap again to close. The full reports are in this app's 📋 Report tab",
                 null));

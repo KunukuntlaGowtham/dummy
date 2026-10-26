@@ -248,8 +248,8 @@ public class InspectorService extends AccessibilityService {
 
             @Override
             public boolean mayGoBack() {
-                // Tick and Delete not linked: Tick only notes the rows - you go back and press 🗑.
-                return retryOn() && !retryUsed;
+                // Only when asked (Settings, or ▶ Go running it all): else Tick only notes the rows.
+                return (retryOn() || AutoFlow.goActive) && !retryUsed;
             }
 
             @Override
@@ -265,6 +265,16 @@ public class InspectorService extends AccessibilityService {
             @Override
             public boolean testTripAfterTick() {
                 return InspectorService.this.testTripAfterTick();
+            }
+
+            @Override
+            public boolean isPage1(PageKind.Facts f) {
+                return onPage1(f);
+            }
+
+            @Override
+            public boolean page1Locked() {
+                return InspectorService.this.page1Locked(lastPkg());
             }
         });
         pageCheckSoon();
@@ -364,6 +374,11 @@ public class InspectorService extends AccessibilityService {
     }
 
     private void rememberPage1(PageKind.Facts f) {
+        if (page1Locked(f.pkg)) return; // you marked page 1 yourself: never replaced by a guess
+        keepPage1(f);
+    }
+
+    private void keepPage1(PageKind.Facts f) {
         if (f.texts.size() < 3 || f.pkg.isEmpty()) return;
         getSharedPreferences("settings", MODE_PRIVATE).edit()
                 .putString("page1_" + f.pkg, String.join("\u0001", f.texts)).apply();
@@ -405,6 +420,7 @@ public class InspectorService extends AccessibilityService {
                 } catch (RuntimeException e) {
                     rowNames = new ArrayList<>();
                 }
+                if (summary.startsWith("Stopped")) endGo();
                 boolean autoRun = tickAuto;
                 tickAuto = false;
                 if (autoRun && !summary.startsWith("Stopped") && !lastMissed.isEmpty() && !testMode()) {
@@ -445,7 +461,7 @@ public class InspectorService extends AccessibilityService {
         }, v -> toggleAutoClear());
         booker = new Booker(this, (summary, log) -> {
             saveReport(log);
-            goButton.setText("▶\nGo");
+            goButton.setText(goLabel());
             bookButton.setText("📅\nBook");
             finished(summary);
             if (retrying) {
@@ -460,6 +476,10 @@ public class InspectorService extends AccessibilityService {
                 // Go started on page 3: no page change to wait for - Tick at once.
                 if (booker.startedOnSevaks()) tickNow();
                 else tickAfterGo();
+            } else if (AutoFlow.goActive) {
+                // Page 2 didn't get through: Go's run stops here - finish it by hand, then ▶ Go.
+                endGo();
+                Toast.makeText(this, "⏸ Go stopped on page 2 - do it by hand, then ▶ Go goes on", Toast.LENGTH_LONG).show();
             }
         });
         // The calendar's screenshot (which days are green) is taken with our buttons off it.
@@ -497,11 +517,11 @@ public class InspectorService extends AccessibilityService {
         // Go: fill the page straight away with the saved choices - no form, no reading first.
         goButton = floating("▶\nGo", 0xEE00897B, 424, v -> {
             closeCard();
-            if (pendingTick != null) {
-                cancelLinkedTick(); // Stop in the 1 s gap: Tick doesn't start
-                Toast.makeText(this, "Tick after Go cancelled", Toast.LENGTH_SHORT).show();
-            } else if (booker.isRunning()) booker.stop("Stopped");
-            else if (!busy()) startSaved();
+            if (goRunning()) {
+                stopGo();
+            } else if (!busy()) {
+                startGo();
+            }
         }, v -> {
             // Long press: choose what Go fills (from the page's own dropdown list) and save it.
             closeCard();
@@ -550,14 +570,17 @@ public class InspectorService extends AccessibilityService {
         closeCard();
         try {
             PageKind.Facts f = PageKind.read(this);
-            rememberPage1(f);
+            if (f.texts.size() < 3 || f.pkg.isEmpty()) throw new IllegalStateException();
+            keepPage1(f);
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("page1_lock_" + f.pkg, true).apply();
             PageOrder order = orders.get(f.pkg);
             if (order == null) orders.put(f.pkg, order = new PageOrder());
             order.set(1);
             lastFacts = f;
             lastKind = PageKind.Kind.SEVAK_LIST;
             pageKind = PageKind.Kind.SEVAK_LIST;
-            Toast.makeText(this, "📍 This is page 1 - pages 2, 3, 4 follow in order", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "📍 Page 1 set (and locked): pages 2, 3, 4 follow - Back never goes past it",
+                    Toast.LENGTH_LONG).show();
             checkPage();
         } catch (RuntimeException e) {
             Toast.makeText(this, "📍 Couldn't read this page", Toast.LENGTH_SHORT).show();
@@ -640,6 +663,89 @@ public class InspectorService extends AccessibilityService {
         ticker.start();
     }
 
+    // ---- ▶ Go: the whole booking from the page in front, stoppable and resumable ----------
+
+    private final Runnable goTimeout = () -> {
+        if (AutoFlow.goActive) endGo();
+    };
+
+    private String goLabel() {
+        return AutoFlow.goActive ? "■\nStop" : "▶\nGo";
+    }
+
+    /** Anything of Go's run is going on now. */
+    private boolean goRunning() {
+        return AutoFlow.goActive || pendingTick != null || booker.isRunning() || retrying
+                || (flow != null && flow.busy());
+    }
+
+    /**
+     * ▶ Go: fully automatic from whichever page is open - page 1: Continue; page 2: fill it;
+     * page 3: Tick (rows not added: back, delete, forward); page 4: Confirm. It goes on by
+     * itself until page 4 is confirmed. Stopped (or something fails): do that step by hand,
+     * then ▶ Go again goes on from the page you're on.
+     */
+    private void startGo() {
+        AutoFlow.goActive = true;
+        handler.removeCallbacks(goTimeout);
+        handler.postDelayed(goTimeout, 4 * 60_000); // never left on by itself for long
+        goButton.setText(goLabel());
+        PageKind.Facts f = null;
+        try {
+            f = PageKind.read(this);
+        } catch (RuntimeException ignored) {
+        }
+        if (f != null && PageKind.decide(f) == PageKind.Kind.CONFIRM) {
+            AccessibilityNodeInfo c = pressableButton(PageKind::isConfirm);
+            if (testMode() || testTrip()) {
+                Toast.makeText(this, "🧪 Test: page 4 - Confirm is left for you", Toast.LENGTH_SHORT).show();
+            } else if (c != null) {
+                press(c);
+                Toast.makeText(this, "▶ Go: page 4 - Confirm pressed", Toast.LENGTH_SHORT).show();
+            } else {
+                Toast.makeText(this, "▶ Go: page 4 but its Confirm is off", Toast.LENGTH_SHORT).show();
+            }
+            endGo();
+            return;
+        }
+        startSaved();
+    }
+
+    /** ■ Stop: everything of Go's run stops - do the step by hand, then ▶ Go goes on from there. */
+    private void stopGo() {
+        AutoFlow.goActive = false; // first: what stops below doesn't report it as a failure
+        cancelLinkedTick();
+        if (booker.isRunning()) booker.stop("Stopped");
+        if (ticker.isRunning()) ticker.stop("Stopped");
+        if (deleting()) deleter.stop("Stopped");
+        if (flow != null) flow.cancel();
+        if (retrying) {
+            retrying = false;
+            testTripEnded();
+            saveRetryLog("↻ Retry stopped: ■ Stop on Go");
+        }
+        endGo();
+        Toast.makeText(this, "⏸ Stopped - do this step by hand, then ▶ Go goes on from the page you're on",
+                Toast.LENGTH_LONG).show();
+    }
+
+    private void endGo() {
+        AutoFlow.goActive = false;
+        handler.removeCallbacks(goTimeout);
+        if (goButton != null) goButton.setText(goLabel());
+    }
+
+    private String lastPkg() {
+        return lastFacts != null ? lastFacts.pkg
+                : getSharedPreferences("settings", MODE_PRIVATE).getString("booking_pkg", "");
+    }
+
+    /** You marked page 1 (long-press 🤖) for this app. */
+    private boolean page1Locked(String pkg) {
+        return pkg != null && !pkg.isEmpty()
+                && getSharedPreferences("settings", MODE_PRIVATE).getBoolean("page1_lock_" + pkg, false);
+    }
+
     /** Go got past the slot page: Tick starts 1 s from now (tap Go in the gap to cancel it). */
     private void tickAfterGo() {
         cancelLinkedTick();
@@ -647,7 +753,7 @@ public class InspectorService extends AccessibilityService {
         goButton.setText("⏱\nCancel");
         pendingTick = () -> {
             pendingTick = null;
-            goButton.setText("▶\nGo");
+            goButton.setText(goLabel());
             if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
             if (stillPage2()) return;
             tickButton.setText("■\nStop");
@@ -681,7 +787,7 @@ public class InspectorService extends AccessibilityService {
         if (pendingTick == null) return;
         handler.removeCallbacks(pendingTick);
         pendingTick = null;
-        goButton.setText("▶\nGo");
+        goButton.setText(goLabel());
     }
 
     // ---- which round buttons are on the screen (chosen in the app) ---------------------
@@ -787,13 +893,14 @@ public class InspectorService extends AccessibilityService {
         String d = prefs.getString("book_date", "");
         if (!d.isEmpty() && !Booker.parseDate(d, plan)) d = "";
         if (plan.option.isEmpty() && d.isEmpty()) {
+            endGo();
             Toast.makeText(this, "Nothing chosen yet - choose in Book first", Toast.LENGTH_SHORT).show();
             Booker.options(this, handler, this::askBooking);
             return;
         }
         Toast.makeText(this, "Go: " + (plan.option.isEmpty() ? "" : plan.option) + (d.isEmpty() ? "" : " · " + d)
                 + (plan.radio.isEmpty() ? "" : " · " + plan.radio), Toast.LENGTH_SHORT).show();
-        goButton.setText("■\nStop");
+        goButton.setText(AutoFlow.goActive ? goLabel() : "■\nStop");
         cancelLinkedTick();
         if (!retrying) {
             retryUsed = false; // a new booking: its one retry again
@@ -813,7 +920,7 @@ public class InspectorService extends AccessibilityService {
             PageKind.Facts f3 = goFacts;
             // Empty boxes: Tick ticks them (it clears each pop-up) - with 🤖 on or off.
             if (f3 != null && PageKind.decide(f3) == PageKind.Kind.TICKING && f3.empty() > 0 && !f3.contOn) {
-                goButton.setText("▶\nGo");
+                goButton.setText(goLabel());
                 Toast.makeText(this, "Go: already on page 3 - Tick", Toast.LENGTH_SHORT).show();
                 tickButton.setText("■\nStop");
                 ticker.start();
@@ -821,7 +928,7 @@ public class InspectorService extends AccessibilityService {
             }
             if (f3 != null && PageKind.decide(f3) == PageKind.Kind.TICKING && f3.empty() == 0 && f3.contOn) {
                 AccessibilityNodeInfo c3 = pressableButton(PageKind::isContinue);
-                goButton.setText("▶\nGo");
+                goButton.setText(goLabel());
                 if (c3 != null) {
                     if (linkOn() && flow != null && !testTrip()) {
                         flow.watchConfirm(c3.getPackageName() == null ? "" : c3.getPackageName().toString());
@@ -836,15 +943,17 @@ public class InspectorService extends AccessibilityService {
         if (!retrying && onPage1(goFacts)) {
             AccessibilityNodeInfo c = pressableButton(PageKind::isContinue);
             if (c == null) {
-                goButton.setText("▶\nGo");
+                endGo();
                 Toast.makeText(this, "Go: on page 1 but its Continue is off", Toast.LENGTH_SHORT).show();
                 return;
             }
             Toast.makeText(this, "Go: page 1 - Continue, then page 2", Toast.LENGTH_SHORT).show();
             press(c);
+            boolean go = AutoFlow.goActive;
             awaitPage(PageKind.Kind.CALENDAR, 6000, ok -> {
+                if (go && !AutoFlow.goActive) return; // ■ Stop meanwhile
                 if (!ok) {
-                    goButton.setText("▶\nGo");
+                    endGo();
                     Toast.makeText(this, "Go: page 2 didn't come after page 1's Continue", Toast.LENGTH_SHORT).show();
                     return;
                 }
@@ -1160,6 +1269,7 @@ public class InspectorService extends AccessibilityService {
 
     private void endRetry(String why) {
         retrying = false;
+        endGo();
         testTripEnded();
         saveRetryLog("↻ Retry stopped: " + why);
         Toast.makeText(this, "↻ Retry stopped: " + why, Toast.LENGTH_LONG).show();
