@@ -13,9 +13,9 @@ import android.view.Display;
 import java.util.function.Consumer;
 
 /**
- * Whether the slot's round button is chosen: the page reports no state for it, so a screenshot
- * shows it - chosen, its circle is filled with the app's purple; not chosen, an empty ring.
- * {@code done} gets true / false, or null when it can't be told (no screenshot before Android 11).
+ * Page 2 as it is drawn: the page reports no state for the slot's round button and a stale
+ * one for the declaration checkbox, so a screenshot shows them - the slot chosen when its
+ * circle is filled, the checkbox ticked when its row has a coloured (filled) square.
  */
 final class SlotLook {
 
@@ -25,8 +25,16 @@ final class SlotLook {
     private SlotLook() {
     }
 
-    static void chosen(AccessibilityService service, Rect r, Consumer<Boolean> hide, Consumer<Boolean> done) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || r == null || r.width() < 8 || r.height() < 8) {
+    static boolean canShoot() {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+    }
+
+    /**
+     * A screenshot (our buttons hidden for it), handed to {@code done} on the main thread -
+     * the caller recycles it - or null when none can be taken (before Android 11).
+     */
+    static void shot(AccessibilityService service, Consumer<Boolean> hide, Consumer<Bitmap> done) {
+        if (!canShoot()) {
             done.accept(null);
             return;
         }
@@ -35,11 +43,10 @@ final class SlotLook {
             t.start();
             worker = new Handler(t.getLooper());
         }
-        shoot(service, r, hide, done, 0);
+        shoot(service, hide, done, 0);
     }
 
-    private static void shoot(AccessibilityService service, Rect r, Consumer<Boolean> hide,
-            Consumer<Boolean> done, int tries) {
+    private static void shoot(AccessibilityService service, Consumer<Boolean> hide, Consumer<Bitmap> done, int tries) {
         hide.accept(true);
         MAIN.postDelayed(() -> {
             try {
@@ -47,26 +54,22 @@ final class SlotLook {
                         new AccessibilityService.TakeScreenshotCallback() {
                             @Override
                             public void onSuccess(AccessibilityService.ScreenshotResult result) {
-                                Boolean out = null;
+                                Bitmap out = null;
                                 HardwareBuffer hb = result.getHardwareBuffer();
                                 try {
                                     Bitmap hw = Bitmap.wrapHardwareBuffer(hb, result.getColorSpace());
                                     if (hw != null) {
-                                        Bitmap bmp = hw.copy(Bitmap.Config.ARGB_8888, false);
+                                        out = hw.copy(Bitmap.Config.ARGB_8888, false);
                                         hw.recycle();
-                                        if (bmp != null) {
-                                            out = filled(bmp, r);
-                                            bmp.recycle();
-                                        }
                                     }
                                 } catch (RuntimeException ignored) {
                                 } finally {
                                     hb.close();
                                 }
-                                Boolean result2 = out;
+                                Bitmap bmp = out;
                                 MAIN.post(() -> {
                                     hide.accept(false);
-                                    done.accept(result2);
+                                    done.accept(bmp);
                                 });
                             }
 
@@ -74,11 +77,11 @@ final class SlotLook {
                             public void onFailure(int errorCode) {
                                 MAIN.post(() -> {
                                     hide.accept(false);
-                                    // Screenshots come at most ~3 a second: the calendar's just
-                                    // before may be too close - tried again shortly.
+                                    // Screenshots come at most ~3 a second: one just before may
+                                    // be too close - tried again shortly.
                                     if (errorCode == AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT
-                                            && tries < 3) {
-                                        MAIN.postDelayed(() -> shoot(service, r, hide, done, tries + 1), 350);
+                                            && tries < 4) {
+                                        MAIN.postDelayed(() -> shoot(service, hide, done, tries + 1), 350);
                                     } else {
                                         done.accept(null);
                                     }
@@ -92,8 +95,8 @@ final class SlotLook {
         }, 60);
     }
 
-    /** The middle of the circle (its inner half) is mostly coloured, not white: chosen. */
-    static boolean filled(Bitmap bmp, Rect r) {
+    /** Share (0-100) of the circle's middle (its inner half) that is coloured, not white. */
+    static int fill(Bitmap bmp, Rect r) {
         int coloured = 0, seen = 0;
         int cx = r.centerX(), cy = r.centerY(), rad = Math.min(r.width(), r.height()) / 4;
         for (int dx = -rad; dx <= rad; dx += Math.max(1, rad / 4)) {
@@ -105,7 +108,35 @@ final class SlotLook {
                 if (isFill((c >> 16) & 0xFF, (c >> 8) & 0xFF, c & 0xFF)) coloured++;
             }
         }
-        return seen > 0 && coloured * 10 >= seen * 4;
+        return seen == 0 ? 0 : coloured * 100 / seen;
+    }
+
+    /** The slot's round button is chosen: its middle mostly filled. */
+    static boolean filled(Bitmap bmp, Rect r) {
+        return fill(bmp, r) >= 40;
+    }
+
+    /** Coloured (saturated) pixels in this band of the screen, counted every 2nd pixel ×4. */
+    static int colouredIn(Bitmap bmp, Rect band) {
+        int n = 0;
+        int x0 = Math.max(0, band.left), x1 = Math.min(bmp.getWidth(), band.right);
+        int y0 = Math.max(0, band.top), y1 = Math.min(bmp.getHeight(), band.bottom);
+        for (int y = y0; y < y1; y += 2) {
+            for (int x = x0; x < x1; x += 2) {
+                int c = bmp.getPixel(x, y);
+                int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+                if (isColour(r, g, b)) n++;
+            }
+        }
+        return n * 4;
+    }
+
+    /**
+     * The checkbox's row has a filled square: at least ~30% of a square the row's height in
+     * colour (an empty box is a grey outline, its words black / grey).
+     */
+    static boolean ticked(int coloured, int rowHeight) {
+        return coloured >= rowHeight * rowHeight * 3 / 10;
     }
 
     /** A filled dot: the app's purple, or any clearly coloured / dark pixel (not white or pale grey). */
@@ -113,5 +144,11 @@ final class SlotLook {
         if (DayPick.isPurple(r, g, b)) return true;
         int max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b));
         return max < 150 || max - min > 60;
+    }
+
+    /** A clearly coloured pixel (not white, grey or black). */
+    static boolean isColour(int r, int g, int b) {
+        int max = Math.max(r, Math.max(g, b)), min = Math.min(r, Math.min(g, b));
+        return max - min > 70 && max > 90;
     }
 }

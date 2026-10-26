@@ -647,8 +647,16 @@ final class Booker {
      */
     private void chooseSlot(AccessibilityNodeInfo r, boolean unsure, Runnable then) {
         int g = gen;
-        inView(r, 0, v -> SlotLook.chosen(service, v, hideOverlays, chosen -> {
-            if (!running || g != gen) return;
+        inView(r, 0, v -> SlotLook.shot(service, hideOverlays, bmp -> {
+            if (!running || g != gen) {
+                if (bmp != null) bmp.recycle();
+                return;
+            }
+            Boolean chosen = null;
+            if (bmp != null) {
+                chosen = SlotLook.filled(bmp, v);
+                bmp.recycle();
+            }
             if (Boolean.TRUE.equals(chosen)) {
                 log("slot: already chosen (seen on screen) - left as it is");
                 done.append("✓ Slot (already chosen)\n");
@@ -679,8 +687,160 @@ final class Booker {
         boxDone = false;
         reticked = false;
         slotChecks = 0;
+        slotTaps = 0;
+        boxTries = 0;
         restStart = SystemClock.uptimeMillis();
-        rest(0);
+        if (SlotLook.canShoot()) look2(0);
+        else rest(0);
+    }
+
+    // ---- page 2 by what the screen shows (every time: first visit and back again) -------
+
+    private int slotTaps, boxTries;
+
+    /**
+     * Page 2 judged from a screenshot each round, not from what the page reports (TTD reports
+     * no state for the slot's round button and a stale one for the checkbox):
+     * <ol>
+     *   <li>the slot first - looked at; tapped only when it looks empty, then looked at again;</li>
+     *   <li>then the checkbox - Continue on: done; else looked at, tapped only when it looks
+     *       empty, then looked at again;</li>
+     *   <li>Continue the moment it turns on.</li>
+     * </ol>
+     */
+    private void look2(int round) {
+        if (round >= 16) {
+            stop("✗ Page 2: Continue stayed off (slot / checkbox as seen on screen: see the steps above)");
+            return;
+        }
+        // Continue on: the slot and the checkbox are both set - a tap would only undo one.
+        if (continueOn()) {
+            log("continue: on - pressing it");
+            pressContinue(0);
+            return;
+        }
+        long waited = SystemClock.uptimeMillis() - restStart;
+        AccessibilityNodeInfo slot = findRadio();
+        AccessibilityNodeInfo box = findBox();
+        // Still drawing: up to 1.5 s for both the slot and the checkbox to show.
+        if ((slot == null || box == null) && waited < 1500) {
+            later(() -> look2(round), 100);
+            return;
+        }
+        if (slot != null && isRadio(slot)) {
+            // A real radio reports its state: chosen through it, as before.
+            if (!radioDone && !slot.isChecked()) {
+                radioDone = true;
+                chooseRadio(slot, () -> look2(round + 1));
+                return;
+            }
+            look2Box(round);
+            return;
+        }
+        if (slot == null) {
+            if (round == 0) log("slot: none on the page");
+            look2Box(round);
+            return;
+        }
+        int g = gen;
+        inView(slot, 0, at -> SlotLook.shot(service, hideOverlays, bmp -> {
+            if (!running || g != gen) {
+                if (bmp != null) bmp.recycle();
+                return;
+            }
+            if (bmp == null) {
+                log("screen: no screenshot - going on by what the page reports");
+                rest(0);
+                return;
+            }
+            int pct = SlotLook.fill(bmp, at);
+            bmp.recycle();
+            if (pct >= 40) {
+                if (slotTaps == 0) done.append("✓ Slot (already chosen)\n");
+                log("screen: slot chosen (" + pct + "% filled)");
+                look2Box(round);
+            } else if (slotTaps < 3) {
+                slotTaps++;
+                log("screen: slot empty (" + pct + "% filled) - tapping its round button at "
+                        + at.centerX() + "," + at.centerY());
+                tap(at.centerX(), at.centerY());
+                if (slotTaps == 1) done.append("✓ Slot (round button)\n");
+                later(() -> look2(round + 1), 350);
+            } else {
+                log("screen: slot still looks empty (" + pct + "% filled) after 3 taps - going on");
+                look2Box(round);
+            }
+        }));
+    }
+
+    private void look2Box(int round) {
+        if (continueOn()) {
+            log("continue: on - pressing it");
+            pressContinue(0);
+            return;
+        }
+        AccessibilityNodeInfo box = findBox();
+        if (box == null) {
+            if (SystemClock.uptimeMillis() - restStart < 4000) later(() -> look2(round + 1), 150);
+            else stop("✗ Continue stayed off - no checkbox found");
+            return;
+        }
+        int g = gen;
+        inView(box, 0, at -> SlotLook.shot(service, hideOverlays, bmp -> {
+            if (!running || g != gen) {
+                if (bmp != null) bmp.recycle();
+                return;
+            }
+            if (bmp == null) {
+                rest(0);
+                return;
+            }
+            // The checkbox's row across the screen (its square may be drawn left of its box).
+            Rect row = new Rect(0, at.top, bmp.getWidth(), at.bottom);
+            int coloured = SlotLook.colouredIn(bmp, row);
+            bmp.recycle();
+            boolean ticked = SlotLook.ticked(coloured, at.height());
+            if (continueOn()) {
+                log("continue: on - pressing it");
+                pressContinue(0);
+                return;
+            }
+            if (ticked) {
+                log("screen: checkbox ticked (" + coloured + " coloured px) - Continue off, waiting");
+                // The page asks for the slot again: looked at again; else Continue awaited.
+                waitFor(this::continueOn, 600, on -> {
+                    if (on) pressContinue(0);
+                    else look2(round + 1);
+                });
+                return;
+            }
+            if (boxTries >= 4) {
+                stop("✗ Checkbox still looks empty after 4 tries (" + coloured + " coloured px)");
+                return;
+            }
+            boxTries++;
+            Page.Before before = new Page.Before(service);
+            switch (boxTries) {
+                case 1:
+                case 4:
+                    log("screen: checkbox empty (" + coloured + " coloured px) - clicking it");
+                    box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    break;
+                case 2:
+                    log("screen: checkbox still empty - tapping it at " + at.centerX() + "," + at.centerY());
+                    tap(at.centerX(), at.centerY());
+                    break;
+                default:
+                    int x = at.left + at.height() / 2;
+                    log("screen: checkbox still empty - tapping its left edge at " + x + "," + at.centerY());
+                    tap(x, at.centerY());
+            }
+            if (boxTries == 1) done.append("✓ Checkbox ticked\n");
+            waitFor(() -> continueOn() || Page.popup(service, before) != null, 700, seen -> {
+                if (Page.popup(service, before) != null) afterTickPopup(before, () -> look2(round + 1));
+                else look2(round + 1);
+            });
+        }));
     }
 
     private long restStart;
