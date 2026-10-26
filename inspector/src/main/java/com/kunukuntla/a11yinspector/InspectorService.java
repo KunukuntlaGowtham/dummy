@@ -1204,11 +1204,40 @@ public class InspectorService extends AccessibilityService {
     }
 
     /**
+     * Page 2 again, quick (Settings): the same order as the usual way - the checkbox clicked
+     * first - then the full Go at once, with no waiting for the checkbox to read ticked or for
+     * Continue (that wait is what took the ~5 s).
+     */
+    private void retryPage2Quick() {
+        rlog("page 2 (quick): waiting for its checkbox");
+        waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
+            AccessibilityNodeInfo box = emptyBox();
+            if (box != null) {
+                rlog("page 2 (quick): checkbox \"" + cutLabel(box) + "\" - clicked, then Go at once");
+                box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            } else {
+                rlog(seen ? "page 2 (quick): checkbox already ticked - Go at once" : "page 2 (quick): no checkbox in 3 s - Go");
+            }
+            if (!hasSavedPlan()) {
+                endRetry("page 2 needs Go, but nothing is saved in 📅 Book");
+                return;
+            }
+            handler.postDelayed(() -> {
+                if (!destroyed && retrying) startSaved();
+            }, 150);
+        });
+    }
+
+    /**
      * Page 2 again: everything is still chosen but its checkbox. The checkbox shows a moment
      * after the calendar: up to 3 s for it, then ticked (a click, checked; else a tap where it
      * is drawn, checked), then Continue the moment it is on.
      */
     private void retryPage2() {
+        if (getSharedPreferences("settings", MODE_PRIVATE).getBoolean("retry_quick_go", false)) {
+            retryPage2Quick();
+            return;
+        }
         rlog("page 2: waiting for its checkbox");
         waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
             AccessibilityNodeInfo box = emptyBox();
