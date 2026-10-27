@@ -87,10 +87,10 @@ public class InspectorService extends AccessibilityService {
                     Toast.LENGTH_SHORT).show();
             Auth.check(this, ok -> Toast.makeText(this, ok ? "✓ Account checked - tap again"
                     : Auth.hasSession(this) ? "🔒 Still locked - connect to the internet and tap again"
-                    : "🔒 Signed out - open the A11y Inspector app", Toast.LENGTH_LONG).show());
+                    : "🔒 Signed out - open the Gowtham app", Toast.LENGTH_LONG).show());
             return true;
         }
-        Toast.makeText(this, Auth.configured() ? "🔒 Sign in first - open the A11y Inspector app"
+        Toast.makeText(this, Auth.configured() ? "🔒 Sign in first - open the Gowtham app"
                 : "🔒 Sign-in isn't set up in this build", Toast.LENGTH_LONG).show();
         return true;
     }
@@ -1386,7 +1386,7 @@ public class InspectorService extends AccessibilityService {
 
     private void saveRetryLog(String end) {
         rlog(end);
-        saveReport("A11y Inspector - Auto retry\n=========================\n" + end + "\n\nSTEPS\n" + retryLog);
+        saveReport("Gowtham - Auto retry\n=========================\n" + end + "\n\nSTEPS\n" + retryLog);
         retryLog.setLength(0);
     }
 
@@ -2058,7 +2058,7 @@ public class InspectorService extends AccessibilityService {
             code = "Page code failed: " + e;
         }
         String when = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
-        saveReport("A11y Inspector - page code - " + when + "\n=================================================\n" + code);
+        saveReport("Gowtham - page code - " + when + "\n=================================================\n" + code);
         String[] lines = code.split("\n");
         StringBuilder head = new StringBuilder();
         for (int i = 0; i < Math.min(lines.length, 60); i++) head.append(lines[i]).append('\n');

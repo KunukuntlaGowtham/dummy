@@ -413,7 +413,7 @@ final class Ticker {
             summary += lines;
         }
         behaviour = null;
-        listener.done(summary, "A11y Inspector - " + (clearOnly ? "Clear pop-ups" : "Tick run")
+        listener.done(summary, "Gowtham - " + (clearOnly ? "Clear pop-ups" : "Tick run")
                 + "\n=========================\n" + summary + reacted + "\n\nSTEPS\n" + log);
     }
 

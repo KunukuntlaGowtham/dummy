@@ -415,7 +415,7 @@ final class RawScan {
         String stop(String pkg) {
             on = false;
             StringBuilder sb = new StringBuilder();
-            sb.append("A11y Inspector - events recorded (").append(pkg).append(")\n")
+            sb.append("Gowtham - events recorded (").append(pkg).append(")\n")
                     .append("================================================\n");
             int total = 0;
             for (int c : counts.values()) total += c;

@@ -135,7 +135,7 @@ final class Booker {
         gen++;
         log("END: " + why);
         String summary = why + (done.length() == 0 ? "" : "\n" + done);
-        listener.done(summary, "A11y Inspector - Book run\n=========================\n" + summary
+        listener.done(summary, "Gowtham - Book run\n=========================\n" + summary
                 + "\n\nSTEPS\n" + log);
     }
 

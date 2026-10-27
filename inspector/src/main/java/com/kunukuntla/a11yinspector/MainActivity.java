@@ -561,7 +561,7 @@ public class MainActivity extends Activity {
 
         LinearLayout start = new LinearLayout(this);
         start.setOrientation(LinearLayout.VERTICAL);
-        start.addView(numbered(1, "Turn A11y Inspector on in Accessibility (the chip at the top of this app)."));
+        start.addView(numbered(1, "Turn Gowtham on in Accessibility (the chip at the top of this app)."));
         start.addView(numbered(2, "⚙ Settings → 🤖 Auto flow: choose page 2's option, date and slot (or 📅 Book on page 2)."));
         start.addView(numbered(3, "Open the TTD app. The round buttons float at the side - drag them anywhere."));
         start.addView(numbered(4, "On the sevaks list, long-press 🤖 once: \"this is page 1\" (locked - Back never goes past it)."));

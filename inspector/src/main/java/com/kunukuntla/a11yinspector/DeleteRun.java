@@ -109,7 +109,7 @@ final class DeleteRun {
         if (!deleted.isEmpty()) sum.append("🗑 Deleted: ").append(join(deleted)).append('\n');
         if (!failed.isEmpty()) sum.append("✗ Not deleted: ").append(join(failed)).append('\n');
         sum.append("⏱ ").append(SystemClock.uptimeMillis() - start).append(" ms");
-        listener.done(sum.toString(), "A11y Inspector - Delete (testing)\n=========================\n" + sum
+        listener.done(sum.toString(), "Gowtham - Delete (testing)\n=========================\n" + sum
                 + "\n\nSTEPS\n" + log);
     }
 

@@ -197,7 +197,7 @@ final class Scanner {
         sum.append(auto.summary);
 
         StringBuilder rep = new StringBuilder();
-        rep.append("A11y Inspector - ").append(when).append('\n');
+        rep.append("Gowtham - ").append(when).append('\n');
         rep.append("=================================================\n");
         rep.append(sum).append('\n');
         rep.append(where[1]).append('\n');

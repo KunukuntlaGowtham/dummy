@@ -35,13 +35,13 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon :inspector:testDebugUnitTest :inspector:assembleDebug -PversionCode=${{ github.run_number }}
-          cp inspector/build/outputs/apk/debug/inspector-debug.apk A11yInspector.apk
-          ls -l A11yInspector.apk
+          cp inspector/build/outputs/apk/debug/inspector-debug.apk Gowtham.apk
+          ls -l Gowtham.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: A11yInspector-apk
-          path: A11yInspector.apk
+          name: Gowtham-apk
+          path: Gowtham.apk
 
       # What this build has: the last changes, for the release notes.
       - name: Release notes
@@ -52,7 +52,7 @@ jobs:
             git log -8 --pretty=format:'- %s' -- inspector .github/workflows/inspector.yml
             echo
             echo
-            echo "**Download:** https://github.com/${{ github.repository }}/releases/download/inspector-${{ github.run_number }}/A11yInspector.apk"
+            echo "**Download:** https://github.com/${{ github.repository }}/releases/download/inspector-${{ github.run_number }}/Gowtham.apk"
             echo
             echo "Built from ${{ github.sha }} (branch ${{ github.ref_name }})."
           } > notes.md
@@ -63,7 +63,7 @@ jobs:
         with:
           tag_name: inspector-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: A11y Inspector build ${{ github.run_number }}
+          name: Gowtham build ${{ github.run_number }}
           body_path: notes.md
-          files: A11yInspector.apk
+          files: Gowtham.apk
           make_latest: "false"

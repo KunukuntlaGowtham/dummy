@@ -84,7 +84,7 @@ final class WholePage {
         for (Map.Entry<String, Integer> e : kinds.entrySet()) parts.add(e.getValue() + " " + e.getKey());
         sum.append("   ").append(String.join(", ", parts)).append('\n');
         StringBuilder rep = new StringBuilder();
-        rep.append("A11y Inspector - whole page scan\n=================================\n").append(sum)
+        rep.append("Gowtham - whole page scan\n=================================\n").append(sum)
                 .append("\nWHAT EACH SCREEN BROUGHT (scrolling down)\n");
         for (String s : perScreen) rep.append(s);
         done.done(sum.toString(), rep.toString());
