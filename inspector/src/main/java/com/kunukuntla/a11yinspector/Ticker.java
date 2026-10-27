@@ -364,7 +364,10 @@ final class Ticker {
         okSpot = spot == null ? null : Rect.unflattenFromString(spot);
         coverApp = service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE)
                 .getBoolean("cover_" + spotKey, false);
-        runSpot = null;
+        // Learned before: the OK's place from the last run is tried on the first cover straight
+        // away (no screenshot) - checked: the cover still up after it, OK is found on a screenshot.
+        runSpot = !clear && coverApp && okSpot != null ? new Rect(okSpot) : null;
+        coverThisRun = false;
         if (!clear) missedChanged(); // a new run: nothing missed yet
     }
 
@@ -568,10 +571,11 @@ final class Ticker {
 
     /**
      * How long to watch for a pop-up after a tick: once one has come, as long as it took plus
-     * 0.7 s (the page is learned); before that up to 3 s; 0.8 s once none came for 2 boxes.
+     * 0.4 s (learned from the first pop-up); before that up to 3 s; 0.8 s once none came for 2 boxes.
      */
     private long waitMs() {
-        if (popDelay > 0) return Math.min(3000, popDelay + 700);
+        // Learned from this run's first pop-up: as long as it took, plus a little.
+        if (popDelay > 0) return Math.min(3000, popDelay + 400);
         return quietBoxes >= 2 ? 800 : 3000;
     }
 
@@ -671,7 +675,8 @@ final class Ticker {
                     } else {
                         // A cover app and no cover came: one screenshot still, so a pop-up drawn
                         // without its cover isn't missed (only rows where nothing came pay for it).
-                        if (coverApp && shots && popupTaps == 0 && before != null && !lastChance) {
+                        // (Not once this run's pop-ups have come with their cover: they always do.)
+                        if (coverApp && shots && popupTaps == 0 && before != null && !lastChance && !coverThisRun) {
                             lastChance = true;
                             int g2 = gen;
                             later(() -> finder.find(r -> {
@@ -756,6 +761,8 @@ final class Ticker {
     private boolean coverApp;
     /** One screenshot at the end of a quiet watch was taken for this row (cover apps). */
     private boolean lastChance;
+    /** A pop-up came with its cover this run: rows with no cover need no last screenshot. */
+    private boolean coverThisRun;
     /**
      * Where OK was tapped this run and the pop-up's cover then went: the next cover gets a tap
      * there straight away, no screenshot. Found again on a screenshot when a tap there doesn't
@@ -782,6 +789,7 @@ final class Ticker {
                 + " - its place is remembered");
         tap(r.centerX(), r.centerY());
         if (Page.coverCame(service, before)) {
+            coverThisRun = true;
             waitCoverGoneSince(before, SystemClock.uptimeMillis(), r, then);
         } else {
             later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
@@ -796,6 +804,7 @@ final class Ticker {
         popupTaps++;
         popupsSeen = true;
         quietBoxes = 0;
+        coverThisRun = true;
         log("pop-up: its cover came - tapping OK where it was this run (" + runSpot.centerX() + ","
                 + runSpot.centerY() + "), no screenshot");
         tap(runSpot.centerX(), runSpot.centerY());
