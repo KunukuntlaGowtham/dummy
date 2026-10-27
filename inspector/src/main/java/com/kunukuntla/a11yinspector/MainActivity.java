@@ -26,6 +26,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.io.FileInputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
@@ -112,6 +114,7 @@ public class MainActivity extends Activity {
         LinearLayout settings = new LinearLayout(this);
         settings.setOrientation(LinearLayout.VERTICAL);
         settings.setPadding(0, dp(4), 0, dp(24));
+        settings.addView(card("⚡ Speed check (this phone)", 0xFFE65100, speedCheck()));
         settings.addView(card("👤 Account", 0xFF5856D6, account()));
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
         settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
@@ -179,6 +182,7 @@ public class MainActivity extends Activity {
             return;
         }
         if (status == null) return;
+        fillSpeedCheck();
         if (refreshDate != null) refreshDate.run();
         boolean on = serviceOn();
         status.setText(on ? "●  Scan button is on" : "○  Off - tap to turn on in Accessibility");
@@ -459,6 +463,125 @@ public class MainActivity extends Activity {
     }
 
     /** What other phones may need: battery, restricted settings, and what older Android can't do. */
+    // ---- ⚡ Speed check: what on this phone makes Tick and Delete slow ---------------------
+
+    private LinearLayout speedBox;
+
+    /** Filled again each time the app is opened (the settings may have been changed meanwhile). */
+    private View speedCheck() {
+        speedBox = new LinearLayout(this);
+        speedBox.setOrientation(LinearLayout.VERTICAL);
+        fillSpeedCheck();
+        return speedBox;
+    }
+
+    private void fillSpeedCheck() {
+        if (speedBox == null) return;
+        speedBox.removeAllViews();
+        int bad = 0;
+        android.content.ContentResolver cr = getContentResolver();
+
+        // 1. Animations: every page change and pop-up waits for them.
+        float anim = Math.max(Settings.Global.getFloat(cr, Settings.Global.ANIMATOR_DURATION_SCALE, 1f),
+                Math.max(Settings.Global.getFloat(cr, Settings.Global.TRANSITION_ANIMATION_SCALE, 1f),
+                        Settings.Global.getFloat(cr, Settings.Global.WINDOW_ANIMATION_SCALE, 1f)));
+        boolean animOk = anim <= 0.5f;
+        if (!animOk) bad++;
+        speedBox.addView(speedRow(animOk, "Animations " + (anim == 0f ? "off" : anim + "x"),
+                "Developer options → Window, Transition and Animator duration scale → 0.5x or Off. "
+                        + "(No Developer options? About phone → tap Build number 7 times.)",
+                "Developer options", new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)));
+
+        // 2. Battery optimisation: the phone slows the app down in the background.
+        android.os.PowerManager pm = getSystemService(android.os.PowerManager.class);
+        boolean unrestricted = pm != null && pm.isIgnoringBatteryOptimizations(getPackageName());
+        if (!unrestricted) bad++;
+        speedBox.addView(speedRow(unrestricted, unrestricted ? "Battery: unrestricted" : "Battery: optimised (slowed down)",
+                "App info → Battery → Unrestricted / No restrictions (Xiaomi: also Autostart on).",
+                "App info", new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:" + getPackageName()))));
+
+        // 3. Battery saver: slows the whole phone.
+        boolean saver = pm != null && pm.isPowerSaveMode();
+        if (saver) bad++;
+        speedBox.addView(speedRow(!saver, saver ? "Battery saver is ON" : "Battery saver off",
+                "Turn Battery saver / Power saving off while booking.",
+                "Battery saver", new Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)));
+
+        // 4. Other accessibility services: each one is told of every change on the page too.
+        String enabled = Settings.Secure.getString(cr, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+        List<String> others = new ArrayList<>();
+        if (enabled != null) {
+            for (String s : enabled.split(":")) {
+                if (s.isEmpty() || s.startsWith(getPackageName() + "/")) continue;
+                String pkg = s.contains("/") ? s.substring(0, s.indexOf('/')) : s;
+                others.add(appName(pkg));
+            }
+        }
+        boolean alone = others.isEmpty();
+        if (!alone) bad++;
+        speedBox.addView(speedRow(alone, alone ? "No other accessibility apps on"
+                        : "Other accessibility apps on: " + TextUtils.join(", ", others),
+                "Accessibility → turn the others off while booking (TalkBack, auto-clickers, overlays).",
+                "Accessibility", new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+
+        // 5. Android version: 13+ reads the page in batches; 11+ can take screenshots.
+        int sdk = Build.VERSION.SDK_INT;
+        boolean newEnough = sdk >= 33;
+        speedBox.addView(speedRow(newEnough, "Android " + Build.VERSION.RELEASE
+                        + (sdk >= 33 ? " - fast page reads" : sdk >= 30 ? " - slower page reads (13+ is faster)"
+                        : " - no screenshots (11+ needed), slow page reads"),
+                "Nothing to set: an older Android reads the page more slowly.", null, null));
+
+        // 6. Learned on this phone: where the pop-ups' buttons are (a practice run teaches it).
+        android.content.SharedPreferences pop = getSharedPreferences("popup", MODE_PRIVATE);
+        boolean learned = false;
+        for (String k : pop.getAll().keySet()) {
+            if (k.startsWith("delete_spot") || k.startsWith("ok_spot") || k.startsWith("cover_")) learned = true;
+        }
+        if (!learned) bad++;
+        speedBox.addView(speedRow(learned, learned ? "Pop-ups learned on this phone" : "Pop-ups not learned yet",
+                "Do one practice Tick and one Delete: the phone learns where the pop-ups' buttons are, "
+                        + "later runs skip the screenshot.", null, null));
+
+        TextView sum = note(bad == 0 ? "✅ Everything here is set for speed."
+                : "⚠ " + bad + (bad == 1 ? " thing slows" : " things slow") + " Tick and Delete on this phone - fix the red ones.");
+        sum.setTypeface(Typeface.DEFAULT_BOLD);
+        sum.setTextColor(bad == 0 ? 0xFF2E7D32 : 0xFFC62828);
+        speedBox.addView(sum, 0);
+    }
+
+    private String appName(String pkg) {
+        try {
+            return getPackageManager().getApplicationLabel(getPackageManager().getApplicationInfo(pkg, 0)).toString();
+        } catch (Exception e) {
+            return pkg;
+        }
+    }
+
+    /** "✅ Battery: unrestricted" / "❌ ..." with how to fix it and a button to the setting. */
+    private View speedRow(boolean ok, String title, String fix, String button, Intent open) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.VERTICAL);
+        r.setPadding(0, dp(8), 0, dp(2));
+        TextView t = new TextView(this);
+        t.setText((ok ? "✅ " : "❌ ") + title);
+        t.setTextColor(ok ? 0xFF22262A : 0xFFC62828);
+        t.setTypeface(Typeface.DEFAULT_BOLD);
+        t.setTextSize(13);
+        r.addView(t);
+        if (!ok) {
+            r.addView(note(fix));
+            if (button != null) {
+                LinearLayout row = new LinearLayout(this);
+                row.setPadding(0, dp(2), 0, 0);
+                row.addView(pill(button, v -> open(open)));
+                r.addView(row);
+            }
+        }
+        return r;
+    }
+
     private View phoneSetup() {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
