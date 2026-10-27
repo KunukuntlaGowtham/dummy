@@ -369,7 +369,7 @@ final class Ticker {
         showTries = endChecks = 0;
         popupsSeen = false;
         quietBoxes = 0;
-        shots = PurpleFinder.available();
+        shots = PurpleFinder.available(); // (Android 10 too while 📺 Share is on)
         tickTime = popDelay = waitUntil = 0;
         spotKey = "ok_spot";
         for (android.view.accessibility.AccessibilityWindowInfo w : Page.windows(service)) {
@@ -748,7 +748,9 @@ final class Ticker {
                 // With the cover in the tree a screenshot is needed only once it has come; pages
                 // that report no cover get one every second at most (screenshots slow things down).
                 long now = SystemClock.uptimeMillis();
-                boolean shotDue = cover || before == null || (!coverApp && now - lastBlindShot >= 1000);
+                // 📺 Share on: the live screen costs nothing - looked at on every look.
+                boolean shotDue = cover || before == null || ScreenShare.active()
+                        || (!coverApp && now - lastBlindShot >= 1000);
                 if (shots && shotDue && finder.waitMs() == 0) {
                     if (!cover) lastBlindShot = now;
                     int g = gen;
