@@ -178,6 +178,9 @@ final class DeleteRun {
             log("profile " + original + ": \"" + expected + "\" is number " + byName.number + " now - deleting that one");
             card = byName;
         }
+        if (expected == null && card != null) {
+            log("profile " + original + ": by number only (no name from page 3) - " + card.name);
+        }
         if (card == null || card.bin == null) {
             log("profile " + original + ": " + (card == null ? "not on the page (" + cards.size() + " profiles)"
                     : "has no delete (" + card.name + ")") + " ✗");
