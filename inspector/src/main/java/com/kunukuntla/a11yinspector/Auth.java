@@ -56,9 +56,33 @@ final class Auth {
         return c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    /** A session is kept (signed in and not signed out since). */
-    static boolean signedIn(Context c) {
+    /** Without reaching Supabase for this long, the app locks until it is online again. */
+    static final long OFFLINE_LIMIT_MS = 24L * 60 * 60 * 1000;
+    /** How often the account is checked with Supabase in the background. */
+    static final long CHECK_EVERY_MS = 15L * 60 * 1000;
+
+    /** A session is kept (signed in, not signed out since) - checked online or not. */
+    static boolean hasSession(Context c) {
         return configured() && !prefs(c).getString("refresh_token", "").isEmpty();
+    }
+
+    /**
+     * Signed in AND checked with Supabase within the last 24 h. The clock set back (to get
+     * round the 24 h) counts as not checked.
+     */
+    static boolean signedIn(Context c) {
+        if (!hasSession(c)) return false;
+        long now = System.currentTimeMillis();
+        SharedPreferences p = prefs(c);
+        long checked = p.getLong("verified_at", 0), seen = p.getLong("seen_at", 0);
+        if (now + 5 * 60_000 < seen || now + 5 * 60_000 < checked) return false; // clock moved back
+        if (now > seen + 60_000) p.edit().putLong("seen_at", now).apply();
+        return now - checked < OFFLINE_LIMIT_MS;
+    }
+
+    /** Signed in, but not checked online for 24 h: locked until it is. */
+    static boolean offlineTooLong(Context c) {
+        return hasSession(c) && !signedIn(c);
     }
 
     static String email(Context c) {
@@ -122,18 +146,34 @@ final class Auth {
     }
 
     /**
-     * The access token renewed when it is (nearly) out of date. Signed out here when the server
-     * refuses the session (signed out elsewhere, or the account removed); kept when offline.
+     * The account checked with Supabase when it's due: the access token (nearly) out of date,
+     * or 15 minutes since the last check.
      */
     static void refreshIfNeeded(Context c) {
-        if (!signedIn(c) || refreshing) return;
+        if (!hasSession(c)) return;
         long expires = prefs(c).getLong("expires_at", 0);
-        if (System.currentTimeMillis() / 1000 < expires - 120) return;
+        long checked = prefs(c).getLong("verified_at", 0);
+        boolean due = System.currentTimeMillis() / 1000 >= expires - 120
+                || System.currentTimeMillis() - checked >= CHECK_EVERY_MS;
+        if (due) check(c, ok -> { });
+    }
+
+    /**
+     * Checks the account with Supabase now (the session renewed): {@code done} gets true when
+     * Supabase took it. Refused (banned, deleted, signed out elsewhere): signed out here.
+     * Offline: kept as it is (locked only once 24 h pass without a check).
+     */
+    static void check(Context c, Consumer<Boolean> done) {
+        if (!hasSession(c) || refreshing) {
+            done.accept(false);
+            return;
+        }
         String used = prefs(c).getString("refresh_token", "");
         JSONObject body = new JSONObject();
         try {
             body.put("refresh_token", used);
         } catch (JSONException e) {
+            done.accept(false);
             return;
         }
         refreshing = true;
@@ -145,7 +185,10 @@ final class Auth {
                 prefs(c).edit().clear().apply();
             }
             return new Result(false, "");
-        }, r -> refreshing = false);
+        }, r -> {
+            refreshing = false;
+            done.accept(r.ok);
+        });
     }
 
     // ---- the calls ----------------------------------------------------------------------
@@ -221,6 +264,8 @@ final class Auth {
                 .putString("access_token", access)
                 .putString("refresh_token", refresh)
                 .putLong("expires_at", System.currentTimeMillis() / 1000 + expiresIn)
+                .putLong("verified_at", System.currentTimeMillis())
+                .putLong("seen_at", System.currentTimeMillis())
                 .putString("email", email.isEmpty() ? prefs(c).getString("email", "") : email)
                 .apply();
         return true;

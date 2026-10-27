@@ -53,9 +53,20 @@ public class InspectorService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         windowManager = getSystemService(WindowManager.class);
-        Auth.refreshIfNeeded(this);
+        Auth.check(this, ok -> { });
+        handler.postDelayed(accountCheck, Auth.CHECK_EVERY_MS);
         showButton();
     }
+
+    /** Every 15 minutes in the background: the account checked with Supabase (ban / delete noticed). */
+    private final Runnable accountCheck = new Runnable() {
+        @Override
+        public void run() {
+            if (destroyed) return;
+            Auth.refreshIfNeeded(InspectorService.this);
+            handler.postDelayed(this, Auth.CHECK_EVERY_MS);
+        }
+    };
 
     /**
      * Signed out: the round buttons don't work (only Stop of a run already going). Signed in:
@@ -70,6 +81,15 @@ public class InspectorService extends AccessibilityService {
                 || (ticker != null && ticker.isRunning()) || (clearer != null && clearer.isRunning())
                 || (booker != null && booker.isRunning());
         if (running) return false;
+        if (Auth.offlineTooLong(this)) {
+            // Not checked online for 24 h: checked now - unlocked the moment Supabase answers.
+            Toast.makeText(this, "🔒 Not checked online for 24 h - checking now (needs internet)…",
+                    Toast.LENGTH_SHORT).show();
+            Auth.check(this, ok -> Toast.makeText(this, ok ? "✓ Account checked - tap again"
+                    : Auth.hasSession(this) ? "🔒 Still locked - connect to the internet and tap again"
+                    : "🔒 Signed out - open the A11y Inspector app", Toast.LENGTH_LONG).show());
+            return true;
+        }
         Toast.makeText(this, Auth.configured() ? "🔒 Sign in first - open the A11y Inspector app"
                 : "🔒 Sign-in isn't set up in this build", Toast.LENGTH_LONG).show();
         return true;

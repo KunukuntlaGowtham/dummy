@@ -909,6 +909,21 @@ public class MainActivity extends Activity {
             say.accept("Please wait…");
             Auth.resetPassword(this, e, after);
         });
+        if (Auth.offlineTooLong(this)) {
+            // Signed in, but not checked online for 24 h: checked now - opens the moment it answers.
+            message.setText("🔒 Not checked online for 24 h - checking your account (needs internet)…");
+            message.setTextColor(0xFF22262A);
+            Auth.check(this, ok -> {
+                if (ok) {
+                    recreate();
+                } else {
+                    message.setText(Auth.hasSession(this)
+                            ? "🔒 Offline - connect to the internet and reopen the app (or sign in again)"
+                            : "Signed out - sign in again");
+                    message.setTextColor(0xFFC62828);
+                }
+            });
+        }
         if (!Auth.configured()) {
             message.setText("Sign-in isn't set up in this build (the Supabase URL and key are missing).");
             message.setTextColor(0xFFC62828);
@@ -965,7 +980,8 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         String who = Auth.email(this);
-        box.addView(note("Signed in" + (who.isEmpty() ? "" : " as " + who) + ". Signed out, the round buttons don't work."));
+        box.addView(note("Signed in" + (who.isEmpty() ? "" : " as " + who) + ". Checked with Supabase every 15 min; "
+                + "without internet for 24 h the app locks until it's online again. Signed out, the round buttons don't work."));
         LinearLayout row = new LinearLayout(this);
         row.setPadding(0, dp(6), 0, 0);
         row.addView(pill("Sign out", v -> {
