@@ -486,7 +486,7 @@ final class DeleteRun {
         if (p != null && service.getPackageName().contentEquals(p)) return;
         Runnable r = pending;
         handler.removeCallbacks(r);
-        handler.postDelayed(r, 10);
+        handler.postDelayed(r, Math.max(10, Page.pace() / 2));
     }
 
     private void when(java.util.function.BooleanSupplier ok, long until, java.util.function.Consumer<Boolean> then) {
@@ -506,7 +506,7 @@ final class DeleteRun {
                 return;
             }
             pending = look[0];
-            handler.postDelayed(look[0], 40);
+            handler.postDelayed(look[0], Math.max(40, Page.pace()));
         };
         pending = look[0];
         handler.postDelayed(look[0], 30);

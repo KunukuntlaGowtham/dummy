@@ -49,6 +49,19 @@ final class Page {
     /** A read is shared this long (when the page reported no change since). */
     private static final long SHARE_MS = 40;
 
+    /** How long a read of the page takes on this phone lately (a running average). */
+    private static volatile double recentMs = 10;
+
+    /**
+     * The least time between two looks at the page: twice what a read takes here. A fast
+     * phone (~10 ms reads) keeps its 40-50 ms looks; on a slow one the app no longer asks the
+     * page without a pause - each ask makes the app answer, and its pop-ups and ticks come
+     * later the more it is asked. At most 300 ms.
+     */
+    static long pace() {
+        return (long) Math.min(300, recentMs * 2);
+    }
+
     /** Reads of the page and the time they took (for the reports' speed line). */
     static int reads;
     static long readMs;
@@ -87,8 +100,10 @@ final class Page {
         if (kept != null && c == lastReadChanges && now - lastReadAt < SHARE_MS) return kept;
         long t0 = android.os.SystemClock.uptimeMillis();
         Snapshot s = read(service);
+        long took = android.os.SystemClock.uptimeMillis() - t0;
         reads++;
-        readMs += android.os.SystemClock.uptimeMillis() - t0;
+        readMs += took;
+        recentMs = recentMs * 0.7 + took * 0.3;
         lastRead = s;
         lastReadAt = now;
         lastReadChanges = c;
