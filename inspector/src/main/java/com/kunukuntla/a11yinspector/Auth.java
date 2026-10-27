@@ -31,6 +31,8 @@ final class Auth {
     private static final String PREFS = "auth";
     private static final ExecutorService NET = Executors.newSingleThreadExecutor();
     private static Handler main;
+    /** A renewal is on its way: no second one with the same (soon used) refresh token. */
+    private static volatile boolean refreshing;
 
     /** The result of a call: ok, or the message to show. */
     static final class Result {
@@ -124,20 +126,26 @@ final class Auth {
      * refuses the session (signed out elsewhere, or the account removed); kept when offline.
      */
     static void refreshIfNeeded(Context c) {
-        if (!signedIn(c)) return;
+        if (!signedIn(c) || refreshing) return;
         long expires = prefs(c).getLong("expires_at", 0);
         if (System.currentTimeMillis() / 1000 < expires - 120) return;
+        String used = prefs(c).getString("refresh_token", "");
         JSONObject body = new JSONObject();
         try {
-            body.put("refresh_token", prefs(c).getString("refresh_token", ""));
+            body.put("refresh_token", used);
         } catch (JSONException e) {
             return;
         }
+        refreshing = true;
         call(c, "/auth/v1/token?grant_type=refresh_token", body, null, (code, json) -> {
             if (code == 200 && keep(c, json)) return new Result(true, "");
-            if (code == 400 || code == 401 || code == 403) prefs(c).edit().clear().apply();
+            // Refused: signed out - only when the session is still the one sent (a sign-in
+            // meanwhile is never undone), and never for a network or server fault (kept).
+            if ((code == 400 || code == 401 || code == 403) && used.equals(prefs(c).getString("refresh_token", ""))) {
+                prefs(c).edit().clear().apply();
+            }
             return new Result(false, "");
-        }, r -> { });
+        }, r -> refreshing = false);
     }
 
     // ---- the calls ----------------------------------------------------------------------
