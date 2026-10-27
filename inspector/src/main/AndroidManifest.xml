@@ -7,6 +7,10 @@
     <!-- Supabase sign-in. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 📺 Share: the screen shared while you have it on (pop-ups found faster). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
@@ -22,6 +26,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ShareActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name=".ScreenShare"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
 
         <service
             android:name=".InspectorService"

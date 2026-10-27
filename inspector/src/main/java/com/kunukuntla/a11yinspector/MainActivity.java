@@ -266,7 +266,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete", "📺 Share"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -772,6 +772,9 @@ public class MainActivity extends Activity {
         buttons.addView(buttonHelp(0xC62828, "🗑", "Delete", "page 1",
                 "MANUAL (on page 1) - deletes the people the last Tick couldn't add (the red ❌ box; test mode: its numbers), nothing else pressed",
                 "AUTOMATIC (any page) - back to page 1, delete them, forward to page 4 by itself"));
+        buttons.addView(buttonHelp(0x00838F, "📺", "Share", "any page",
+                "share the screen with the app (Android asks \"Start sharing?\"): Tick's and Delete's pop-ups are found on the live screen at once - faster. Tap again (or Stop in its notification) to end it. Nothing is kept",
+                null));
         h.addView(card("🔘 The round buttons", 0xFF2E7D32, buttons));
 
         LinearLayout screen = new LinearLayout(this);
