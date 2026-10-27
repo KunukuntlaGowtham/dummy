@@ -140,6 +140,8 @@ public class InspectorService extends AccessibilityService {
     @Override
     public void onDestroy() {
         destroyed = true;
+        ScreenShare.onChange = null;
+        ScreenShare.stop(this); // sharing never outlives the app's buttons
         closeCard();
         closeAsk();
         if (ticker != null) ticker.stop("Stopped");
@@ -149,7 +151,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, watchButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, watchButton, shareButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -591,6 +593,7 @@ public class InspectorService extends AccessibilityService {
         showAutoButton();
         showDeleteButton();
         showWatchButton();
+        showShareButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -733,6 +736,39 @@ public class InspectorService extends AccessibilityService {
         } catch (RuntimeException e) {
             rowNames = new ArrayList<>();
         }
+    }
+
+    // ---- 📺 Share: the screen shared while you want it (pop-ups found faster) --------------
+
+    private TextView shareButton;
+
+    private void showShareButton() {
+        shareButton = floating("📺\nShare", 0xEE00838F, 754, v -> {
+            closeCard();
+            if (ScreenShare.active()) {
+                ScreenShare.stop(this);
+                Toast.makeText(this, "📺 Sharing stopped", Toast.LENGTH_SHORT).show();
+            } else {
+                // Android asks "Start sharing?" - then pop-ups are found on the live screen.
+                try {
+                    startActivity(new Intent(this, ShareActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (RuntimeException e) {
+                    Toast.makeText(this, "📺 Couldn't ask to share the screen", Toast.LENGTH_SHORT).show();
+                }
+            }
+        });
+        ScreenShare.onChange = this::showShare;
+        showShare();
+    }
+
+    private void showShare() {
+        if (shareButton == null) return;
+        boolean on = ScreenShare.active();
+        shareButton.setText(on ? "📺\nOn" : "📺\nShare");
+        shareButton.setContentDescription(on ? "Screen sharing on" : "Share the screen");
+        GradientDrawable bg = (GradientDrawable) shareButton.getBackground();
+        bg.setStroke(on ? dp(3) : Math.round(1.5f * getResources().getDisplayMetrics().density),
+                on ? 0xFF34C759 : 0x99FFFFFF);
     }
 
     // ---- 🗑 Delete (testing): sevak profiles by their numbers, each with its 2 pop-ups --------
@@ -954,13 +990,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton, shareButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch", "share"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {

@@ -39,12 +39,13 @@ final class PurpleFinder {
     }
 
     static boolean available() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R || ScreenShare.active();
     }
 
     /** Ms until a screenshot may be taken (0 = now). */
     long waitMs() {
         if (busy) return MIN_GAP;
+        if (ScreenShare.active()) return 0; // the live screen: no gap between looks
         return Math.max(0, lastShot + MIN_GAP - SystemClock.uptimeMillis());
     }
 
@@ -72,9 +73,41 @@ final class PurpleFinder {
             return;
         }
         busy = true;
-        lastShot = SystemClock.uptimeMillis();
         // What the page reports as tappable, and our own windows: read before the picture.
         List<Rect> exclude = excluded(before);
+        // 📺 Share on: the live screen, at once - no screenshot.
+        if (ScreenShare.active()) {
+            WORKER.execute(() -> {
+                Bitmap frame = ScreenShare.frame();
+                Rect found = null;
+                if (frame != null) {
+                    try {
+                        found = scan(frame, exclude);
+                    } catch (RuntimeException ignored) {
+                    }
+                    frame.recycle();
+                }
+                Rect result = found;
+                boolean had = frame != null;
+                MAIN.post(() -> {
+                    busy = false;
+                    if (had) done.accept(result);
+                    else shoot(done, failed, exclude); // no frame yet: a screenshot this once
+                });
+            });
+            return;
+        }
+        shoot(done, failed, exclude);
+    }
+
+    private void shoot(Consumer<Rect> done, Consumer<String> failed, List<Rect> exclude) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            failed.accept("screenshots need Android 11+");
+            done.accept(null);
+            return;
+        }
+        busy = true;
+        lastShot = SystemClock.uptimeMillis();
         try {
             // The picture is searched off the main thread, so taps and checks aren't held up.
             service.takeScreenshot(Display.DEFAULT_DISPLAY, WORKER,
