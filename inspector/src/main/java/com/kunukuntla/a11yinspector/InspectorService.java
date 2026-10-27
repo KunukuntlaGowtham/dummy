@@ -98,6 +98,8 @@ public class InspectorService extends AccessibilityService {
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
         CharSequence evPkg = event.getPackageName();
+        // Any change on the page (not ours): a shared read of the page is never used after it.
+        if (evPkg == null || !getPackageName().contentEquals(evPkg)) Page.changed();
         // Tick's waiting look runs the moment the page changes, not at its next timer.
         if (ticker != null) ticker.onPageEvent(event);
         if (deleter != null) deleter.onPageEvent(event);

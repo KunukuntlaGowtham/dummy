@@ -27,22 +27,86 @@ final class Page {
             "accept", "proceed", "done", "got it", "close", "continue", "submit", "understood",
             "dismiss", "allow", "sure", "fine", "x", "✕", "×"};
 
-    /** The page's nodes (not our own windows, not the status bar), in page order. */
+    // ---- one read of the page, shared for a moment (speed on slower phones) ----------
+
+    /** Bumped by every change the page reports: a kept read is never used after one. */
+    private static volatile int changes;
+    private static List<AccessibilityNodeInfo> lastRead;
+    private static long lastReadAt;
+    private static int lastReadChanges = -1;
+    /** A read is shared this long (when the page reported no change since). */
+    private static final long SHARE_MS = 40;
+
+    /** The page reported a change (its content, a window): the next read is a fresh one. */
+    static void changed() {
+        changes++;
+    }
+
+    /**
+     * The page's nodes (not our own windows, not the status bar), in page order. Several looks
+     * within 40 ms with no change from the page share one read - each read walks hundreds of
+     * elements, slow on a slower phone.
+     */
     static List<AccessibilityNodeInfo> nodes(AccessibilityService service) {
+        long now = android.os.SystemClock.uptimeMillis();
+        int c = changes;
+        List<AccessibilityNodeInfo> kept = lastRead;
+        if (kept != null && c == lastReadChanges && now - lastReadAt < SHARE_MS) return new ArrayList<>(kept);
+        List<AccessibilityNodeInfo> out = readNodes(service);
+        lastRead = out;
+        lastReadAt = now;
+        lastReadChanges = c;
+        return new ArrayList<>(out);
+    }
+
+    private static List<AccessibilityNodeInfo> readNodes(AccessibilityService service) {
         List<AccessibilityNodeInfo> out = new ArrayList<>();
-        for (AccessibilityWindowInfo w : windows(service)) {
-            AccessibilityNodeInfo root = w.getRoot();
-            if (root == null) continue;
+        // Android 13+: each call brings up to 50 elements at once (else one call per element).
+        boolean batch = android.os.Build.VERSION.SDK_INT >= 33;
+        for (AccessibilityNodeInfo root : roots(service, batch)) {
             List<AccessibilityNodeInfo> stack = new ArrayList<>();
             stack.add(root);
             while (!stack.isEmpty() && out.size() < 6000) {
                 AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
                 if (n == null) continue;
                 out.add(n);
-                for (int i = n.getChildCount() - 1; i >= 0; i--) stack.add(n.getChild(i));
+                for (int i = n.getChildCount() - 1; i >= 0; i--) {
+                    stack.add(batch ? childBatch(n, i) : n.getChild(i));
+                }
             }
         }
         return out;
+    }
+
+    @android.annotation.TargetApi(33)
+    private static AccessibilityNodeInfo childBatch(AccessibilityNodeInfo n, int i) {
+        return n.getChild(i, AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID);
+    }
+
+    /** The roots of the page's windows (each fetched once). */
+    private static List<AccessibilityNodeInfo> roots(AccessibilityService service, boolean batch) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        String own = service.getPackageName();
+        List<AccessibilityWindowInfo> all;
+        try {
+            all = service.getWindows();
+        } catch (RuntimeException e) {
+            return out;
+        }
+        for (AccessibilityWindowInfo w : all) {
+            int t = w.getType();
+            if (t == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY || t == AccessibilityWindowInfo.TYPE_SYSTEM
+                    || t == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
+            AccessibilityNodeInfo root = batch ? rootBatch(w) : w.getRoot();
+            if (root == null || own.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) continue;
+            out.add(root);
+        }
+        return out;
+    }
+
+    @android.annotation.TargetApi(33)
+    private static AccessibilityNodeInfo rootBatch(AccessibilityWindowInfo w) {
+        return w.getRoot(AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID);
     }
 
     /** The windows of the page in front: apps and dialogs, not ours, not the status bar. */

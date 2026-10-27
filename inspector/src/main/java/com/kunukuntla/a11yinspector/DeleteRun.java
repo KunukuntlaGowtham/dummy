@@ -318,6 +318,7 @@ final class DeleteRun {
                 Rect b = Page.bounds(p.button);
                 log("  pressing \"" + Page.label(p.button) + "\"");
                 if (!p.button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(b);
+                Page.changed();
                 afterPress(stage, null, false);
                 return;
             }
@@ -506,5 +507,6 @@ final class DeleteRun {
         p.moveTo(r.centerX(), r.centerY());
         service.dispatchGesture(new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(p, 0, 50)).build(), null, null);
+        Page.changed(); // our own tap: no shared read from before it
     }
 }
