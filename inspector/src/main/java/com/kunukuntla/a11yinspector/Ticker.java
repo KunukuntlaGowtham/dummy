@@ -98,6 +98,8 @@ final class Ticker {
     private final ClickMethod clicks = new ClickMethod();
     /** The learned label click was used for a row already this run (said once in the log). */
     private boolean learnedUsed;
+    /** A row was ticked this run: the working click is known - a failed row gets no second try. */
+    private boolean anyTicked;
 
     /** Reads the page once to say what is there, then starts. */
     private void scanOnce() {
@@ -107,6 +109,7 @@ final class Ticker {
         recheckedLast = false;
         clicks.reset(); // every run starts with the direct box click; nothing kept from before
         learnedUsed = false;
+        anyTicked = false;
         List<AccessibilityNodeInfo> all = Page.nodes(service);
         runStart = new Page.Before(service, all);
         int boxes = 0, empty = 0;
@@ -218,7 +221,9 @@ final class Ticker {
                 AccessibilityNodeInfo current = checkboxAt(n, idx);
                 boolean nowChecked = current != null && current.isChecked();
                 AccessibilityNodeInfo currentLabel = current == null ? null : clickableParent(current);
-                ClickMethod.Way second = current == null ? null
+                // Once a row has ticked, the click that works here is known: a row it didn't tick
+                // is refused by the page - no second click, no time lost on it.
+                ClickMethod.Way second = current == null || anyTicked ? null
                         : clicks.fallback(first, currentLabel != null, nowChecked);
                 if (second != null) {
                     log("row " + row + ": the " + way(first) + " didn't tick it - " + way(second) + " once");
@@ -226,6 +231,8 @@ final class Ticker {
                             .performAction(AccessibilityNodeInfo.ACTION_CLICK);
                 } else if (nowChecked) {
                     log("row " + row + ": reads ☑ now (a late tick by the " + way(first) + ") - no second click");
+                } else if (anyTicked) {
+                    log("row " + row + ": the " + way(first) + " didn't tick it - not tried again");
                 } else {
                     log("row " + row + ": the " + way(first) + " didn't tick it - "
                             + (current == null ? "the box went from the page" : "no label to click"));
@@ -238,7 +245,9 @@ final class Ticker {
                     }
                     // Not ticked: if a pop-up comes the page has answered; either way, on to the next.
                     note("not ticked");
-                    clearPopups(before, looks(), () -> {
+                    // Its pop-up ("Unable to add"): watched only briefly - one that comes later is
+                    // cleared before the next click anyway.
+                    clearPopups(before, failLooks(), () -> {
                         refused(row, popupTaps > 0 ? "not ticked - the page answered with a pop-up"
                                 : "the click didn't tick it");
                         next();
@@ -259,6 +268,7 @@ final class Ticker {
         lastNode = n;
         lastIdx = idx;
         lastRow = row;
+        anyTicked = true;
         ticked++;
         tickedRows.add(row);
         log("row " + row + ": ticked ✓ by a " + way(way) + (byFallback ? " (the other way)" : ""));
@@ -600,6 +610,11 @@ final class Ticker {
 
     private int looks() {
         return (int) (waitMs() / 100);
+    }
+
+    /** After a row that didn't tick: as long as a pop-up takes here once learned, else 0.8 s. */
+    private int failLooks() {
+        return popDelay > 0 ? looks() : 8;
     }
 
     private void done(Box b, String how, Page.Before before) {
