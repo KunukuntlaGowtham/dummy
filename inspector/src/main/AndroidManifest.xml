@@ -4,6 +4,9 @@
     <!-- To show the scanned app's own details (version, screens, permissions) on Android 11+. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
+    <!-- Supabase sign-in. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"

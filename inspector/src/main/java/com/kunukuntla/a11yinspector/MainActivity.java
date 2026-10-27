@@ -18,6 +18,7 @@ import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.HorizontalScrollView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -45,6 +46,12 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(0xFF3A2FA8);
         getWindow().setNavigationBarColor(0xFF3D8BD9);
+        // Signed out: only the sign-in screen.
+        if (!Auth.signedIn(this)) {
+            setContentView(signInPage());
+            return;
+        }
+        Auth.refreshIfNeeded(this);
 
         LinearLayout page = new LinearLayout(this);
         page.setOrientation(LinearLayout.VERTICAL);
@@ -105,6 +112,7 @@ public class MainActivity extends Activity {
         LinearLayout settings = new LinearLayout(this);
         settings.setOrientation(LinearLayout.VERTICAL);
         settings.setPadding(0, dp(4), 0, dp(24));
+        settings.addView(card("👤 Account", 0xFF5856D6, account()));
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
         settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
         settings.addView(card("🧪 Test mode", 0xFFC62828, testMode()));
@@ -165,6 +173,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        // Signed out meanwhile (here, or the server ended the session): back to sign-in.
+        if ((status != null) != Auth.signedIn(this)) {
+            recreate();
+            return;
+        }
+        if (status == null) return;
         if (refreshDate != null) refreshDate.run();
         boolean on = serviceOn();
         status.setText(on ? "●  Scan button is on" : "○  Off - tap to turn on in Accessibility");
@@ -791,6 +805,176 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.rightMargin = dp(10);
         return lp;
+    }
+
+    // ---- 🔒 Sign in (Supabase) --------------------------------------------------------------
+
+    /** The sign-in screen: email, password - Sign in, Create account, Forgot password. */
+    private View signInPage() {
+        LinearLayout page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setGravity(Gravity.CENTER_VERTICAL);
+        page.setBackground(Glass.wallpaper());
+        page.setPadding(dp(20), dp(24), dp(20), dp(24));
+
+        TextView title = new TextView(this);
+        title.setText(R.string.app_name);
+        title.setTextColor(Color.WHITE);
+        title.setTextSize(24);
+        title.setTypeface(Typeface.DEFAULT_BOLD);
+        title.setGravity(Gravity.CENTER);
+        page.addView(title);
+        TextView sub = new TextView(this);
+        sub.setText("🔒 Sign in to use the app");
+        sub.setTextColor(0xDDFFFFFF);
+        sub.setTextSize(14);
+        sub.setGravity(Gravity.CENTER);
+        sub.setPadding(0, dp(4), 0, dp(18));
+        page.addView(sub);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18), dp(18), dp(18), dp(18));
+        box.setBackground(Glass.lightCard(getResources().getDisplayMetrics().density));
+        box.setElevation(dp(4));
+        EditText email = field("Email", android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS);
+        email.setText(Auth.email(this));
+        EditText password = field("Password", android.text.InputType.TYPE_CLASS_TEXT
+                | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        box.addView(email);
+        box.addView(password);
+        TextView message = new TextView(this);
+        message.setTextSize(13);
+        message.setPadding(dp(2), dp(8), dp(2), dp(4));
+        box.addView(message);
+
+        TextView signIn = bigButton("Sign in");
+        box.addView(signIn);
+        LinearLayout more = new LinearLayout(this);
+        more.setPadding(0, dp(12), 0, 0);
+        more.setGravity(Gravity.CENTER);
+        View create = pill("Create account", null);
+        View forgot = pill("Forgot password?", null);
+        more.addView(create);
+        more.addView(forgot);
+        box.addView(more);
+        page.addView(box);
+
+        java.util.function.Consumer<String> say = (text) -> {
+            message.setText(text);
+            message.setTextColor(0xFF22262A);
+        };
+        java.util.function.Consumer<Auth.Result> after = r -> {
+            signIn.setEnabled(true);
+            signIn.setAlpha(1f);
+            if (r.ok && Auth.signedIn(this)) {
+                Toast.makeText(this, "✓ " + r.message, Toast.LENGTH_SHORT).show();
+                recreate();
+                return;
+            }
+            message.setText(r.message);
+            message.setTextColor(r.ok ? GREEN : 0xFFC62828);
+        };
+        java.util.function.BooleanSupplier check = () -> {
+            String e = email.getText().toString().trim();
+            if (!e.contains("@") || e.length() < 5) {
+                message.setText("Type your email");
+                message.setTextColor(0xFFC62828);
+                return false;
+            }
+            if (password.getText().length() < 6) {
+                message.setText("The password needs at least 6 characters");
+                message.setTextColor(0xFFC62828);
+                return false;
+            }
+            signIn.setEnabled(false);
+            signIn.setAlpha(0.6f);
+            say.accept("Please wait…");
+            return true;
+        };
+        signIn.setOnClickListener(v -> {
+            if (check.getAsBoolean()) Auth.signIn(this, email.getText().toString(), password.getText().toString(), after);
+        });
+        create.setOnClickListener(v -> {
+            if (check.getAsBoolean()) Auth.signUp(this, email.getText().toString(), password.getText().toString(), after);
+        });
+        forgot.setOnClickListener(v -> {
+            String e = email.getText().toString().trim();
+            if (!e.contains("@")) {
+                message.setText("Type your email first");
+                message.setTextColor(0xFFC62828);
+                return;
+            }
+            say.accept("Please wait…");
+            Auth.resetPassword(this, e, after);
+        });
+        if (!Auth.configured()) {
+            message.setText("Sign-in isn't set up in this build (the Supabase URL and key are missing).");
+            message.setTextColor(0xFFC62828);
+            signIn.setEnabled(false);
+            signIn.setAlpha(0.5f);
+        }
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackground(Glass.wallpaper());
+        scroll.addView(page);
+        return scroll;
+    }
+
+    private EditText field(String hint, int type) {
+        EditText e = new EditText(this);
+        e.setHint(hint);
+        e.setInputType(type);
+        e.setSingleLine(true);
+        e.setTextSize(16);
+        e.setTextColor(0xFF22262A);
+        e.setHintTextColor(0xFF8A8F98);
+        e.setPadding(dp(14), dp(12), dp(14), dp(12));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(12));
+        bg.setColor(0xFFFFFFFF);
+        bg.setStroke(dp(1), 0x335856D6);
+        e.setBackground(bg);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.bottomMargin = dp(10);
+        e.setLayoutParams(lp);
+        return e;
+    }
+
+    private TextView bigButton(String label) {
+        TextView b = new TextView(this);
+        b.setText(label);
+        b.setTextColor(Color.WHITE);
+        b.setTypeface(Typeface.DEFAULT_BOLD);
+        b.setTextSize(16);
+        b.setGravity(Gravity.CENTER);
+        b.setPadding(dp(16), dp(13), dp(16), dp(13));
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius(dp(14));
+        bg.setColor(GREEN);
+        b.setBackground(bg);
+        b.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT));
+        return b;
+    }
+
+    /** Settings: who is signed in, and Sign out. */
+    private View account() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        String who = Auth.email(this);
+        box.addView(note("Signed in" + (who.isEmpty() ? "" : " as " + who) + ". Signed out, the round buttons don't work."));
+        LinearLayout row = new LinearLayout(this);
+        row.setPadding(0, dp(6), 0, 0);
+        row.addView(pill("Sign out", v -> {
+            Auth.signOut(this);
+            Toast.makeText(this, "Signed out", Toast.LENGTH_SHORT).show();
+            recreate();
+        }));
+        box.addView(row);
+        return box;
     }
 
     private View pill(String label, View.OnClickListener onClick) {

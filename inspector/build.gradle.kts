@@ -13,6 +13,15 @@ android {
         // CI passes the run number so every build installs over the last one.
         versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
         versionName = "1.0.$versionCode"
+        // Supabase sign-in: the project's URL and anon (public) key, from CI's secrets.
+        val supabaseUrl = (project.findProperty("supabaseUrl") as String?) ?: System.getenv("SUPABASE_URL") ?: ""
+        val supabaseKey = (project.findProperty("supabaseKey") as String?) ?: System.getenv("SUPABASE_ANON_KEY") ?: ""
+        buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.trim()}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseKey.trim()}\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {
