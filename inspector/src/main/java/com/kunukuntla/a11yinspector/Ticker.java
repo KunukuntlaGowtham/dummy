@@ -198,8 +198,10 @@ final class Ticker {
                         + (learnedUsed ? "" : " - the learned way, used from now on"));
                 learnedUsed = true;
                 label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Page.changed(); // our own click: no shared read from before it
             } else {
                 n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Page.changed(); // our own click: no shared read from before it
             }
             whenCheckedAt(n, idx, 450, ok -> {
                 if (ok) {
@@ -218,6 +220,7 @@ final class Ticker {
                     log("row " + row + ": the " + way(first) + " didn't tick it - " + way(second) + " once");
                     (second == ClickMethod.Way.LABEL ? currentLabel : current)
                             .performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    Page.changed();
                 } else if (nowChecked) {
                     log("row " + row + ": reads ☑ now (a late tick by the " + way(first) + ") - no second click");
                 } else {
@@ -500,6 +503,7 @@ final class Ticker {
         Page.Before before = new Page.Before(service);
         log("row " + b.row + ": clicking its checkbox (at " + b.box.centerX() + "," + b.box.centerY() + ")");
         boolean sent = b.node.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        Page.changed(); // our own click: no shared read from before it
         whenChecked(b.node, 450, checked -> {
             if (checked) {
                 note("click");
@@ -511,6 +515,7 @@ final class Ticker {
                 log("row " + b.row + ": " + (sent ? "click didn't tick it" : "click refused")
                         + " - clicking its label");
                 label.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Page.changed(); // our own click: no shared read from before it
             }
             whenChecked(b.node, label != null ? 450 : 0, byLabel -> {
                 if (byLabel) {
@@ -1019,6 +1024,7 @@ final class Ticker {
         p.moveTo(Math.max(0, x), Math.max(0, y));
         service.dispatchGesture(new GestureDescription.Builder()
                 .addStroke(new GestureDescription.StrokeDescription(p, 0, 60)).build(), null, null);
+        Page.changed(); // our own tap: no shared read from before it
     }
 
     /**

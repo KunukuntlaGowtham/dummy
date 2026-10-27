@@ -305,6 +305,7 @@ final class Booker {
                 }
                 log("date: the month didn't change - clicking the arrow instead");
                 arrow.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Page.changed(); // our own click: no shared read from before it
                 waitFor(() -> shownMonth(dayCells()) != shown, 1500, moved2 -> {
                     if (!moved2) {
                         stop("✗ The calendar didn't move past " + monthText(shown)
@@ -435,6 +436,7 @@ final class Booker {
             case 0:
                 log("date: clicking the day " + dateText());
                 cell.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Page.changed(); // our own click: no shared read from before it
                 break;
             case 1:
                 if (number == cell) {
@@ -443,6 +445,7 @@ final class Booker {
                 }
                 log("date: clicking the number inside the day");
                 number.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                Page.changed(); // our own click: no shared read from before it
                 break;
             case 2:
                 if (r == null) {
@@ -677,6 +680,7 @@ final class Booker {
         if (secondTries == 1) {
             log("checkbox: clicking it");
             box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            Page.changed(); // our own click: no shared read from before it
             afterTickAgain(box, before);
             return;
         }
@@ -828,6 +832,7 @@ final class Booker {
         Runnable then = () -> afterTickPopup(beforeTick, next);
         log("checkbox: clicking it (where it is)");
         b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        Page.changed(); // our own click: no shared read from before it
         waitFor(() -> isChecked(b) || continueOn(), 600, ok -> {
             if (ok) {
                 log("checkbox: ticked ✓");
@@ -995,6 +1000,7 @@ final class Booker {
         later(() -> {
             log("checkbox: clicking it (where it is)");
             b.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            Page.changed(); // our own click: no shared read from before it
             waitFor(() -> isChecked(b) || continueOn(), 800, ok -> {
                 if (!ok) {
                     // A real tap on what you see (its label, when the box itself is hidden).
@@ -1073,6 +1079,7 @@ final class Booker {
         later(() -> {
             log("radio: choosing \"" + text + "\"");
             r.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            Page.changed(); // our own click: no shared read from before it
             waitFor(() -> isChecked(r), 800, ok -> {
                 if (!ok) {
                     Rect v = visible(r);
@@ -1307,6 +1314,7 @@ final class Booker {
             return;
         }
         field.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        Page.changed(); // our own click: no shared read from before it
         long until = SystemClock.uptimeMillis() + 1500;
         Runnable[] poll = new Runnable[1];
         poll[0] = () -> {
