@@ -29,9 +29,21 @@ final class Page {
 
     // ---- one read of the page, shared for a moment (speed on slower phones) ----------
 
+    /**
+     * One read of the page: its nodes in page order and, for each, the window it is in and
+     * whether it is inside a dialog (2) or a titled pane (1) - so finding a pop-up needs no
+     * second walk of the page.
+     */
+    static final class Snapshot {
+        final List<AccessibilityNodeInfo> nodes = new ArrayList<>();
+        final List<Integer> windowOf = new ArrayList<>();
+        final List<Integer> level = new ArrayList<>();
+        final Set<Integer> windows = new HashSet<>();
+    }
+
     /** Bumped by every change the page reports: a kept read is never used after one. */
     private static volatile int changes;
-    private static List<AccessibilityNodeInfo> lastRead;
+    private static Snapshot lastRead;
     private static long lastReadAt;
     private static int lastReadChanges = -1;
     /** A read is shared this long (when the page reported no change since). */
@@ -48,50 +60,31 @@ final class Page {
      * elements, slow on a slower phone.
      */
     static List<AccessibilityNodeInfo> nodes(AccessibilityService service) {
+        return new ArrayList<>(snapshot(service).nodes);
+    }
+
+    static Snapshot snapshot(AccessibilityService service) {
         long now = android.os.SystemClock.uptimeMillis();
         int c = changes;
-        List<AccessibilityNodeInfo> kept = lastRead;
-        if (kept != null && c == lastReadChanges && now - lastReadAt < SHARE_MS) return new ArrayList<>(kept);
-        List<AccessibilityNodeInfo> out = readNodes(service);
-        lastRead = out;
+        Snapshot kept = lastRead;
+        if (kept != null && c == lastReadChanges && now - lastReadAt < SHARE_MS) return kept;
+        Snapshot s = read(service);
+        lastRead = s;
         lastReadAt = now;
         lastReadChanges = c;
-        return new ArrayList<>(out);
+        return s;
     }
 
-    private static List<AccessibilityNodeInfo> readNodes(AccessibilityService service) {
-        List<AccessibilityNodeInfo> out = new ArrayList<>();
+    private static Snapshot read(AccessibilityService service) {
+        Snapshot s = new Snapshot();
         // Android 13+: each call brings up to 50 elements at once (else one call per element).
         boolean batch = android.os.Build.VERSION.SDK_INT >= 33;
-        for (AccessibilityNodeInfo root : roots(service, batch)) {
-            List<AccessibilityNodeInfo> stack = new ArrayList<>();
-            stack.add(root);
-            while (!stack.isEmpty() && out.size() < 6000) {
-                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
-                if (n == null) continue;
-                out.add(n);
-                for (int i = n.getChildCount() - 1; i >= 0; i--) {
-                    stack.add(batch ? childBatch(n, i) : n.getChild(i));
-                }
-            }
-        }
-        return out;
-    }
-
-    @android.annotation.TargetApi(33)
-    private static AccessibilityNodeInfo childBatch(AccessibilityNodeInfo n, int i) {
-        return n.getChild(i, AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID);
-    }
-
-    /** The roots of the page's windows (each fetched once). */
-    private static List<AccessibilityNodeInfo> roots(AccessibilityService service, boolean batch) {
-        List<AccessibilityNodeInfo> out = new ArrayList<>();
         String own = service.getPackageName();
         List<AccessibilityWindowInfo> all;
         try {
             all = service.getWindows();
         } catch (RuntimeException e) {
-            return out;
+            return s;
         }
         for (AccessibilityWindowInfo w : all) {
             int t = w.getType();
@@ -99,9 +92,32 @@ final class Page {
                     || t == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
             AccessibilityNodeInfo root = batch ? rootBatch(w) : w.getRoot();
             if (root == null || own.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) continue;
-            out.add(root);
+            int id = w.getId();
+            s.windows.add(id);
+            List<AccessibilityNodeInfo> stack = new ArrayList<>();
+            List<Integer> levels = new ArrayList<>();
+            stack.add(root);
+            levels.add(0);
+            while (!stack.isEmpty() && s.nodes.size() < 6000) {
+                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+                int up = levels.remove(levels.size() - 1);
+                if (n == null) continue;
+                int d = Math.max(up, isDialog(n) ? 2 : isPane(n) ? 1 : 0);
+                s.nodes.add(n);
+                s.windowOf.add(id);
+                s.level.add(d);
+                for (int i = n.getChildCount() - 1; i >= 0; i--) {
+                    stack.add(batch ? childBatch(n, i) : n.getChild(i));
+                    levels.add(d);
+                }
+            }
         }
-        return out;
+        return s;
+    }
+
+    @android.annotation.TargetApi(33)
+    private static AccessibilityNodeInfo childBatch(AccessibilityNodeInfo n, int i) {
+        return n.getChild(i, AccessibilityNodeInfo.FLAG_PREFETCH_DESCENDANTS_HYBRID);
     }
 
     @android.annotation.TargetApi(33)
@@ -132,9 +148,7 @@ final class Page {
 
     /** The ids of the page's windows now: a pop-up often comes as a window of its own. */
     static Set<Integer> windowIds(AccessibilityService service) {
-        Set<Integer> out = new HashSet<>();
-        for (AccessibilityWindowInfo w : windows(service)) out.add(w.getId());
-        return out;
+        return new HashSet<>(snapshot(service).windows);
     }
 
     static String role(AccessibilityNodeInfo n) {
@@ -363,30 +377,18 @@ final class Page {
      * a new window, a dialog, or a new OK-like button. Null when there is none.
      */
     static Popup popup(AccessibilityService service, Before before) {
-        List<AccessibilityWindowInfo> ws = windows(service);
+        // From the shared read (no walk of its own): each node's window and dialog level.
+        Snapshot snap = snapshot(service);
         AccessibilityNodeInfo best = null, dismiss = null;
         int bestRank = Integer.MAX_VALUE;
         boolean bestCross = false;
         String how = "";
-        for (AccessibilityWindowInfo w : ws) {
-            boolean newWindow = before != null && !before.windows.contains(w.getId()) && ws.size() > 1;
-            AccessibilityNodeInfo root = w.getRoot();
-            if (root == null) continue;
-            List<AccessibilityNodeInfo> stack = new ArrayList<>();
-            // Per node: 2 inside a dialog (or a new window), 1 inside a titled pane, 0 neither.
-            List<Integer> dialog = new ArrayList<>();
-            stack.add(root);
-            dialog.add(newWindow ? 2 : 0);
-            int seen = 0;
-            while (!stack.isEmpty() && seen++ < 6000) {
-                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
-                int inDialog = dialog.remove(dialog.size() - 1);
-                if (n == null) continue;
-                int d = Math.max(inDialog, isDialog(n) ? 2 : isPane(n) ? 1 : 0);
-                for (int i = n.getChildCount() - 1; i >= 0; i--) {
-                    stack.add(n.getChild(i));
-                    dialog.add(d);
-                }
+        int windowCount = snap.windows.size();
+        for (int idx = 0; idx < snap.nodes.size(); idx++) {
+            AccessibilityNodeInfo n = snap.nodes.get(idx);
+            boolean newWindow = before != null && !before.windows.contains(snap.windowOf.get(idx)) && windowCount > 1;
+            int d = newWindow ? 2 : snap.level.get(idx);
+            {
                 if (d == 2 && dismiss == null && n.isDismissable()
                         && (before == null || !before.clickables.contains(key(n)))) dismiss = n;
                 if (!n.isClickable() || !n.isEnabled() || !n.isVisibleToUser()) continue;
