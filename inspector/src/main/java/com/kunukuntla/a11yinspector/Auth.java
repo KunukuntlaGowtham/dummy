@@ -99,7 +99,10 @@ final class Auth {
             return;
         }
         call(c, "/auth/v1/token?grant_type=password", body, null, (code, json) -> {
-            if (code == 200 && keep(c, json)) return new Result(true, "Signed in");
+            if (code == 200 && keep(c, json)) {
+                reportDevice(c);
+                return new Result(true, "Signed in");
+            }
             return new Result(false, message(code, json, "Wrong email or password"));
         }, done);
     }
@@ -187,6 +190,7 @@ final class Auth {
             return new Result(false, "");
         }, r -> {
             refreshing = false;
+            if (r.ok) reportDevice(c);
             done.accept(r.ok);
         });
     }
@@ -197,7 +201,51 @@ final class Auth {
         Result read(int code, JSONObject json);
     }
 
+    // ---- which phones use this login (for you to see sharing in Supabase) ----------------
+
+    /** This phone's own id: made once, kept across sign-outs (one phone = one id). */
+    static String deviceId(Context c) {
+        SharedPreferences d = c.getApplicationContext().getSharedPreferences("device", Context.MODE_PRIVATE);
+        String id = d.getString("id", "");
+        if (id.isEmpty()) {
+            id = java.util.UUID.randomUUID().toString();
+            d.edit().putString("id", id).apply();
+        }
+        return id;
+    }
+
+    /**
+     * This phone written to the table "devices" (its model, Android, app version, last seen),
+     * one row per login and phone - a login on several phones shows as several rows. Quiet: a
+     * missing table or no internet changes nothing in the app.
+     */
+    static void reportDevice(Context c) {
+        String access = prefs(c).getString("access_token", ""), user = prefs(c).getString("user_id", "");
+        if (access.isEmpty() || user.isEmpty()) return;
+        JSONObject row = new JSONObject();
+        try {
+            row.put("user_id", user);
+            row.put("device_id", deviceId(c));
+            row.put("email", email(c));
+            row.put("model", (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim());
+            row.put("android", android.os.Build.VERSION.RELEASE);
+            row.put("app_version", BuildConfig.VERSION_NAME);
+            java.text.SimpleDateFormat iso = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.ROOT);
+            iso.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+            row.put("last_seen", iso.format(new java.util.Date()));
+        } catch (JSONException e) {
+            return;
+        }
+        call(c, "/rest/v1/devices?on_conflict=user_id,device_id", row, access,
+                "resolution=merge-duplicates,return=minimal", (code, json) -> new Result(code < 300, ""), r -> { });
+    }
+
     private static void call(Context c, String path, JSONObject body, String bearer, Reply reply, Consumer<Result> done) {
+        call(c, path, body, bearer, null, reply, done);
+    }
+
+    private static void call(Context c, String path, JSONObject body, String bearer, String prefer, Reply reply,
+                             Consumer<Result> done) {
         if (main == null) main = new Handler(Looper.getMainLooper());
         if (!configured()) {
             done.accept(new Result(false, "Supabase isn't set up in this build"));
@@ -215,6 +263,7 @@ final class Auth {
                 http.setRequestProperty("apikey", BuildConfig.SUPABASE_ANON_KEY);
                 http.setRequestProperty("Authorization", "Bearer " + (bearer != null ? bearer : BuildConfig.SUPABASE_ANON_KEY));
                 http.setRequestProperty("Content-Type", "application/json");
+                if (prefer != null) http.setRequestProperty("Prefer", prefer);
                 try (OutputStream out = http.getOutputStream()) {
                     out.write(body.toString().getBytes(StandardCharsets.UTF_8));
                 }
@@ -259,7 +308,11 @@ final class Auth {
         long expiresIn = json.optLong("expires_in", 3600);
         String email = "";
         JSONObject user = json.optJSONObject("user");
-        if (user != null) email = user.optString("email", "");
+        String userId = "";
+        if (user != null) {
+            email = user.optString("email", "");
+            userId = user.optString("id", "");
+        }
         prefs(c).edit()
                 .putString("access_token", access)
                 .putString("refresh_token", refresh)
@@ -267,6 +320,7 @@ final class Auth {
                 .putLong("verified_at", System.currentTimeMillis())
                 .putLong("seen_at", System.currentTimeMillis())
                 .putString("email", email.isEmpty() ? prefs(c).getString("email", "") : email)
+                .putString("user_id", userId.isEmpty() ? prefs(c).getString("user_id", "") : userId)
                 .apply();
         return true;
     }
