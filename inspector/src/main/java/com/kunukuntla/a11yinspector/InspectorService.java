@@ -963,11 +963,14 @@ public class InspectorService extends AccessibilityService {
             }
             out.add(name);
         }
-        // Two rows with the same name: the names can't be trusted - by number only.
-        java.util.Set<String> seen = new java.util.HashSet<>();
+        // Two rows with the same name: only those two go by number (the others keep their names).
+        java.util.Map<String, Integer> count = new java.util.HashMap<>();
         for (String name : out) {
-            if (name.isEmpty()) continue;
-            if (!seen.add(name.toLowerCase(java.util.Locale.ROOT))) return new ArrayList<>();
+            if (!name.isEmpty()) count.merge(name.toLowerCase(java.util.Locale.ROOT), 1, Integer::sum);
+        }
+        for (int i = 0; i < out.size(); i++) {
+            String name = out.get(i);
+            if (!name.isEmpty() && count.get(name.toLowerCase(java.util.Locale.ROOT)) > 1) out.set(i, "");
         }
         return out;
     }

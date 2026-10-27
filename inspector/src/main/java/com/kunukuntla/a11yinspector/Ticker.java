@@ -179,7 +179,13 @@ final class Ticker {
         for (int i = 0; i < boxes.size(); i++) {
             if (attempted.contains(i)) continue;
             AccessibilityNodeInfo n = boxes.get(i);
-            if (n.isChecked() || !n.isEnabled()) continue;
+            if (n.isChecked()) continue;
+            if (!n.isEnabled()) {
+                // Switched off by the page: it can't be ticked - not added (for the red box and 🗑).
+                attempted.add(i);
+                refused(String.valueOf(i + 1), "can't be ticked (the page has it switched off)");
+                continue;
+            }
             attempted.add(i);
             lingerTries = 0;
             int idx = i;
@@ -322,6 +328,7 @@ final class Ticker {
             behaviour.refused(why.contains("unticked") ? "unticks it after its pop-up" : "won't tick");
         }
         if (tickedRows.remove(row)) ticked--;
+        if (failedRows.contains(row)) return; // noted already
         notTicked++;
         failedRows.add(row);
         log("row " + row + ": " + why + " - going on, not tried again ✗");
@@ -406,6 +413,7 @@ final class Ticker {
         popupTaps = 0;
         if (!clearOnly) {
             if (nextPlanned()) return;
+            sweepLate();
             if (endChecks++ >= 1) {
                 stop("No empty checkbox left on the page");
             } else {
@@ -477,6 +485,21 @@ final class Ticker {
     }
 
     private int showTries, endChecks;
+
+    /**
+     * Before the end: a box ticked earlier that the page unticked later (its "Unable to add"
+     * came after Tick had moved on) is not added - noted now, so the red box and 🗑 have it.
+     */
+    private void sweepLate() {
+        List<AccessibilityNodeInfo> boxes = new ArrayList<>();
+        for (AccessibilityNodeInfo n : Page.nodes(service)) if (Page.isCheckbox(n)) boxes.add(n);
+        for (int i : new java.util.TreeSet<>(attempted)) {
+            if (i >= boxes.size() || boxes.get(i).isChecked()) continue;
+            String row = String.valueOf(i + 1);
+            if (failedRows.contains(row)) continue;
+            refused(row, "the page unticked it later (after Tick had gone on)");
+        }
+    }
 
     /** The first (in page order) empty, enabled checkbox not tried yet, on screen or not. */
     private AccessibilityNodeInfo anyEmptyBox() {
