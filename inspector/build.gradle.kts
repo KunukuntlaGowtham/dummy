@@ -14,8 +14,12 @@ android {
         versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
         versionName = "1.0.$versionCode"
         // Supabase sign-in: the project's URL and anon (public) key, from CI's secrets.
-        val supabaseUrl = (project.findProperty("supabaseUrl") as String?) ?: System.getenv("SUPABASE_URL") ?: ""
-        val supabaseKey = (project.findProperty("supabaseKey") as String?) ?: System.getenv("SUPABASE_ANON_KEY") ?: ""
+        // (The anon key is public by design - Supabase's row-level security protects the data.)
+        fun setting(prop: String, env: String, default: String) =
+            ((project.findProperty(prop) as String?) ?: System.getenv(env))?.takeIf { it.isNotBlank() } ?: default
+        val supabaseUrl = setting("supabaseUrl", "SUPABASE_URL", "https://qzzcpuvcrhbasnnsfvgt.supabase.co")
+        val supabaseKey = setting("supabaseKey", "SUPABASE_ANON_KEY",
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF6emNwdXZjcmhiYXNubnNmdmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1NDc2MTgsImV4cCI6MjA4NTEyMzYxOH0._MAMf4jVmNBarBLM1nSKdbjeq7lxRUjfQCnf5cxK4X8")
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.trim()}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseKey.trim()}\"")
     }
