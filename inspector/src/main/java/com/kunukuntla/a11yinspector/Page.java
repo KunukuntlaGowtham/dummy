@@ -49,6 +49,23 @@ final class Page {
     /** A read is shared this long (when the page reported no change since). */
     private static final long SHARE_MS = 40;
 
+    /** Reads of the page and the time they took (for the reports' speed line). */
+    static int reads;
+    static long readMs;
+
+    /** "page read 1234 times, 18 ms each" - since {@link #resetSpeed}. */
+    static String speedLine() {
+        return "page read " + reads + " times, " + (reads == 0 ? 0 : readMs / reads) + " ms each; "
+                + PurpleFinder.speedLine();
+    }
+
+    static void resetSpeed() {
+        reads = 0;
+        readMs = 0;
+        PurpleFinder.shots = 0;
+        PurpleFinder.shotMs = 0;
+    }
+
     /** The page reported a change (its content, a window): the next read is a fresh one. */
     static void changed() {
         changes++;
@@ -68,7 +85,10 @@ final class Page {
         int c = changes;
         Snapshot kept = lastRead;
         if (kept != null && c == lastReadChanges && now - lastReadAt < SHARE_MS) return kept;
+        long t0 = android.os.SystemClock.uptimeMillis();
         Snapshot s = read(service);
+        reads++;
+        readMs += android.os.SystemClock.uptimeMillis() - t0;
         lastRead = s;
         lastReadAt = now;
         lastReadChanges = c;

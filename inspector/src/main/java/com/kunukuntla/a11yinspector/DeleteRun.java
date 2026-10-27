@@ -77,12 +77,14 @@ final class DeleteRun {
      */
     void start(List<Integer> numbers, List<String> expect) {
         if (running) return;
+        justSettled = false;
         names.clear();
         for (int i = 0; i < numbers.size(); i++) names.add(expect != null && i < expect.size() ? expect.get(i) : null);
         running = true;
         gen++;
         start = SystemClock.uptimeMillis();
         log.setLength(0);
+        Page.resetSpeed();
         todo.clear();
         todo.addAll(numbers);
         deleted.clear();
@@ -108,7 +110,7 @@ final class DeleteRun {
         StringBuilder sum = new StringBuilder(why).append('\n');
         if (!deleted.isEmpty()) sum.append("🗑 Deleted: ").append(join(deleted)).append('\n');
         if (!failed.isEmpty()) sum.append("✗ Not deleted: ").append(join(failed)).append('\n');
-        sum.append("⏱ ").append(SystemClock.uptimeMillis() - start).append(" ms");
+        sum.append("⏱ ").append(SystemClock.uptimeMillis() - start).append(" ms · ").append(Page.speedLine());
         listener.done(sum.toString(), "Gowtham - Delete (testing)\n=========================\n" + sum
                 + "\n\nSTEPS\n" + log);
     }
@@ -126,12 +128,20 @@ final class DeleteRun {
     // ---- one profile after another ------------------------------------------------------
 
     private int original, cardsBefore;
+    /** The last profile was just confirmed gone on a settled list with no pop-up up. */
+    private boolean justSettled;
     private String name = "";
 
     private void nextProfile() {
         if (!running) return;
         if (todo.isEmpty()) {
             stop(failed.isEmpty() ? "✅ Done" : "Done - some not deleted");
+            return;
+        }
+        // Just confirmed gone - the list read the same twice and no pop-up up: settled already.
+        if (justSettled) {
+            justSettled = false;
+            deleteNext();
             return;
         }
         // Before each: no pop-up up, and the list settled (the same profiles on two looks in
@@ -434,6 +444,7 @@ final class DeleteRun {
             if (gone) {
                 runBase = new Page.Before(service); // the page as it is now, rebuilt, no pop-up
                 deleted.add(original);
+                justSettled = true;
                 log("profile " + original + " " + name + ": deleted ✓ (" + ms + " ms)");
             } else {
                 log("profile " + original + " " + name + ": still there? ✗ (" + ms + " ms, "

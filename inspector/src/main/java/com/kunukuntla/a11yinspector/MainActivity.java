@@ -544,6 +544,16 @@ public class MainActivity extends Activity {
                 "Do one practice Tick and one Delete: the phone learns where the pop-ups' buttons are, "
                         + "later runs skip the screenshot.", null, null));
 
+        // ⚡ Turbo Tick: every box clicked at once, then the pop-ups (the rest one by one after).
+        LinearLayout turboRow = new LinearLayout(this);
+        turboRow.setPadding(0, dp(10), 0, 0);
+        turboRow.addView(settingChip(getSharedPreferences("settings", MODE_PRIVATE), "turbo_tick",
+                "⚡ Turbo Tick (try it)", "Turbo Tick", false));
+        speedBox.addView(turboRow);
+        speedBox.addView(note("Turbo Tick clicks every empty box at once, then clears the pop-ups - the same speed on "
+                + "every phone. Any box still empty after it goes through the usual one-by-one Tick, so the red box "
+                + "is as exact as before. Off: the usual Tick."));
+
         TextView sum = note(bad == 0 ? "✅ Everything here is set for speed."
                 : "⚠ " + bad + (bad == 1 ? " thing slows" : " things slow") + " Tick and Delete on this phone - fix the red ones.");
         sum.setTypeface(Typeface.DEFAULT_BOLD);

@@ -27,6 +27,15 @@ final class PurpleFinder {
     private static final java.util.concurrent.Executor WORKER = java.util.concurrent.Executors.newSingleThreadExecutor();
     private final android.os.Handler MAIN = new android.os.Handler(android.os.Looper.getMainLooper());
 
+    /** Screenshots (or shared-screen frames) looked at, and the time they took. */
+    static int shots;
+    static long shotMs;
+
+    static String speedLine() {
+        return (ScreenShare.active() ? "shared screen looked at " : "screenshots ") + shots
+                + (shots == 0 ? "" : ", " + shotMs / shots + " ms each");
+    }
+
     /** Android allows about 3 screenshots a second. */
     private static final long MIN_GAP = 340;
 
@@ -77,6 +86,7 @@ final class PurpleFinder {
         List<Rect> exclude = excluded(before);
         // 📺 Share on: the live screen, at once - no screenshot.
         if (ScreenShare.active()) {
+            long t0 = SystemClock.uptimeMillis();
             WORKER.execute(() -> {
                 Bitmap frame = ScreenShare.frame();
                 Rect found = null;
@@ -91,6 +101,10 @@ final class PurpleFinder {
                 boolean had = frame != null;
                 MAIN.post(() -> {
                     busy = false;
+                    if (had) {
+                        shots++;
+                        shotMs += SystemClock.uptimeMillis() - t0;
+                    }
                     if (had) done.accept(result);
                     else shoot(done, failed, exclude); // no frame yet: a screenshot this once
                 });
@@ -135,6 +149,8 @@ final class PurpleFinder {
                             Rect result2 = found;
                             MAIN.post(() -> {
                                 busy = false;
+                                shots++;
+                                shotMs += SystemClock.uptimeMillis() - lastShot;
                                 done.accept(result2);
                             });
                         }

@@ -122,7 +122,94 @@ final class Ticker {
         }
         log("page read: " + boxes + " checkbox(es), " + empty + " empty - each is clicked where it is, on screen or not");
         if (behaviour != null) behaviour.page(first, continueButton());
+        if (turbo && empty > 1) {
+            turboPass(all);
+            return;
+        }
         next();
+    }
+
+    // ---- ⚡ Turbo Tick (Settings): every empty box clicked at once, then the pop-ups ----------
+
+    /** Turbo Tick is on for this run. */
+    private boolean turbo;
+
+    /**
+     * Every empty box clicked one after another (40 ms apart, no waiting for pop-ups), then the
+     * pop-ups cleared until none comes. The boxes ticked then are added; every box still empty
+     * goes through the usual one-by-one Tick after it - so no row is ever called "not added"
+     * by the turbo pass itself.
+     */
+    private void turboPass(List<AccessibilityNodeInfo> all) {
+        List<Integer> todo = new ArrayList<>();
+        int i = 0;
+        for (AccessibilityNodeInfo n : all) {
+            if (!Page.isCheckbox(n)) continue;
+            if (!n.isChecked() && n.isEnabled()) todo.add(i);
+            i++;
+        }
+        log("⚡ Turbo: clicking all " + todo.size() + " empty boxes one after another, then clearing the pop-ups");
+        turboClick(todo, 0);
+    }
+
+    private void turboClick(List<Integer> todo, int k) {
+        if (k >= todo.size()) {
+            tickTime = SystemClock.uptimeMillis();
+            waitUntil = tickTime + Math.max(waitMs(), 1500);
+            later(() -> turboClear(todo, 0), 150);
+            return;
+        }
+        AccessibilityNodeInfo n = boxAtIndex(todo.get(k));
+        if (n != null && !n.isChecked() && n.isEnabled()) {
+            n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            Page.changed(); // our own click: no shared read from before it
+        }
+        later(() -> turboClick(todo, k + 1), 40);
+    }
+
+    /** Pop-ups cleared one after another until a watch passes with none. */
+    private void turboClear(List<Integer> todo, int rounds) {
+        popupTaps = 0;
+        clearPopups(runStart, looks(), () -> {
+            if (popupTaps > 0 && rounds < todo.size() + 5) {
+                tickTime = SystemClock.uptimeMillis(); // a next one may follow: watch again
+                waitUntil = tickTime + waitMs();
+                turboClear(todo, rounds + 1);
+            } else {
+                turboDone(todo);
+            }
+        });
+    }
+
+    /** The boxes ticked now are added; the rest go through the usual Tick, one by one. */
+    private void turboDone(List<Integer> todo) {
+        List<AccessibilityNodeInfo> boxes = new ArrayList<>();
+        for (AccessibilityNodeInfo n : Page.nodes(service)) if (Page.isCheckbox(n)) boxes.add(n);
+        int added = 0, rest = 0;
+        for (int i : todo) {
+            if (i < boxes.size() && boxes.get(i).isChecked()) {
+                attempted.add(i);
+                ticked++;
+                tickedRows.add(String.valueOf(i + 1));
+                anyTicked = true;
+                added++;
+            } else {
+                rest++;
+            }
+        }
+        log("⚡ Turbo: " + added + " added at once" + (rest == 0 ? "" : " - the other " + rest + " one by one now"));
+        lastIdx = -1;
+        next();
+    }
+
+    /** The checkbox at this place among the page's checkboxes now (the page may have rebuilt). */
+    private AccessibilityNodeInfo boxAtIndex(int idx) {
+        int i = 0;
+        for (AccessibilityNodeInfo m : Page.nodes(service)) {
+            if (!Page.isCheckbox(m)) continue;
+            if (i++ == idx) return m;
+        }
+        return null;
     }
 
     /**
@@ -365,6 +452,7 @@ final class Ticker {
         tickedRows.clear();
         failedRows.clear();
         ticked = notTicked = popups = stillScreens = 0;
+        Page.resetSpeed();
         lastScreen = "";
         showTries = endChecks = 0;
         popupsSeen = false;
@@ -388,6 +476,8 @@ final class Ticker {
         // away (no screenshot) - checked: the cover still up after it, OK is found on a screenshot.
         runSpot = !clear && coverApp && okSpot != null ? new Rect(okSpot) : null;
         coverThisRun = false;
+        turbo = !clear && service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE)
+                .getBoolean("turbo_tick", false);
         if (!clear) missedChanged(); // a new run: nothing missed yet
     }
 
@@ -407,7 +497,10 @@ final class Ticker {
                 + "\n☑ Ticked " + ticked
                 + (tickedRows.isEmpty() ? "" : " (rows " + String.join(", ", tickedRows) + ")")
                 + "\nNot ticked " + notTicked
-                + "\nPop-ups cleared " + popups;
+                + "\nPop-ups cleared " + popups
+                + (clearOnly ? "" : "\n⏱ " + (SystemClock.uptimeMillis() - start) + " ms"
+                        + (ticked + notTicked > 0 ? " (" + (SystemClock.uptimeMillis() - start) / (ticked + notTicked)
+                        + " ms a row)" : "") + " · " + Page.speedLine());
         String reacted = "";
         if (behaviour != null && ticked + notTicked > 0) {
             StringBuilder lines = new StringBuilder();
