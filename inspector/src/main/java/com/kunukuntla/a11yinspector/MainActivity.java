@@ -248,7 +248,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete", "👁 Watch"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -635,6 +635,9 @@ public class MainActivity extends Activity {
         buttons.addView(buttonHelp(0xC62828, "🗑", "Delete", "page 1",
                 "MANUAL (on page 1) - deletes the people the last Tick couldn't add (the red ❌ box; test mode: its numbers), nothing else pressed",
                 "AUTOMATIC (any page) - back to page 1, delete them, forward to page 4 by itself"));
+        buttons.addView(buttonHelp(0x5D4037, "👁", "Watch", "page 3",
+                "on / off. On: as you tick by hand on page 3, the red ❌ box shows the rows not ticked yet - numbered as Tick numbers them, as after each delete (3, 7, 11 → 3, 6, 9). Then 🗑 on page 1 deletes exactly them",
+                null));
         h.addView(card("🔘 The round buttons", 0xFF2E7D32, buttons));
 
         LinearLayout screen = new LinearLayout(this);

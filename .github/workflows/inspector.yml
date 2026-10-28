@@ -38,15 +38,15 @@ jobs:
           name: A11yInspector-apk
           path: A11yInspector.apk
 
-      # Its own releases (inspector-N), never marked latest: the latest link stays the main app.
+      # Its own releases (watch-N), never marked latest: the latest link stays the main app.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: inspector-${{ github.run_number }}
+          tag_name: watch-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: A11y Inspector build ${{ github.run_number }}
+          name: A11y Inspector (110 + Watch) build ${{ github.run_number }}
           body: |
-            A11y Inspector (separate app) built from ${{ github.sha }}.
-            Download: https://github.com/${{ github.repository }}/releases/download/inspector-${{ github.run_number }}/A11yInspector.apk
+            A11y Inspector - build 110 with 👁 Watch, built from ${{ github.sha }}.
+            Download: https://github.com/${{ github.repository }}/releases/download/watch-${{ github.run_number }}/A11yInspector.apk
           files: A11yInspector.apk
           make_latest: "false"
