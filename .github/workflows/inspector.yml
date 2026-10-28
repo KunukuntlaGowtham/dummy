@@ -30,23 +30,23 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew --no-daemon :inspector:testDebugUnitTest :inspector:assembleDebug -PversionCode=${{ github.run_number }}
-          cp inspector/build/outputs/apk/debug/inspector-debug.apk A11yInspector.apk
-          ls -l A11yInspector.apk
+          cp inspector/build/outputs/apk/debug/inspector-debug.apk GowthamLite.apk
+          ls -l GowthamLite.apk
 
       - uses: actions/upload-artifact@v4
         with:
-          name: A11yInspector-apk
-          path: A11yInspector.apk
+          name: GowthamLite-apk
+          path: GowthamLite.apk
 
-      # Its own releases (inspector-N), never marked latest: the latest link stays the main app.
+      # Its own releases (lite-N), never marked latest: the latest link stays the main app.
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: inspector-${{ github.run_number }}
+          tag_name: lite-${{ github.run_number }}
           target_commitish: ${{ github.sha }}
-          name: A11y Inspector build ${{ github.run_number }}
+          name: Gowtham Lite build ${{ github.run_number }}
           body: |
-            A11y Inspector (separate app) built from ${{ github.sha }}.
-            Download: https://github.com/${{ github.repository }}/releases/download/inspector-${{ github.run_number }}/A11yInspector.apk
-          files: A11yInspector.apk
+            Gowtham Lite (no Scan, Clear or Report) built from ${{ github.sha }}.
+            Download: https://github.com/${{ github.repository }}/releases/download/lite-${{ github.run_number }}/GowthamLite.apk
+          files: GowthamLite.apk
           make_latest: "false"

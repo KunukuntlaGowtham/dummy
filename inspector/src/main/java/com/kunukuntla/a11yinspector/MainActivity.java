@@ -248,7 +248,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete"};
+    private static final String[] SHOWN_NAMES = {"☑ Tick", "📅 Book", "▶ Go", "🤖 Auto", "🗑 Delete"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -611,15 +611,9 @@ public class MainActivity extends Activity {
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.VERTICAL);
-        buttons.addView(buttonHelp(0x2E7D32, "🔍", "Scan", "any page",
-                "what the screen has, in a card",
-                "deep scan + screenshot, saved in 📋 Report - send it when something goes wrong"));
         buttons.addView(buttonHelp(0x6A2C91, "☑", "Tick", "page 3",
                 "MANUAL - ticks every sevak and clears the pop-up after each; rows it couldn't add go in the red ❌ box. Tap again: stop",
                 "AUTOMATIC - ticks, then rows not added → back to page 1, delete them, forward to page 4 by itself"));
-        buttons.addView(buttonHelp(0xE65100, "✖", "Clear", "any page",
-                "closes the pop-ups on the screen now",
-                "Auto-clear on / off (thick green ring = on): every new pop-up closed by itself"));
         buttons.addView(buttonHelp(0x1565C0, "📅", "Book", "page 2",
                 "a form: the option (from the page's own list), the date (calendar) and the slot - Save fills the page",
                 null));
@@ -629,9 +623,6 @@ public class MainActivity extends Activity {
         buttons.addView(buttonHelp(0x37474F, "🤖", "Auto", "any page",
                 "Auto on / off: Go → Tick → Continue → Confirm by itself",
                 "\"this page is page 1\" (locked) - pages 2, 3, 4 follow in order, and Back never goes past page 1"));
-        buttons.addView(buttonHelp(0x455A64, "📋", "Report", "any page",
-                "the last run's result; tap again to close. The full reports are in this app's 📋 Report tab",
-                null));
         buttons.addView(buttonHelp(0xC62828, "🗑", "Delete", "page 1",
                 "MANUAL (on page 1) - deletes the people the last Tick couldn't add (the red ❌ box; test mode: its numbers), nothing else pressed",
                 "AUTOMATIC (any page) - back to page 1, delete them, forward to page 4 by itself"));
@@ -647,7 +638,6 @@ public class MainActivity extends Activity {
         problem.setOrientation(LinearLayout.VERTICAL);
         problem.addView(numbered(1, "Right after it goes wrong: open this app → 📋 Report."));
         problem.addView(numbered(2, "Share that report (Book, Tick, Delete or Auto retry)."));
-        problem.addView(numbered(3, "On a page that looks wrong: long-press 🔍 for a deep scan and send it with its screenshot."));
         h.addView(card("🛠 Something wrong?", 0xFF455A64, problem));
         return h;
     }

@@ -26,16 +26,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Floating buttons over any app, all working through accessibility (no screenshots):
- * <ul>
- *   <li>🔍 Scan - tap: scan the screen now; long press: deep scan (wake the web views first,
- *       then every property of every element and the app's own details too);</li>
- *   <li>☑ Tick - ticks every empty checkbox, clearing the pop-up after each;</li>
- *   <li>✖ Clear - clears the pop-ups up now (presses their OK / Close);</li>
- *   <li>📅 Book - picks the dropdown option, the date in the calendar, the checkbox, the radio
- *       button, then Continue.</li>
- * </ul>
- * Results show in a card over the page and are kept for the app's own screen (Share / Copy / Save).
+ * Light build: the booking's round buttons only, all working through accessibility -
+ * ☑ Tick, 📅 Book, ▶ Go, 🤖 Auto, 🗑 Delete (no Scan, Clear or Report: nothing reads or
+ * records the page beyond what booking needs).
  */
 public class InspectorService extends AccessibilityService {
 
@@ -43,12 +36,8 @@ public class InspectorService extends AccessibilityService {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private WindowManager windowManager;
-    private TextView button;
-    private WindowManager.LayoutParams buttonParams;
     private View card;
-    private boolean scanning;
     private boolean destroyed;
-    private String popupWatchReport = "";
 
     @Override
     protected void onServiceConnected() {
@@ -62,13 +51,6 @@ public class InspectorService extends AccessibilityService {
         // Tick's waiting look runs the moment the page changes, not at its next timer.
         if (ticker != null) ticker.onPageEvent(event);
         if (deleter != null) deleter.onPageEvent(event);
-        if (autoClear && evPkg != null && !getPackageName().contentEquals(evPkg)) {
-            int t = event.getEventType();
-            if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                    || t == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-                autoCheckSoon();
-            }
-        }
         if (evPkg != null && !getPackageName().contentEquals(evPkg)) {
             int t = event.getEventType();
             if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
@@ -77,12 +59,6 @@ public class InspectorService extends AccessibilityService {
                 // Right after page 3's Continue: page 4's Confirm pressed the moment it comes.
                 if (flow != null) flow.onEvent(evPkg.toString());
             }
-            // Which screen of which app is open (for the app details), and the event recorder.
-            if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getClassName() != null
-                    && !"com.android.systemui".contentEquals(evPkg)) {
-                openScreen.put(evPkg.toString(), event.getClassName().toString());
-            }
-            if (recorder.on && evPkg.toString().equals(recordPkg)) recorder.add(event);
         }
         // Short messages (toasts) the page shows while Book runs: its errors.
         if (event.getEventType() == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED
@@ -106,11 +82,10 @@ public class InspectorService extends AccessibilityService {
         if (ticker != null) ticker.stop("Stopped");
         if (deleter != null) deleter.stop("Stopped");
         if (missedBox != null) missedBox.hide();
-        if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, pageBadge}) {
+        for (View v : new View[] {tickButton, bookButton, goButton, autoButton, deleteButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -121,75 +96,9 @@ public class InspectorService extends AccessibilityService {
         super.onDestroy();
     }
 
-    // ---- the floating button ------------------------------------------------------
+    // ---- the round buttons (no Scan, Report or Clear in this light build) -------------
 
-    @SuppressLint("ClickableViewAccessibility")
     private void showButton() {
-        button = new TextView(this);
-        button.setText("🔍\nScan");
-        button.setTextColor(Color.WHITE);
-        button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f);
-        button.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
-        button.setLineSpacing(0, 0.9f);
-        button.setGravity(Gravity.CENTER);
-        button.setBackground(Glass.button(0x2E7D32, getResources().getDisplayMetrics().density));
-        button.setElevation(dp(8));
-
-        buttonParams = new WindowManager.LayoutParams(dp(56), dp(56),
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                PixelFormat.TRANSLUCENT);
-        buttonParams.gravity = Gravity.TOP | Gravity.START;
-        buttonParams.x = dp(12);
-        buttonParams.y = dp(160);
-
-        int slop = ViewConfiguration.get(this).getScaledTouchSlop();
-        float[] down = new float[2];
-        int[] start = new int[2];
-        boolean[] dragged = {false}, longDone = {false};
-        Runnable onLong = () -> {
-            longDone[0] = true;
-            scan(true);
-        };
-        button.setOnTouchListener((v, e) -> {
-            switch (e.getActionMasked()) {
-                case MotionEvent.ACTION_DOWN:
-                    down[0] = e.getRawX();
-                    down[1] = e.getRawY();
-                    start[0] = buttonParams.x;
-                    start[1] = buttonParams.y;
-                    dragged[0] = false;
-                    longDone[0] = false;
-                    v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start();
-                    handler.postDelayed(onLong, ViewConfiguration.getLongPressTimeout());
-                    return true;
-                case MotionEvent.ACTION_MOVE:
-                    float dx = e.getRawX() - down[0], dy = e.getRawY() - down[1];
-                    if (!dragged[0] && Math.hypot(dx, dy) > slop) {
-                        dragged[0] = true;
-                        handler.removeCallbacks(onLong);
-                    }
-                    if (dragged[0]) {
-                        buttonParams.x = start[0] + (int) dx;
-                        buttonParams.y = start[1] + (int) dy;
-                        windowManager.updateViewLayout(button, buttonParams);
-                    }
-                    return true;
-                case MotionEvent.ACTION_UP:
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
-                    handler.removeCallbacks(onLong);
-                    if (!dragged[0] && !longDone[0]) scan(false);
-                    return true;
-                case MotionEvent.ACTION_CANCEL:
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
-                    handler.removeCallbacks(onLong);
-                    return true;
-                default:
-                    return false;
-            }
-        });
-        windowManager.addView(button, buttonParams);
         showTickButton();
         showPageBadge();
     }
@@ -314,7 +223,7 @@ public class InspectorService extends AccessibilityService {
         }
         // While a run goes the page isn't read again: Tick's speed comes first. The badge
         // keeps the page the run started on.
-        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (deleting() || ticker.isRunning() || booker.isRunning()) return;
         PageKind.Facts f;
         try {
             f = PageKind.read(this);
@@ -396,8 +305,8 @@ public class InspectorService extends AccessibilityService {
 
     // ---- Tick, Clear and Book --------------------------------------------------------
 
-    private TextView tickButton, clearButton, bookButton, goButton;
-    private Ticker ticker, clearer;
+    private TextView tickButton, bookButton, goButton;
+    private Ticker ticker;
     private Booker booker;
     /** The rows not added in the Tick run, renumbered as after removing the earlier ones. */
     private MissedBox missedBox;
@@ -445,20 +354,6 @@ public class InspectorService extends AccessibilityService {
             }
         });
         tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> tickTap(false), v -> tickTap(true));
-        clearer = new Ticker(this, (summary, log) -> {
-            saveReport(log);
-            clearButton.setText("✖\nClear");
-            finished(summary);
-        });
-        clearButton = floating("✖\nClear", 0xEEE65100, 292, v -> {
-            closeCard();
-            if (clearer.isRunning()) {
-                clearer.stop("Stopped");
-            } else if (!busy()) {
-                clearButton.setText("■\nStop");
-                clearer.clearNow();
-            }
-        }, v -> toggleAutoClear());
         booker = new Booker(this, (summary, log) -> {
             saveReport(log);
             goButton.setText(goLabel());
@@ -529,7 +424,6 @@ public class InspectorService extends AccessibilityService {
             Toast.makeText(this, "Reading the dropdown's options…", Toast.LENGTH_SHORT).show();
             Booker.options(this, handler, this::askBooking);
         });
-        showReportButton();
         showAutoButton();
         showDeleteButton();
         applyShown();
@@ -754,7 +648,7 @@ public class InspectorService extends AccessibilityService {
         pendingTick = () -> {
             pendingTick = null;
             goButton.setText(goLabel());
-            if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+            if (!linkOn() || ticker.isRunning() || booker.isRunning()) return;
             if (stillPage2()) return;
             tickButton.setText("■\nStop");
             ticker.start();
@@ -777,7 +671,7 @@ public class InspectorService extends AccessibilityService {
 
     /** Go started on page 3 (Auto on): Tick starts now, no 1 s gap. */
     private void tickNow() {
-        if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (!linkOn() || ticker.isRunning() || booker.isRunning()) return;
         Toast.makeText(this, "Go: already on page 3 - Tick now", Toast.LENGTH_SHORT).show();
         tickButton.setText("■\nStop");
         ticker.start();
@@ -794,13 +688,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton};
+        return new View[] {tickButton, bookButton, goButton, autoButton, deleteButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete"};
+    static final String[] SHOWN_KEYS = {"tick", "book", "go", "auto", "delete"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
@@ -855,27 +749,16 @@ public class InspectorService extends AccessibilityService {
         }
     }
 
-    // ---- the last run's result: kept for the 📋 Report button, not shown by itself ----
+    // ---- the last run's result: in the app's 📋 Report tab, its first line said ----
 
     private String lastSummary = "";
-    private TextView reportButton;
 
-    /** A run ended: its result is kept (📋 Report shows it), only its first line is said. */
+    /** A run ended: its first line is said (the full report is in the app). */
     private void finished(String summary) {
         lastSummary = summary;
         String[] lines = summary.split("\n");
         String head = lines[0] + (lines.length > 1 ? " · " + lines[1] : "");
-        Toast.makeText(this, head + " - 📋 Report for more", Toast.LENGTH_SHORT).show();
-    }
-
-    private void showReportButton() {
-        reportButton = floating("📋\nReport", 0xEE455A64, 490, v -> {
-            if (card != null) {
-                closeCard();
-                return;
-            }
-            showCard(lastSummary.isEmpty() ? "No run yet - Tick, Clear, Book or Go first." : lastSummary);
-        });
+        Toast.makeText(this, head + " - the full report is in the app", Toast.LENGTH_SHORT).show();
     }
 
     /** Choices saved for Go (an option or a date). */
@@ -1245,8 +1128,8 @@ public class InspectorService extends AccessibilityService {
 
     /** Tick ended in test mode with Auto off: on page 3, the test trip now (back, delete, forward). */
     private void startTestTripNow() {
-        boolean running = scanning || deleting() || pendingTick != null || ticker.isRunning()
-                || clearer.isRunning() || booker.isRunning();
+        boolean running = deleting() || pendingTick != null || ticker.isRunning()
+                || booker.isRunning();
         if (flow == null || flow.busy() || retrying || running) {
             Toast.makeText(this, "🧪 Test trip not started - something else was running", Toast.LENGTH_SHORT).show();
             testTripEnded();
@@ -1451,131 +1334,9 @@ public class InspectorService extends AccessibilityService {
 
     // ---- Auto-clear: press the OK of every new pop-up the moment it comes up ----------
 
-    private boolean autoClear, autoPending;
-    private Page.Before autoBaseline;
-    private long autoLastPress;
-    private String autoLastKey = "";
-    private int autoSameTries, autoPressed;
-
-    /** Long press on Clear: watch the page and press the OK of each pop-up that comes up. */
-    private void toggleAutoClear() {
-        closeCard();
-        autoClear = !autoClear;
-        if (autoClear) {
-            autoBaseline = new Page.Before(this);
-            autoPressed = 0;
-            autoLastKey = "";
-            clearButton.setText("✖\nAuto");
-            GradientDrawable bg = (GradientDrawable) clearButton.getBackground();
-            bg.setStroke(dp(3), 0xFF34C759);
-            Toast.makeText(this, "Auto-clear ON: the OK of every new pop-up is pressed. Long-press again to stop.",
-                    Toast.LENGTH_LONG).show();
-        } else {
-            clearButton.setText("✖\nClear");
-            GradientDrawable bg = (GradientDrawable) clearButton.getBackground();
-            bg.setStroke(Math.round(1.5f * getResources().getDisplayMetrics().density), 0x99FFFFFF);
-            Toast.makeText(this, "Auto-clear OFF - " + autoPressed + " pop-up(s) cleared", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    /** The page changed: look for a new pop-up shortly (changes come in bursts). */
-    private void autoCheckSoon() {
-        if (autoPending) return;
-        autoPending = true;
-        handler.postDelayed(() -> {
-            autoPending = false;
-            if (!autoClear) return;
-            try {
-                autoCheck();
-            } catch (RuntimeException ignored) {
-            }
-        }, 150);
-    }
-
-    private void autoCheck() {
-        // Tick and Clear clear their own pop-ups: never tap the same one twice.
-        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
-        AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
-        if (ok == null && Page.coverCame(this, autoBaseline)) {
-            // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
-            android.content.SharedPreferences sp = getSharedPreferences("popup", MODE_PRIVATE);
-            String spot = sp.getString("ok_spot_" + appInFront(), sp.getString("ok_spot", null));
-            android.graphics.Rect r = spot == null ? null : android.graphics.Rect.unflattenFromString(spot);
-            long now = android.os.SystemClock.uptimeMillis();
-            if (r != null && now - autoLastPress >= 700) {
-                autoLastPress = now;
-                autoPressed++;
-                android.graphics.Path p = new android.graphics.Path();
-                p.moveTo(r.centerX(), r.centerY());
-                dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
-                        .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
-                        .build(), null, null);
-                Toast.makeText(this, "Auto-clear: tapped the pop-up's OK", Toast.LENGTH_SHORT).show();
-                handler.postDelayed(this::autoCheckSoon, 800);
-                return;
-            }
-        }
-        if (ok == null) {
-            // No pop-up: this is the page as it is now; a pop-up is what comes on top of it.
-            autoBaseline = new Page.Before(this);
-            autoSameTries = 0;
-            autoShot();
-            return;
-        }
-        long now = android.os.SystemClock.uptimeMillis();
-        if (now - autoLastPress < 700) {
-            autoCheckSoon(); // pressed a moment ago: look again once it has had time to go
-            return;
-        }
-        String key = Page.key(ok);
-        autoSameTries = key.equals(autoLastKey) ? autoSameTries + 1 : 0;
-        autoLastKey = key;
-        if (autoSameTries >= 3) return; // it won't go: leave it, don't keep pressing
-        android.graphics.Rect r = Page.bounds(ok);
-        if (!ok.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            android.graphics.Path p = new android.graphics.Path();
-            p.moveTo(r.centerX(), r.centerY());
-            dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
-                    .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
-                    .build(), null, null);
-        }
-        autoLastPress = now;
-        if (autoSameTries == 0) autoPressed++;
-        Toast.makeText(this, "Auto-clear: pressed \"" + Page.label(ok) + "\"", Toast.LENGTH_SHORT).show();
-        handler.postDelayed(this::autoCheckSoon, 800);
-    }
-
-    private PurpleFinder autoFinder;
-    private boolean autoShotQueued;
-
-    /**
-     * A pop-up the page draws without reporting it: its purple button found on a screenshot
-     * (at most ~3 a second, only while the page is changing) and tapped.
-     */
-    private void autoShot() {
-        if (!PurpleFinder.available() || autoShotQueued) return;
-        if (autoFinder == null) autoFinder = new PurpleFinder(this);
-        autoShotQueued = true;
-        handler.postDelayed(() -> autoFinder.find(r -> {
-            autoShotQueued = false;
-            if (!autoClear || scanning || r == null || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
-            long now = android.os.SystemClock.uptimeMillis();
-            if (now - autoLastPress < 700) return;
-            autoLastPress = now;
-            autoPressed++;
-            android.graphics.Path p = new android.graphics.Path();
-            p.moveTo(r.centerX(), r.centerY());
-            dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
-                    .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(p, 0, 60))
-                    .build(), null, null);
-            Toast.makeText(this, "Auto-clear: tapped the pop-up's button", Toast.LENGTH_SHORT).show();
-            handler.postDelayed(this::autoCheckSoon, 800);
-        }, why -> autoShotQueued = false, autoBaseline), autoFinder.waitMs());
-    }
-
     /** Another run is on: say so instead of starting a second one over it. */
     private boolean busy() {
-        boolean on = scanning || deleting() || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
+        boolean on = deleting() || pendingTick != null || ticker.isRunning() || booker.isRunning();
         if (on) Toast.makeText(this, "Stop the running one first", Toast.LENGTH_SHORT).show();
         return on;
     }
@@ -1887,210 +1648,6 @@ public class InspectorService extends AccessibilityService {
     }
 
     // ---- scanning ---------------------------------------------------------------
-
-    /** Scans the screen in front; {@code deep}: wake the web views first and wait. */
-    private void scan(boolean deep) {
-        if (busy()) return;
-        scanning = true;
-        closeCard();
-        button.setAlpha(0.5f);
-        if (!deep) {
-            handler.postDelayed(() -> finish(false), 100);
-            return;
-        }
-        int woken = 0;
-        for (AccessibilityNodeInfo root : roots()) {
-            List<AccessibilityNodeInfo> stack = new ArrayList<>();
-            stack.add(root);
-            while (!stack.isEmpty()) {
-                AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
-                if (n == null) continue;
-                for (int i = 0; i < n.getChildCount(); i++) stack.add(n.getChild(i));
-                CharSequence c = n.getClassName();
-                if (c != null && c.toString().contains("WebView")) {
-                    n.performAction(AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS);
-                    woken++;
-                }
-            }
-        }
-        Toast.makeText(this, "Deep scan: waking " + woken + " web view(s)…", Toast.LENGTH_SHORT).show();
-        handler.postDelayed(() -> finish(true), 1500);
-    }
-
-    private WholePage wholePage;
-    private final java.util.Map<String, String> openScreen = new java.util.HashMap<>();
-    private final RawScan.Recorder recorder = new RawScan.Recorder();
-    private String recordPkg = "";
-
-    /** The app in front (not us, not the status bar). */
-    private String appInFront() {
-        AccessibilityNodeInfo active = getRootInActiveWindow();
-        if (active != null && active.getPackageName() != null && !getPackageName().contentEquals(active.getPackageName())) {
-            return active.getPackageName().toString();
-        }
-        for (AccessibilityNodeInfo r : roots()) {
-            if (r.getPackageName() != null && !"com.android.systemui".contentEquals(r.getPackageName())) {
-                return r.getPackageName().toString();
-            }
-        }
-        return "";
-    }
-
-    /** Records the app's accessibility events for 15 s while you use it. */
-    private void record() {
-        closeCard();
-        if (busy()) return;
-        recordPkg = appInFront();
-        if (recordPkg.isEmpty()) {
-            Toast.makeText(this, "No app in front to record", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        scanning = true;
-        recorder.start();
-        Toast.makeText(this, "Recording " + recordPkg + " for 15 s - use the app now", Toast.LENGTH_LONG).show();
-        button.setAlpha(0.5f);
-        handler.postDelayed(() -> {
-            String rep = recorder.stop(recordPkg);
-            button.setAlpha(1f);
-            done(recorder.summary(), rep, false);
-        }, 15000);
-    }
-
-    private void finish(boolean deep) {
-        Scanner.Result r;
-        try {
-            String pkg = appInFront();
-            r = Scanner.scan(this, deep, openScreen.get(pkg));
-            String page = pageLine();
-            r = new Scanner.Result(page + r.summary, page + r.report);
-        } catch (RuntimeException e) {
-            r = new Scanner.Result("Scan failed: " + e, "Scan failed: " + e);
-        }
-        if (!deep) {
-            done(r.summary, r.report, false);
-            return;
-        }
-        Scanner.Result scan = r;
-        String evidence;
-        try { evidence = PopupDiagnostics.treeEvidence(this); }
-        catch (RuntimeException e) { evidence = "\nPopup diagnostics failed: " + e; }
-        String details = evidence;
-        // Hide our buttons briefly so the screenshot shows the page underneath.
-        View[] overlays = shownButtons();
-        int[] visibility = new int[overlays.length];
-        for (int i = 0; i < overlays.length; i++) {
-            visibility[i] = overlays[i] == null ? View.GONE : overlays[i].getVisibility();
-            if (overlays[i] != null) overlays[i].setVisibility(View.INVISIBLE);
-        }
-        handler.postDelayed(() -> PopupDiagnostics.capture(this, visual -> {
-            if (destroyed) return;
-            for (int i = 0; i < overlays.length; i++)
-                if (overlays[i] != null) overlays[i].setVisibility(visibility[i]);
-            String watch = popupWatchReport;
-            popupWatchReport = "";
-            done(scan.summary + "\nVisual popup evidence collected; see Full report for the PNG or capture error.",
-                    scan.report + details + watch + visual, true);
-        }), 400);
-    }
-
-    private void done(String summary, String report, boolean deep) {
-        saveReport(report);
-        lastSummary = summary;
-        scanning = false;
-        button.setAlpha(1f);
-        if (deep) {
-            showCard(summary, new String[] {"Page code", "Whole page ↓", "Record 15 s", "Watch popup 15 s"},
-                    new View.OnClickListener[] {v -> pageCode(), v -> wholePage(), v -> record(), v -> watchPopup()});
-        } else {
-            showCard(summary);
-        }
-    }
-
-    /** The web page on screen written out as HTML-like code (from what the browser reports). */
-    private void pageCode() {
-        closeCard();
-        String code;
-        try {
-            code = PageCode.write(this);
-        } catch (RuntimeException e) {
-            code = "Page code failed: " + e;
-        }
-        String when = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.ROOT).format(new java.util.Date());
-        saveReport("A11y Inspector - page code - " + when + "\n=================================================\n" + code);
-        String[] lines = code.split("\n");
-        StringBuilder head = new StringBuilder();
-        for (int i = 0; i < Math.min(lines.length, 60); i++) head.append(lines[i]).append('\n');
-        showCard(head + (lines.length > 60 ? "… open Full report for all " + lines.length + " lines" : ""));
-    }
-
-    /** Scrolls the page to the end, screen by screen, listing what each screen brings. */
-    private void wholePage() {
-        closeCard();
-        if (busy()) return;
-        if (wholePage == null) wholePage = new WholePage(this);
-        scanning = true;
-        button.setAlpha(0.5f);
-        wholePage.walk((sum, rep) -> done(sum, rep, false));
-    }
-
-    /** Start before triggering the popup; leave it open for the final screenshot. */
-    private void watchPopup() {
-        if (busy()) return;
-        closeCard();
-        scanning = true;
-        button.setAlpha(0.5f);
-        final String pkg = appInFront();
-        final java.util.Map<String, String> baseline;
-        try { baseline = PopupDiagnostics.snapshot(this); }
-        catch (RuntimeException e) {
-            done("Popup watch failed", "Popup watch failed: " + e, false);
-            return;
-        }
-        Toast.makeText(this, "15 s: trigger the popup now and leave it open. Auto-clear pauses during capture.",
-                Toast.LENGTH_LONG).show();
-        watchPopupStep(pkg, baseline, baseline, new StringBuilder("\nPOPUP WATCH (500 ms samples, 15 s)\n"
-                + "Node IDs are per snapshot/session; index matching on older Android is approximate.\n"), 0);
-    }
-
-    private void watchPopupStep(String pkg, java.util.Map<String, String> baseline,
-                               java.util.Map<String, String> previous, StringBuilder log, int step) {
-        handler.postDelayed(() -> {
-            if (destroyed) return;
-            try {
-                if (!pkg.equals(appInFront())) {
-                    done("Popup watch stopped: app changed", log + "\nApp changed; capture stopped.", false);
-                    return;
-                }
-                java.util.Map<String, String> now = PopupDiagnostics.snapshot(this);
-                String delta = PopupDiagnostics.changes(previous, now);
-                if (!delta.isEmpty() && log.length() < 150000)
-                    log.append("\nAt ").append((step + 1) * 500).append(" ms\n").append(delta);
-                if (step + 1 < 30) watchPopupStep(pkg, baseline, now, log, step + 1);
-                else {
-                    log.append("\nFINAL COMPARED WITH START\n").append(PopupDiagnostics.changes(baseline, now));
-                    popupWatchReport = log.toString();
-                    finish(true);
-                }
-            } catch (RuntimeException e) {
-                done("Popup watch failed", log + "\n" + e, false);
-            }
-        }, 500);
-    }
-
-    private List<AccessibilityNodeInfo> roots() {
-        List<AccessibilityNodeInfo> out = new ArrayList<>();
-        try {
-            for (android.view.accessibility.AccessibilityWindowInfo w : getWindows()) {
-                AccessibilityNodeInfo r = w.getRoot();
-                if (r != null && !getPackageName().contentEquals(
-                        r.getPackageName() == null ? "" : r.getPackageName())) out.add(r);
-            }
-        } catch (RuntimeException ignored) {
-        }
-        return out;
-    }
-
-    // ---- the result card over the page --------------------------------------------
 
     private void showCard(String summary) {
         showCard(summary, new String[0], new View.OnClickListener[0]);
