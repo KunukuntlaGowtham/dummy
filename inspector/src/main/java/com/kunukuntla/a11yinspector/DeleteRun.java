@@ -77,6 +77,7 @@ final class DeleteRun {
      */
     void start(List<Integer> numbers, List<String> expect) {
         if (running) return;
+        justSettled = false;
         names.clear();
         for (int i = 0; i < numbers.size(); i++) names.add(expect != null && i < expect.size() ? expect.get(i) : null);
         running = true;
@@ -126,12 +127,20 @@ final class DeleteRun {
     // ---- one profile after another ------------------------------------------------------
 
     private int original, cardsBefore;
+    /** The last profile was just confirmed gone on a settled list with no pop-up up. */
+    private boolean justSettled;
     private String name = "";
 
     private void nextProfile() {
         if (!running) return;
         if (todo.isEmpty()) {
             stop(failed.isEmpty() ? "✅ Done" : "Done - some not deleted");
+            return;
+        }
+        // Just confirmed gone - the list read the same twice and no pop-up up: settled already.
+        if (justSettled) {
+            justSettled = false;
+            deleteNext();
             return;
         }
         // Before each: no pop-up up, and the list settled (the same profiles on two looks in
@@ -434,6 +443,7 @@ final class DeleteRun {
             if (gone) {
                 runBase = new Page.Before(service); // the page as it is now, rebuilt, no pop-up
                 deleted.add(original);
+                justSettled = true;
                 log("profile " + original + " " + name + ": deleted ✓ (" + ms + " ms)");
             } else {
                 log("profile " + original + " " + name + ": still there? ✗ (" + ms + " ms, "
@@ -475,7 +485,7 @@ final class DeleteRun {
         if (p != null && service.getPackageName().contentEquals(p)) return;
         Runnable r = pending;
         handler.removeCallbacks(r);
-        handler.postDelayed(r, 10);
+        handler.postDelayed(r, Math.max(10, Page.pace() / 2));
     }
 
     private void when(java.util.function.BooleanSupplier ok, long until, java.util.function.Consumer<Boolean> then) {
@@ -495,7 +505,7 @@ final class DeleteRun {
                 return;
             }
             pending = look[0];
-            handler.postDelayed(look[0], 40);
+            handler.postDelayed(look[0], Math.max(40, Page.pace()));
         };
         pending = look[0];
         handler.postDelayed(look[0], 30);

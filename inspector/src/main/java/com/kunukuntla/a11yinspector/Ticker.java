@@ -1146,7 +1146,7 @@ final class Ticker {
         };
         pollTask = self[0];
         pollWoken = false;
-        handler.postDelayed(self[0], ms);
+        handler.postDelayed(self[0], Math.max(ms, Page.pace()));
     }
 
     /**
@@ -1165,7 +1165,8 @@ final class Ticker {
         pollWoken = true;
         Runnable task = pollTask;
         handler.removeCallbacks(task);
-        handler.postDelayed(task, 10);
+        // (A slow phone: not sooner than half its pace - the page is given time to answer.)
+        handler.postDelayed(task, Math.max(10, Page.pace() / 2));
     }
 
     private void later(Runnable r, long ms) {
