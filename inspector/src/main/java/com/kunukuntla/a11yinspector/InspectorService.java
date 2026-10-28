@@ -87,7 +87,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {tickButton, bookButton, goButton, autoButton, deleteButton, pageBadge}) {
+        for (View v : new View[] {tickButton, bookButton, goButton, autoButton, deleteButton, watchButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -219,7 +219,7 @@ public class InspectorService extends AccessibilityService {
         android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
         boolean show = sp.getBoolean("show_page", true), auto = AutoFlow.enabled(this);
         if (!show) pageBadge.setVisibility(View.GONE);
-        if (!show && !auto) {
+        if (!show && !auto && !watching) {
             pageKind = PageKind.Kind.OTHER;
             return;
         }
@@ -257,6 +257,8 @@ public class InspectorService extends AccessibilityService {
         lastFacts = f;
         lastKind = kind;
         pageKind = kind;
+        // 👁 Watch: ticking by hand on page 3 - the red box follows it live.
+        if (watching && kind == PageKind.Kind.TICKING) watchRows();
         // During the retry its own steps press Continue: Auto's would press it twice.
         if (auto && flow != null && !retrying) flow.onPage(kind, f, sp.getString("booking_pkg", ""), confirmInOrder);
         if (!show) return;
@@ -428,6 +430,7 @@ public class InspectorService extends AccessibilityService {
         });
         showAutoButton();
         showDeleteButton();
+        showWatchButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -491,6 +494,63 @@ public class InspectorService extends AccessibilityService {
         GradientDrawable bg = (GradientDrawable) autoButton.getBackground();
         bg.setStroke(on ? dp(3) : Math.round(1.5f * getResources().getDisplayMetrics().density),
                 on ? 0xFF34C759 : 0x99FFFFFF);
+    }
+
+    // ---- 👁 Watch: the red box follows the ticks you make by hand on page 3 ----------------
+
+    private TextView watchButton;
+    private boolean watching;
+    private String watchedLast = "";
+
+    /**
+     * 👁 Watch on: on page 3, every row whose box isn't ticked goes in the red box as you tick
+     * by hand - numbered as Tick numbers them (its place among the page's checkboxes), shown as
+     * after each delete (3, 7, 11 → 3, 6, 9), with page 3's names - so 🗑 on page 1 deletes them
+     * exactly as after a Tick run.
+     */
+    private void showWatchButton() {
+        watching = getSharedPreferences("settings", MODE_PRIVATE).getBoolean("watch_on", false);
+        watchButton = floating("👁\nWatch", 0xEE5D4037, 754, v -> {
+            closeCard();
+            watching = !watching;
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("watch_on", watching).apply();
+            watchedLast = "";
+            showWatch();
+            Toast.makeText(this, watching ? "👁 Watch ON: on page 3 the red box shows the rows you haven't ticked yet"
+                    : "👁 Watch off", Toast.LENGTH_SHORT).show();
+            if (watching) checkPage();
+        });
+        showWatch();
+    }
+
+    private void showWatch() {
+        if (watchButton == null) return;
+        watchButton.setText(watching ? "👁\nOn" : "👁\nWatch");
+        watchButton.setContentDescription(watching ? "Watch on" : "Watch off");
+        GradientDrawable bg = (GradientDrawable) watchButton.getBackground();
+        bg.setStroke(watching ? dp(3) : Math.round(1.5f * getResources().getDisplayMetrics().density),
+                watching ? 0xFF34C759 : 0x99FFFFFF);
+    }
+
+    /** Page 3 now: the rows not ticked (as Tick numbers them) into the red box, and their names. */
+    private void watchRows() {
+        List<String> rows = new ArrayList<>();
+        int i = 0;
+        for (AccessibilityNodeInfo n : Page.nodes(this)) {
+            if (!Page.isCheckbox(n)) continue;
+            i++;
+            if (!n.isChecked()) rows.add(String.valueOf(i));
+        }
+        String key = String.join(",", rows);
+        if (key.equals(watchedLast)) return; // nothing changed since the last look
+        watchedLast = key;
+        missedBox.show(rows);
+        lastMissed = new ArrayList<>(rows);
+        try {
+            rowNames = readRowNames();
+        } catch (RuntimeException e) {
+            rowNames = new ArrayList<>();
+        }
     }
 
     // ---- 🗑 Delete (testing): sevak profiles by their numbers, each with its 2 pop-ups --------
@@ -690,13 +750,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {tickButton, bookButton, goButton, autoButton, deleteButton};
+        return new View[] {tickButton, bookButton, goButton, autoButton, deleteButton, watchButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"tick", "book", "go", "auto", "delete"};
+    static final String[] SHOWN_KEYS = {"tick", "book", "go", "auto", "delete", "watch"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
@@ -946,6 +1006,7 @@ public class InspectorService extends AccessibilityService {
         }
         lastMissed = new ArrayList<>();
         rowNames = new ArrayList<>();
+        watchedLast = ""; // 👁 Watch fills the red box again on page 3
         return m;
     }
 
