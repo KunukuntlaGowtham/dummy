@@ -173,18 +173,20 @@ final class PageKind {
             if (label.length() >= 2 && !label.matches("[\\d\\s/:.,-]+") && f.texts.size() < 300) f.texts.add(label);
             // Continue / Confirm count also below the screen (pressed through accessibility).
             if (label.isEmpty()) continue;
+            boolean cont = isContinue(label), conf = !cont && isConfirm(label);
+            if (!cont && !conf) continue; // only these two need their button (a call per element saved)
             AccessibilityNodeInfo button = pressable(n);
             if (button == null) continue;
-            if (isContinue(label)) {
+            if (cont) {
                 f.cont = true;
                 f.contOn = button.isEnabled() && n.isEnabled();
-            } else if (isConfirm(label) && !inDialog(n)) {
+            } else if (!inDialog(n)) {
                 f.confirm = true;
                 f.confirmOn = f.confirmOn || button.isEnabled() && n.isEnabled();
                 f.confirmShown = f.confirmShown || n.isVisibleToUser();
             }
         }
-        f.days = Booker.dayCells(service).size();
+        f.days = Booker.dayCells(nodes).size(); // from the same read (no second read of the page)
         return f;
     }
 }

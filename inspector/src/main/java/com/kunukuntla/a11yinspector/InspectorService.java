@@ -287,13 +287,13 @@ public class InspectorService extends AccessibilityService {
     private void pageCheckSoon() {
         if (pageCheckQueued || pageBadge == null) return;
         pageCheckQueued = true;
-        // 120 ms after a change, but at most one read every 300 ms while the page keeps changing.
+        // 40 ms after a change, but at most one read every 150 ms while the page keeps changing.
         long since = android.os.SystemClock.uptimeMillis() - lastPageCheck;
         handler.postDelayed(() -> {
             pageCheckQueued = false;
             lastPageCheck = android.os.SystemClock.uptimeMillis();
             checkPage();
-        }, Math.max(120, 300 - since));
+        }, Math.max(40, 150 - since));
     }
 
     // Auto: page 3's Continue (or Back to pages 2 and 1), page 4's Confirm.
