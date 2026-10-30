@@ -651,6 +651,12 @@ final class Ticker {
         }
         poll(() -> {
             boolean woken = pollRanWoken; // woken early by the page: doesn't count as a look
+            // OK's place known this run: the cover is looked for first, and tapped there the
+            // moment it comes - nothing else is looked at before the tap.
+            if (runSpot != null && before != null && Page.coverCame(service, before)) {
+                pressRunSpot(before, then);
+                return;
+            }
             Page.Popup p = Page.popup(service, before);
             if (p == null) {
                 // The page hides the pop-up's words and buttons but reports its cover over the
