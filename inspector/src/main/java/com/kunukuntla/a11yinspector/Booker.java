@@ -54,11 +54,18 @@ final class Booker {
     /** The four dropdowns of page 2, top to bottom (the words the page draws in each box). */
     static final String[] LEVELS = {"Seva State", "Seva Location", "Seva Name", "Seva Type"};
 
-    /** Go's saved dropdown choices (book_pick0..3) into the plan. */
+    /**
+     * What each dropdown holds unless you choose otherwise (the values the page starts with): a
+     * page showing another choice is put back to these; one showing them is left alone.
+     */
+    static final String[] DEFAULT_PICKS = {"Andhra Pradesh", "Tirumala", "Srivari Seva", "Tirumala (Both Female and Male)"};
+
+    /**
+     * Go's saved dropdown choices (book_pick0..3) into the plan - the defaults where nothing was
+     * saved; a box saved empty means "keep what the page has".
+     */
     static void loadPicks(android.content.SharedPreferences sp, Plan plan) {
-        for (int i = 0; i < LEVELS.length; i++) plan.pick[i] = sp.getString("book_pick" + i, "");
-        // Saved before the four dropdowns: its one option was a Seva Type ("Tirumala Male Only").
-        if (!sp.contains("book_pick3")) plan.pick[3] = sp.getString("book_option", "");
+        for (int i = 0; i < LEVELS.length; i++) plan.pick[i] = sp.getString("book_pick" + i, DEFAULT_PICKS[i]);
     }
 
     private static final Pattern MONTH_ID = Pattern.compile("(\\d{1,2})/(\\d{4})");

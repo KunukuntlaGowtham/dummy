@@ -67,4 +67,22 @@ public class BookerPickTest {
         assertTrue(p.hasPick());
         assertEquals("Tirupati · Male Only", p.picksText());
     }
+
+    @Test
+    public void theDefaultsAreWhatThePageStartsWith() {
+        assertEquals(Booker.LEVELS.length, Booker.DEFAULT_PICKS.length);
+        // Each default is already "chosen" by the page's own starting value - so Go leaves it alone.
+        assertTrue(Booker.satisfied("Andhra Pradesh", Booker.DEFAULT_PICKS[0]));
+        assertTrue(Booker.satisfied("Tirumala", Booker.DEFAULT_PICKS[1]));
+        assertTrue(Booker.satisfied("Srivari Seva", Booker.DEFAULT_PICKS[2]));
+        assertTrue(Booker.satisfied("Tirumala (Both Female and Male)", Booker.DEFAULT_PICKS[3]));
+        // ... and each is an option of its own list.
+        assertEquals(0, Booker.bestOption(STATE, Booker.DEFAULT_PICKS[0]));
+        assertEquals(0, Booker.bestOption(LOCATION, Booker.DEFAULT_PICKS[1]));
+        assertEquals(0, Booker.bestOption(NAME, Booker.DEFAULT_PICKS[2]));
+        assertEquals(0, Booker.bestOption(TYPE, Booker.DEFAULT_PICKS[3]));
+        // A page showing something else is put back.
+        assertFalse(Booker.satisfied("Telangana", Booker.DEFAULT_PICKS[0]));
+        assertFalse(Booker.satisfied("Tirumala (Male Only)", Booker.DEFAULT_PICKS[3]));
+    }
 }

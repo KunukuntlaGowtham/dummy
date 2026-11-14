@@ -1781,10 +1781,10 @@ public class InspectorService extends AccessibilityService {
         for (int lv = 0; lv < Booker.LEVELS.length; lv++) {
             int level = lv;
             String shown = lv < choices.size() ? choices.get(lv) : "";
-            String saved = prefs.getString("book_pick" + lv,
-                    lv == 3 && !prefs.contains("book_pick3") ? prefs.getString("book_option", "") : "");
+            String saved = prefs.getString("book_pick" + lv, Booker.DEFAULT_PICKS[lv]);
             pickBox[lv] = field(box, Booker.LEVELS[lv] + (shown.isEmpty() ? "" : "  ·  page has: " + shown),
-                    "empty = keep what the page has", saved, android.text.InputType.TYPE_CLASS_TEXT);
+                    "empty = keep what the page has (default: " + Booker.DEFAULT_PICKS[lv] + ")", saved,
+                    android.text.InputType.TYPE_CLASS_TEXT);
             LinearLayout list = new LinearLayout(this);
             list.setOrientation(LinearLayout.VERTICAL);
             list.setVisibility(View.GONE);
@@ -1832,6 +1832,16 @@ public class InspectorService extends AccessibilityService {
             box.addView(more);
             box.addView(list);
         }
+        TextView defaults = new TextView(this);
+        defaults.setText("↺ Use the defaults (" + String.join(" · ", Booker.DEFAULT_PICKS) + ")");
+        defaults.setTextColor(0xFFC7C6FF);
+        defaults.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        defaults.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        defaults.setPadding(dp(4), dp(10), dp(10), dp(4));
+        defaults.setOnClickListener(v -> {
+            for (int i = 0; i < pickBox.length; i++) pickBox[i].setText(Booker.DEFAULT_PICKS[i]);
+        });
+        box.addView(defaults);
         // The date: picked on a calendar (tap the date to open / close it) - no typing.
         String[] picked = {prefs.getString("book_date", "")};
         TextView dateLabel = new TextView(this);
@@ -1923,7 +1933,6 @@ public class InspectorService extends AccessibilityService {
                     plan.pick[i] = pickBox[i].getText().toString().trim();
                     save.putString("book_pick" + i, plan.pick[i]);
                 }
-                save.putString("book_option", ""); // (the one dropdown of before: now Seva Type)
                 plan.radio = radio.getText().toString().trim();
                 String d = picked[0];
                 if (!d.isEmpty() && !Booker.parseDate(d, plan)) d = "";
