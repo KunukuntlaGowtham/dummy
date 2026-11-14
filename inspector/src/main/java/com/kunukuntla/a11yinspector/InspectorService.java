@@ -968,24 +968,26 @@ public class InspectorService extends AccessibilityService {
     /** Choices saved for Go (an option or a date). */
     private boolean hasSavedPlan() {
         android.content.SharedPreferences p = getSharedPreferences("settings", MODE_PRIVATE);
-        return !p.getString("book_option", "").isEmpty() || !p.getString("book_date", "").isEmpty();
+        Booker.Plan saved = new Booker.Plan();
+        Booker.loadPicks(p, saved);
+        return saved.hasPick() || !p.getString("book_date", "").isEmpty();
     }
 
     /** Starts Book with the choices saved in its form; with none saved, opens the form. */
     private void startSaved() {
         android.content.SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
         Booker.Plan plan = new Booker.Plan();
-        plan.option = prefs.getString("book_option", "");
+        Booker.loadPicks(prefs, plan);
         plan.radio = prefs.getString("book_radio", "");
         String d = prefs.getString("book_date", "");
         if (!d.isEmpty() && !Booker.parseDate(d, plan)) d = "";
-        if (plan.option.isEmpty() && d.isEmpty()) {
+        if (!plan.hasPick() && d.isEmpty()) {
             endGo();
             Toast.makeText(this, "Nothing chosen yet - choose in Book first", Toast.LENGTH_SHORT).show();
             Booker.options(this, handler, this::askBooking);
             return;
         }
-        Toast.makeText(this, "Go: " + (plan.option.isEmpty() ? "" : plan.option) + (d.isEmpty() ? "" : " · " + d)
+        Toast.makeText(this, "Go: " + plan.picksText() + (d.isEmpty() || !plan.hasPick() ? "" : " · ") + d
                 + (plan.radio.isEmpty() ? "" : " · " + plan.radio), Toast.LENGTH_SHORT).show();
         goButton.setText(AutoFlow.goActive ? goLabel() : "■\nStop");
         cancelLinkedTick();
@@ -1766,56 +1768,69 @@ public class InspectorService extends AccessibilityService {
         title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
         box.addView(title);
         TextView hint = new TextView(this);
-        hint.setText("Chooses the dropdown option, the date (moving months if needed), ticks the "
-                + "checkbox, picks the radio button, then presses Continue. Leave a box empty to skip it.");
+        hint.setText("Chooses the four dropdowns (State, Location, Name, Type - an empty one is kept as the "
+                + "page has it), the date (moving months if needed), ticks the checkbox, picks the slot, then "
+                + "presses Continue.");
         hint.setTextColor(0xCCFFFFFF);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         hint.setPadding(0, dp(4), 0, dp(6));
         box.addView(hint);
-        android.widget.EditText option = field(box, choices.isEmpty() ? "Dropdown option (a few of its words)"
-                        : "Dropdown option - pick one below (or type a few of its words)",
-                "e.g. Tirumala Male Only", prefs.getString("book_option", ""), android.text.InputType.TYPE_CLASS_TEXT);
-        if (!choices.isEmpty()) {
-            // The page's own options: tap one to choose it.
+        // The four dropdowns: each empty = keep what the page has (shown as "page has"); words of
+        // the option to choose otherwise; "▾ choices" lists the page's own options to tap.
+        android.widget.EditText[] pickBox = new android.widget.EditText[Booker.LEVELS.length];
+        for (int lv = 0; lv < Booker.LEVELS.length; lv++) {
+            int level = lv;
+            String shown = lv < choices.size() ? choices.get(lv) : "";
+            String saved = prefs.getString("book_pick" + lv,
+                    lv == 3 && !prefs.contains("book_pick3") ? prefs.getString("book_option", "") : "");
+            pickBox[lv] = field(box, Booker.LEVELS[lv] + (shown.isEmpty() ? "" : "  ·  page has: " + shown),
+                    "empty = keep what the page has", saved, android.text.InputType.TYPE_CLASS_TEXT);
             LinearLayout list = new LinearLayout(this);
             list.setOrientation(LinearLayout.VERTICAL);
-            List<TextView> rows = new ArrayList<>();
-            String saved = option.getText().toString();
-            for (String c : choices) {
-                TextView t = new TextView(this);
-                t.setText(c);
-                t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
-                t.setPadding(dp(10), dp(8), dp(10), dp(8));
-                rows.add(t);
-                list.addView(t);
-            }
-            Runnable paint = () -> {
-                String cur = option.getText().toString();
-                for (TextView t : rows) {
-                    boolean on = t.getText().toString().equals(cur);
-                    t.setTextColor(on ? Color.WHITE : 0xDDFFFFFF);
-                    t.setBackgroundColor(on ? 0xFF1565C0 : 0x00000000);
+            list.setVisibility(View.GONE);
+            TextView more = new TextView(this);
+            more.setText("▾ choices");
+            more.setTextColor(0xFFC7C6FF);
+            more.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            more.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+            more.setPadding(dp(4), dp(6), dp(10), dp(4));
+            more.setOnClickListener(v -> {
+                if (list.getVisibility() == View.VISIBLE) {
+                    list.setVisibility(View.GONE);
+                    return;
                 }
-            };
-            for (TextView t : rows) {
-                t.setOnClickListener(v -> {
-                    option.setText(t.getText());
-                    paint.run();
+                more.setText("… reading the page's list");
+                Booker.readOptions(this, handler, level, got -> {
+                    more.setText("▾ choices");
+                    list.removeAllViews();
+                    if (got.isEmpty()) {
+                        TextView none = new TextView(this);
+                        none.setText("The page showed no list (is it page 2?)");
+                        none.setTextColor(0xCCFFFFFF);
+                        none.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+                        list.addView(none);
+                    }
+                    for (String c : got) {
+                        TextView t = new TextView(this);
+                        t.setText(c);
+                        t.setTextColor(Color.WHITE);
+                        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+                        t.setPadding(dp(10), dp(8), dp(10), dp(8));
+                        t.setOnClickListener(x -> {
+                            pickBox[level].setText(c);
+                            list.setVisibility(View.GONE);
+                        });
+                        list.addView(t);
+                    }
+                    GradientDrawable lbg = new GradientDrawable();
+                    lbg.setColor(0x33FFFFFF);
+                    lbg.setCornerRadius(dp(8));
+                    list.setBackground(lbg);
+                    list.setVisibility(View.VISIBLE);
                 });
-            }
-            paint.run();
-            ScrollView sc = new ScrollView(this);
-            sc.addView(list);
-            GradientDrawable lbg = new GradientDrawable();
-            lbg.setColor(0x33FFFFFF);
-            lbg.setCornerRadius(dp(8));
-            sc.setBackground(lbg);
-            box.addView(sc, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                    Math.min(dp(220), dp(36) * choices.size() + dp(8))));
-            // Scroll to the chosen one.
-            for (TextView t : rows) {
-                if (t.getText().toString().equals(saved)) sc.post(() -> sc.scrollTo(0, t.getTop()));
-            }
+            });
+            box.addView(more);
+            box.addView(list);
         }
         // The date: picked on a calendar (tap the date to open / close it) - no typing.
         String[] picked = {prefs.getString("book_date", "")};
@@ -1903,12 +1918,16 @@ public class InspectorService extends AccessibilityService {
         for (boolean startNow : new boolean[] {false, true}) {
             row.addView(cardButton(startNow ? "Save & Start" : "Save", v -> {
                 Booker.Plan plan = new Booker.Plan();
-                plan.option = option.getText().toString().trim();
+                android.content.SharedPreferences.Editor save = prefs.edit();
+                for (int i = 0; i < Booker.LEVELS.length; i++) {
+                    plan.pick[i] = pickBox[i].getText().toString().trim();
+                    save.putString("book_pick" + i, plan.pick[i]);
+                }
+                save.putString("book_option", ""); // (the one dropdown of before: now Seva Type)
                 plan.radio = radio.getText().toString().trim();
                 String d = picked[0];
                 if (!d.isEmpty() && !Booker.parseDate(d, plan)) d = "";
-                prefs.edit().putString("book_option", plan.option).putString("book_date", d)
-                        .putString("book_radio", plan.radio).apply();
+                save.putString("book_date", d).putString("book_radio", plan.radio).apply();
                 closeAsk();
                 if (!startNow) {
                     Toast.makeText(this, "Saved - press ▶ Go to fill the page", Toast.LENGTH_SHORT).show();
@@ -1932,14 +1951,12 @@ public class InspectorService extends AccessibilityService {
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
         lp.y = dp(90);
-        lp.softInputMode = choices.isEmpty() ? WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE
-                : WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN;
+        lp.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN;
         ScrollView formScroll = new ScrollView(this);
         formScroll.addView(box);
         try {
             windowManager.addView(formScroll, lp);
             ask = formScroll;
-            if (choices.isEmpty()) option.requestFocus();
         } catch (RuntimeException e) {
             Toast.makeText(this, "Couldn't show the form: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }

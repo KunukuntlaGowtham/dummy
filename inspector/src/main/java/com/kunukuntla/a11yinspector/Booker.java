@@ -30,8 +30,35 @@ final class Booker {
     }
 
     static final class Plan {
-        String option = "", radio = "";
+        /**
+         * What to choose in each dropdown, in the page's order: Seva State, Seva Location, Seva
+         * Name, Seva Type - a few of the option's words; empty = keep what the page has.
+         */
+        final String[] pick = {"", "", "", ""};
+        String radio = "";
         int day, month, year;
+
+        boolean hasPick() {
+            for (String p : pick) if (!p.isEmpty()) return true;
+            return false;
+        }
+
+        /** "Tirumala · Srivari Seva" - what is asked for, or "" when nothing is. */
+        String picksText() {
+            StringBuilder sb = new StringBuilder();
+            for (String p : pick) if (!p.isEmpty()) sb.append(sb.length() == 0 ? "" : " · ").append(p);
+            return sb.toString();
+        }
+    }
+
+    /** The four dropdowns of page 2, top to bottom (the words the page draws in each box). */
+    static final String[] LEVELS = {"Seva State", "Seva Location", "Seva Name", "Seva Type"};
+
+    /** Go's saved dropdown choices (book_pick0..3) into the plan. */
+    static void loadPicks(android.content.SharedPreferences sp, Plan plan) {
+        for (int i = 0; i < LEVELS.length; i++) plan.pick[i] = sp.getString("book_pick" + i, "");
+        // Saved before the four dropdowns: its one option was a Seva Type ("Tirumala Male Only").
+        if (!sp.contains("book_pick3")) plan.pick[3] = sp.getString("book_option", "");
     }
 
     private static final Pattern MONTH_ID = Pattern.compile("(\\d{1,2})/(\\d{4})");
@@ -103,7 +130,7 @@ final class Booker {
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.setLength(0);
-        log("Book: option \"" + p.option + "\", date " + p.day + "/" + p.month + "/" + p.year
+        log("Book: dropdowns \"" + p.picksText() + "\", date " + p.day + "/" + p.month + "/" + p.year
                 + (p.radio.isEmpty() ? "" : ", radio \"" + p.radio + "\""));
         later(() -> pickOption(0), 50);
     }
@@ -139,100 +166,169 @@ final class Booker {
                 + "\n\nSTEPS\n" + log);
     }
 
-    // ---- 1) the dropdown ------------------------------------------------------------
+    // ---- 1) the dropdowns: Seva State, Seva Location, Seva Name, Seva Type ---------------
 
     private void pickOption(int tries) {
-        if (plan.option.isEmpty()) {
-            log("dropdown: no option given - left as it is");
-            pickDate(0, 0);
+        pickLevel(0, 0, false);
+    }
+
+    /**
+     * From dropdown {@code level} on: each one something is asked for in, top to bottom (a
+     * choice above changes the list below it). One already holding what you asked for - all
+     * your words in its value - is left as it is; the others are opened and the option clicked.
+     */
+    private void pickLevel(int level, int tries, boolean changed) {
+        while (level < LEVELS.length && plan.pick[level].isEmpty()) level++;
+        if (level >= LEVELS.length) {
+            if (!changed) {
+                log("dropdowns: nothing asked - left as the page has them");
+                pickDate(0, 0);
+            } else {
+                // The calendar redraws for the new choice: wait for its days.
+                waitFor(() -> !dayCells().isEmpty(), 3000, ok -> pickDate(0, 0));
+            }
             return;
         }
-        AccessibilityNodeInfo field = dropdownField();
-        if (field != null && matchScore(Page.label(field), plan.option) >= 2) {
-            log("dropdown: already \"" + Page.label(field) + "\"");
-            done.append("✓ Option: ").append(Page.label(field)).append('\n');
-            pickDate(0, 0);
-            return;
-        }
-        AccessibilityNodeInfo item = optionItem();
-        if (item == null) {
-            if (tries >= 16) {
-                stop("✗ Option \"" + plan.option + "\" not found in the dropdown");
+        int lv = level;
+        String want = plan.pick[lv], name = LEVELS[lv];
+        AccessibilityNodeInfo field = fieldFor(service, lv);
+        if (field == null) {
+            if (isSevakPage()) {
+                log("dropdowns: none - this is the sevak page");
+                atSevakPage("started on it");
                 return;
             }
-            if (field == null) {
-                if (isSevakPage()) {
-                    log("dropdown: none - this is the sevak page");
-                    atSevakPage("started on it");
-                    return;
-                }
-                stop("✗ No dropdown on this page");
+            if (tries >= 12) { // 1 s: the page may still be drawing
+                stop("✗ No \"" + name + "\" dropdown on this page");
+                return;
+            }
+            later(() -> pickLevel(lv, tries + 1, changed), 80);
+            return;
+        }
+        String cur = Page.label(field);
+        if (satisfied(cur, want)) {
+            log(name + ": already \"" + cur + "\" - kept");
+            done.append("✓ ").append(name).append(": ").append(cur).append('\n');
+            pickLevel(lv + 1, 0, changed);
+            return;
+        }
+        java.util.List<AccessibilityNodeInfo> items = itemsBelow(service, field);
+        java.util.List<String> texts = labels(items);
+        int at = bestOption(texts, want);
+        if (at < 0) {
+            if (!items.isEmpty() && tries >= 3 || tries >= 16) {
+                stop(items.isEmpty() ? "✗ " + name + " didn't open"
+                        : "✗ " + name + " \"" + want + "\" not found. Its options: " + String.join(" | ", texts));
                 return;
             }
             if (tries == 0 || tries == 8) {
-                log("dropdown: opening it");
+                log(name + ": opening it");
                 click(field);
             }
-            later(() -> pickOption(tries + 1), 80); // the list shows in a moment: look again soon
+            later(() -> pickLevel(lv, tries + 1, changed), 80); // the list shows in a moment: look again soon
             return;
         }
-        String text = Page.label(item);
-        log("dropdown: choosing \"" + text + "\"");
-        Rect r = bounds(item);
+        String text = texts.get(at);
+        log(name + ": choosing \"" + text + "\"");
         // Clicked where it is - also further down the list, out of view.
-        click(item);
-        waitFor(() -> optionChosen(text), 2000, ok -> afterOption(ok, text));
+        click(items.get(at));
+        waitFor(() -> levelChosen(lv, text), 2000, ok -> {
+            if (!ok) {
+                stop("✗ Chose \"" + text + "\" in " + name + " but it didn't change");
+                return;
+            }
+            log(name + ": \"" + text + "\" chosen ✓");
+            done.append("✓ ").append(name).append(": ").append(text).append('\n');
+            // The list closes and the next dropdown's options follow from this choice.
+            waitFor(() -> optionTexts(service).isEmpty(), 1200, closed -> pickLevel(lv + 1, 0, true));
+        });
     }
 
-    private void afterOption(boolean ok, String text) {
-        if (!ok) {
-            stop("✗ Chose \"" + text + "\" but the dropdown didn't change");
-            return;
-        }
-        log("dropdown: \"" + text + "\" chosen ✓");
-        done.append("✓ Option: ").append(text).append('\n');
-        // The calendar redraws for the new option: wait for its days.
-        waitFor(() -> !dayCells().isEmpty(), 3000, ok2 -> pickDate(0, 0));
-    }
-
-    private boolean optionChosen(String text) {
-        AccessibilityNodeInfo f = dropdownField();
+    private boolean levelChosen(int level, String text) {
+        AccessibilityNodeInfo f = fieldFor(service, level);
         if (f == null) return false;
         String now = norm(Page.label(f)), want = norm(text);
         return !now.isEmpty() && (now.equals(want) || want.startsWith(now) || now.startsWith(want));
     }
 
-    /** The dropdown's own box: the page's text field (it shows the chosen option). */
-    private AccessibilityNodeInfo dropdownField() {
-        for (AccessibilityNodeInfo n : Page.nodes(service)) {
-            String cls = String.valueOf(n.getClassName());
-            String role = Page.role(n).toLowerCase(Locale.ROOT);
-            if ((cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield"))
-                    && n.isVisibleToUser()) {
-                return n;
-            }
-        }
-        return null;
+    /** Your words are all in what the dropdown shows now: it needs no click. */
+    static boolean satisfied(String current, String want) {
+        return matchScore(current, want) >= 1;
     }
 
-    /** The list option best matching what you typed (all its words), or null. */
-    private AccessibilityNodeInfo optionItem() {
-        AccessibilityNodeInfo best = null;
-        int bestScore = 0;
-        for (AccessibilityNodeInfo n : Page.nodes(service)) {
-            String role = Page.role(n).toLowerCase(Locale.ROOT);
-            if (!role.contains("listitem") && !role.contains("option") && !role.contains("menuitem")) continue;
-            int score = matchScore(Page.label(n), plan.option);
-            if (score > bestScore) {
-                best = n;
+    /**
+     * The option that fits your words best: the same text first, else all your words in it -
+     * the shortest such option (the most exact). -1 when none has them all.
+     */
+    static int bestOption(java.util.List<String> options, String want) {
+        int best = -1, bestScore = 0;
+        for (int i = 0; i < options.size(); i++) {
+            int score = matchScore(options.get(i), want);
+            if (score == 0) continue;
+            if (score > bestScore || score == bestScore && norm(options.get(i)).length() < norm(options.get(best)).length()) {
+                best = i;
                 bestScore = score;
             }
         }
         return best;
     }
 
+    private static java.util.List<String> labels(java.util.List<AccessibilityNodeInfo> nodes) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (AccessibilityNodeInfo n : nodes) out.add(Page.label(n));
+        return out;
+    }
+
+    /** The page's dropdown boxes (its text fields) on screen now, in page order. */
+    static java.util.List<AccessibilityNodeInfo> dropdownBoxes(AccessibilityService service) {
+        java.util.List<AccessibilityNodeInfo> out = new java.util.ArrayList<>();
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String cls = String.valueOf(n.getClassName());
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
+            if ((cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield"))
+                    && n.isVisibleToUser() && Page.bounds(n).height() > 20) {
+                out.add(n);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Dropdown {@code level}'s own box: the one with its name drawn inside it ("Seva State");
+     * without names, by place (four boxes = the four dropdowns in order; one box = the only one).
+     */
+    static AccessibilityNodeInfo fieldFor(AccessibilityService service, int level) {
+        java.util.List<AccessibilityNodeInfo> boxes = dropdownBoxes(service);
+        if (boxes.isEmpty()) return null;
+        java.util.List<AccessibilityNodeInfo> all = Page.nodes(service);
+        String want = norm(LEVELS[level]);
+        for (AccessibilityNodeInfo b : boxes) {
+            Rect r = Page.bounds(b);
+            for (AccessibilityNodeInfo n : all) {
+                if (!Page.role(n).toLowerCase(Locale.ROOT).contains("labeltext")) continue;
+                Rect lr = Page.bounds(n);
+                if (r.contains(lr.centerX(), lr.centerY()) && norm(Page.label(n)).equals(want)) return b;
+            }
+        }
+        if (boxes.size() == LEVELS.length) return boxes.get(level);
+        return boxes.size() == 1 ? boxes.get(0) : null;
+    }
+
+    /** The options of the list open under {@code field} (the page shows one list at a time, below its box). */
+    static java.util.List<AccessibilityNodeInfo> itemsBelow(AccessibilityService service, AccessibilityNodeInfo field) {
+        java.util.List<AccessibilityNodeInfo> out = new java.util.ArrayList<>();
+        int below = Page.bounds(field).bottom - 8;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String role = Page.role(n).toLowerCase(Locale.ROOT);
+            if (!role.contains("listitem") && !role.contains("option") && !role.contains("menuitem")) continue;
+            if (Page.label(n).isEmpty() || Page.bounds(n).top < below) continue;
+            out.add(n);
+        }
+        return out;
+    }
+
     /** 0 no match, 1 every word found in it, 2 the same text. */
-    private static int matchScore(String label, String want) {
+    static int matchScore(String label, String want) {
         String l = norm(label), w = norm(want);
         if (l.isEmpty() || w.isEmpty()) return 0;
         if (l.equals(w)) return 2;
@@ -240,7 +336,7 @@ final class Booker {
         return 1;
     }
 
-    private static String norm(String s) {
+    static String norm(String s) {
         return s.toLowerCase(Locale.ROOT).replace("…", "").replaceAll("[^a-z0-9]+", " ").trim();
     }
 
@@ -1280,35 +1376,41 @@ final class Booker {
     // ---- the dropdown's options, for the form ---------------------------------------------
 
     /**
-     * Every option in the page's dropdown (opening it if it is closed), for you to choose
-     * from. Empty when the page has no dropdown.
+     * What each of the four dropdowns shows now (Seva State ... Seva Type; "" where the page has
+     * none) - read only, nothing is clicked: the form's "keep what the page has".
      */
     static void options(AccessibilityService service, Handler handler, Consumer<java.util.List<String>> done) {
-        java.util.List<String> now = optionTexts(service);
-        if (!now.isEmpty()) {
-            done.accept(now);
-            return;
+        java.util.List<String> now = new java.util.ArrayList<>();
+        for (int i = 0; i < LEVELS.length; i++) {
+            AccessibilityNodeInfo f = fieldFor(service, i);
+            now.add(f == null ? "" : Page.label(f));
         }
-        AccessibilityNodeInfo field = null;
-        for (AccessibilityNodeInfo n : Page.nodes(service)) {
-            String cls = String.valueOf(n.getClassName());
-            String role = Page.role(n).toLowerCase(Locale.ROOT);
-            if (cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield")) {
-                field = n;
-                break;
-            }
-        }
+        done.accept(now);
+    }
+
+    /**
+     * The options of dropdown {@code level}, for the form to choose from: its list is opened on
+     * the page, read, and closed again with a second click on its box (the choice stays).
+     */
+    static void readOptions(AccessibilityService service, Handler handler, int level,
+                            Consumer<java.util.List<String>> done) {
+        AccessibilityNodeInfo field = fieldFor(service, level);
         if (field == null) {
-            done.accept(now);
+            done.accept(new java.util.ArrayList<>());
             return;
         }
-        field.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+        if (itemsBelow(service, field).isEmpty()) field.performAction(AccessibilityNodeInfo.ACTION_CLICK);
         long until = SystemClock.uptimeMillis() + 1500;
         Runnable[] poll = new Runnable[1];
         poll[0] = () -> {
-            java.util.List<String> got = optionTexts(service);
-            if (!got.isEmpty() || SystemClock.uptimeMillis() > until) done.accept(got);
-            else handler.postDelayed(poll[0], 100);
+            AccessibilityNodeInfo f = fieldFor(service, level);
+            java.util.List<String> got = f == null ? new java.util.ArrayList<>() : labels(itemsBelow(service, f));
+            if (got.isEmpty() && SystemClock.uptimeMillis() <= until) {
+                handler.postDelayed(poll[0], 100);
+                return;
+            }
+            if (f != null && !got.isEmpty()) f.performAction(AccessibilityNodeInfo.ACTION_CLICK); // closes it
+            done.accept(got);
         };
         handler.postDelayed(poll[0], 150);
     }

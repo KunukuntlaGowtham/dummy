@@ -303,14 +303,20 @@ public class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this);
         box.setOrientation(LinearLayout.VERTICAL);
         box.addView(note("With 🤖 on, one press of ▶ Go runs the booking through:"));
-        box.addView(step("Page 2", "▶ Go fills the dropdown, the date, the checkbox and the slot, then Continue."));
+        box.addView(step("Page 2", "▶ Go fills the four dropdowns (State, Location, Name, Type), the date, the checkbox and the slot, then Continue."));
         // Go's saved choices, here too: the date can be typed here; all three by long-pressing ▶ Go.
         TextView saved = note("");
         saved.setPadding(dp(16), dp(4), 0, 0);
         Runnable showSaved = () -> {
-            String opt = sp.getString("book_option", ""), radio = sp.getString("book_radio", "");
-            saved.setText("Option: " + (opt.isEmpty() ? "-" : opt) + "\nSlot: " + (radio.isEmpty() ? "the first" : radio)
-                    + "\n(choose them from the page's own list: 📅 Book on page 2)");
+            Booker.Plan sv = new Booker.Plan();
+            Booker.loadPicks(sp, sv);
+            String radio = sp.getString("book_radio", "");
+            StringBuilder lines = new StringBuilder();
+            for (int i = 0; i < Booker.LEVELS.length; i++) {
+                lines.append(Booker.LEVELS[i]).append(": ").append(sv.pick[i].isEmpty() ? "as the page has it" : sv.pick[i]).append('\n');
+            }
+            saved.setText(lines + "Slot: " + (radio.isEmpty() ? "the first" : radio)
+                    + "\n(choose them from the page's own lists: 📅 Book on page 2)");
         };
         showSaved.run();
         box.addView(saved);
@@ -621,7 +627,7 @@ public class MainActivity extends Activity {
                 "closes the pop-ups on the screen now",
                 "Auto-clear on / off (thick green ring = on): every new pop-up closed by itself"));
         buttons.addView(buttonHelp(0x1565C0, "📅", "Book", "page 2",
-                "a form: the option (from the page's own list), the date (calendar) and the slot - Save fills the page",
+                "a form: the four dropdowns (State, Location, Name, Type - empty = as the page has it; ▾ choices lists the page's own options), the date (calendar) and the slot - Save fills the page",
                 null));
         buttons.addView(buttonHelp(0x00897B, "▶", "Go", "page 1, 2 or 3",
                 "FULLY AUTOMATIC from the page you're on - page 1: Continue, page 2: fills it, page 3: Tick (missed rows: back, delete, forward), page 4: Confirm. While it runs (■ Stop): tap to stop; do a step by hand, tap ▶ Go to go on",
