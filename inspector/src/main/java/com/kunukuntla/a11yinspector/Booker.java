@@ -196,8 +196,9 @@ final class Booker {
                 log("dropdowns: nothing asked - left as the page has them");
                 pickDate(0, 0);
             } else {
-                // The calendar redraws for the new choice: wait for its days.
-                waitFor(() -> !dayCells().isEmpty(), 3000, ok -> pickDate(0, 0));
+                // The calendar redraws for the new choice: a pause, then until its days hold still
+                // (its old days are still on screen at first - a date picked then is lost).
+                later(() -> waitCalendar(0, -1), 400);
             }
             return;
         }
@@ -266,6 +267,17 @@ final class Booker {
             // The list closes and the next dropdown's options follow from this choice.
             waitFor(() -> optionTexts(service).isEmpty(), 1200, closed -> pickLevel(lv + 1, 0, true));
         });
+    }
+
+    /** The calendar's days counted every 150 ms until two looks agree (up to 3 s), then the date. */
+    private void waitCalendar(int looks, int before) {
+        int now = dayCells().size();
+        if (now > 0 && now == before || looks >= 20) {
+            log("calendar: " + now + " days, settled after " + (looks * 150 + 400) + " ms");
+            pickDate(0, 0);
+            return;
+        }
+        later(() -> waitCalendar(looks + 1, now), 150);
     }
 
     private boolean levelChosen(int level, String text) {
