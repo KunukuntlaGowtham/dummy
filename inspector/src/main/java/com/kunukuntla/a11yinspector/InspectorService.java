@@ -1914,6 +1914,36 @@ public class InspectorService extends AccessibilityService {
             Toast.makeText(this, "No date: Go leaves it as the page has it", Toast.LENGTH_SHORT).show();
             return true;
         });
+        // If that date isn't open (green / yellow): which day to take - the same setting as in the app's Settings.
+        TextView fbHead = new TextView(this);
+        fbHead.setText("If that date isn't open (green / yellow), take:");
+        fbHead.setTextColor(0xFFC7C6FF);
+        fbHead.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        fbHead.setPadding(0, dp(10), 0, dp(2));
+        box.addView(fbHead);
+        List<TextView> fbRows = new ArrayList<>();
+        Runnable fbPaint = () -> {
+            String cur = prefs.getString("date_fallback", DayPick.WEEK);
+            for (TextView t : fbRows) {
+                boolean on = t.getTag().equals(cur);
+                t.setText((on ? "●  " : "○  ") + DayPick.label((String) t.getTag()));
+                t.setTextColor(on ? Color.WHITE : 0xCCFFFFFF);
+                t.setTypeface(on ? android.graphics.Typeface.DEFAULT_BOLD : android.graphics.Typeface.DEFAULT);
+            }
+        };
+        for (String mode : DayPick.MODES) {
+            TextView t = new TextView(this);
+            t.setTag(mode);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            t.setPadding(dp(6), dp(7), dp(6), dp(7));
+            t.setOnClickListener(v -> {
+                prefs.edit().putString("date_fallback", mode).apply();
+                fbPaint.run();
+            });
+            fbRows.add(t);
+            box.addView(t);
+        }
+        fbPaint.run();
         android.widget.EditText radio = field(box, "Radio button (a few of its words; empty = the first)",
                 "e.g. Batch A", prefs.getString("book_radio", ""), android.text.InputType.TYPE_CLASS_TEXT);
 
