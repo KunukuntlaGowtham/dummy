@@ -168,7 +168,12 @@ final class Booker {
 
     // ---- 1) the dropdowns: Seva State, Seva Location, Seva Name, Seva Type ---------------
 
+    /** The dropdown opened last and when (one click each: a second would close it again). */
+    private int openedLevel = -1;
+    private long openedAt;
+
     private void pickOption(int tries) {
+        openedLevel = -1;
         pickLevel(0, 0, false);
     }
 
@@ -208,6 +213,7 @@ final class Booker {
         String cur = Page.label(field);
         if (satisfied(cur, want)) {
             log(name + ": already \"" + cur + "\" - kept");
+            openedLevel = -1;
             done.append("✓ ").append(name).append(": ").append(cur).append('\n');
             pickLevel(lv + 1, 0, changed);
             return;
@@ -221,9 +227,19 @@ final class Booker {
                         : "✗ " + name + " \"" + want + "\" not found. Its options: " + String.join(" | ", texts));
                 return;
             }
-            if (tries == 0 || tries == 8) {
+            long now = SystemClock.uptimeMillis();
+            if (openedLevel != lv || items.isEmpty() && now - openedAt > 700) {
+                if (!field.isVisibleToUser()) {
+                    // Scrolled out of view: brought on screen first, then opened.
+                    log(name + ": bringing it on screen");
+                    field.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+                    later(() -> pickLevel(lv, tries + 1, changed), 250);
+                    return;
+                }
                 log(name + ": opening it");
                 click(field);
+                openedLevel = lv;
+                openedAt = now;
             }
             later(() -> pickLevel(lv, tries + 1, changed), 80); // the list shows in a moment: look again soon
             return;
@@ -238,6 +254,7 @@ final class Booker {
                 return;
             }
             log(name + ": \"" + text + "\" chosen ✓");
+            openedLevel = -1;
             done.append("✓ ").append(name).append(": ").append(text).append('\n');
             // The list closes and the next dropdown's options follow from this choice.
             waitFor(() -> optionTexts(service).isEmpty(), 1200, closed -> pickLevel(lv + 1, 0, true));
@@ -279,16 +296,13 @@ final class Booker {
         return out;
     }
 
-    /** The page's dropdown boxes (its text fields) on screen now, in page order. */
+    /** The page's dropdown boxes (its text fields), in page order - also those scrolled out of view. */
     static java.util.List<AccessibilityNodeInfo> dropdownBoxes(AccessibilityService service) {
         java.util.List<AccessibilityNodeInfo> out = new java.util.ArrayList<>();
         for (AccessibilityNodeInfo n : Page.nodes(service)) {
             String cls = String.valueOf(n.getClassName());
             String role = Page.role(n).toLowerCase(Locale.ROOT);
-            if ((cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield"))
-                    && n.isVisibleToUser() && Page.bounds(n).height() > 20) {
-                out.add(n);
-            }
+            if (cls.endsWith("EditText") || role.contains("combobox") || role.contains("textfield")) out.add(n);
         }
         return out;
     }
@@ -304,6 +318,7 @@ final class Booker {
         String want = norm(LEVELS[level]);
         for (AccessibilityNodeInfo b : boxes) {
             Rect r = Page.bounds(b);
+            if (r.isEmpty()) continue; // scrolled out of view: no place to match its name by
             for (AccessibilityNodeInfo n : all) {
                 if (!Page.role(n).toLowerCase(Locale.ROOT).contains("labeltext")) continue;
                 Rect lr = Page.bounds(n);
@@ -1394,9 +1409,19 @@ final class Booker {
      */
     static void readOptions(AccessibilityService service, Handler handler, int level,
                             Consumer<java.util.List<String>> done) {
+        readOptions(service, handler, level, done, 0);
+    }
+
+    private static void readOptions(AccessibilityService service, Handler handler, int level,
+                                    Consumer<java.util.List<String>> done, int tries) {
         AccessibilityNodeInfo field = fieldFor(service, level);
         if (field == null) {
             done.accept(new java.util.ArrayList<>());
+            return;
+        }
+        if (!field.isVisibleToUser() && tries < 6) { // scrolled out of view: brought on screen first
+            field.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+            handler.postDelayed(() -> readOptions(service, handler, level, done, tries + 1), 250);
             return;
         }
         if (itemsBelow(service, field).isEmpty()) field.performAction(AccessibilityNodeInfo.ACTION_CLICK);
