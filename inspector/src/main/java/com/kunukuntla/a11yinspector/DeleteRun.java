@@ -37,8 +37,6 @@ final class DeleteRun {
     private int gen;
     private long start, stepStart;
     private String pkg = "";
-    /** The taught OK place was just tapped for a pop-up / didn't close one this run. */
-    private boolean taughtTried, taughtFailed;
 
     DeleteRun(AccessibilityService service, Listener listener) {
         this.service = service;
@@ -90,7 +88,6 @@ final class DeleteRun {
         deleted.clear();
         failed.clear();
         pkg = "";
-        taughtTried = taughtFailed = false;
         for (android.view.accessibility.AccessibilityWindowInfo w : Page.windows(service)) {
             AccessibilityNodeInfo root = w.getRoot();
             if (root != null && root.getPackageName() != null) {
@@ -321,14 +318,6 @@ final class DeleteRun {
                 afterPress(stage, null, false);
                 return;
             }
-            Rect teach = taughtFailed || stage != 2 ? null : OkTeach.get(service, pkg);
-            if (teach != null) {
-                log("  tapping the place you taught " + teach.centerX() + "," + teach.centerY());
-                taughtTried = true;
-                tap(teach);
-                afterPress(stage, teach, true);
-                return;
-            }
             Rect spot = spot(stage);
             if (spot != null) {
                 log("  tapping its kept place " + spot.centerX() + "," + spot.centerY());
@@ -374,21 +363,14 @@ final class DeleteRun {
             if (g != gen) return;
             if (gone) {
                 log("  pop-up " + stage + " closed in " + (SystemClock.uptimeMillis() - pressed) + " ms");
-                if (tapped != null && !taughtTried) keep(stage, tapped);
-                taughtTried = false;
+                if (tapped != null) keep(stage, tapped);
                 if (stage == 1) popup(2, false, SystemClock.uptimeMillis() + 1500);
                 else checkGone();
                 return;
             }
             if (kept) {
                 // The kept place didn't close it: forgotten, and the button found on a screenshot.
-                if (taughtTried) {
-                    taughtTried = false;
-                    taughtFailed = true;
-                    log("  the place you taught didn't close it - this run finds the button as before");
-                } else {
-                    forget(stage);
-                }
+                forget(stage);
                 log("  its kept place didn't close it - looking for the button (screenshot)");
                 shot(stage, SystemClock.uptimeMillis() + 1500);
                 return;

@@ -368,8 +368,6 @@ final class Ticker {
         // away (no screenshot) - checked: the cover still up after it, OK is found on a screenshot.
         runSpot = !clear && coverApp && okSpot != null ? new Rect(okSpot) : null;
         coverThisRun = false;
-        taughtFailed = false;
-        taught = clear ? null : OkTeach.get(service, spotKey.startsWith("ok_spot_") ? spotKey.substring(8) : null);
         if (!clear) missedChanged(); // a new run: nothing missed yet
     }
 
@@ -659,12 +657,6 @@ final class Ticker {
                             .putBoolean("cover_" + spotKey, true).apply();
                     log("this app reports its pop-up's cover - from now on a screenshot only once the cover comes");
                 }
-                // The place you taught for OK: tapped the moment the cover comes. If it doesn't close
-                // the pop-up, it is dropped for this run and the old way takes over (see pressTaught).
-                if (cover && taught != null && !taughtFailed && before != null) {
-                    pressTaught(before, then);
-                    return;
-                }
                 // The OK place confirmed this run (a tap there closed the last pop-up): tap it now.
                 if (cover && runSpot != null && before != null) {
                     pressRunSpot(before, then);
@@ -802,46 +794,6 @@ final class Ticker {
         } else {
             later(() -> checkPurpleGone(r, then), Math.max(350, finder.waitMs()));
         }
-    }
-
-    /** OK's place as taught with 🎓 Teach OK (null: none taught for this app). */
-    private Rect taught;
-    /** A tap at the taught place didn't close a pop-up this run: it isn't used again this run. */
-    private boolean taughtFailed;
-
-    /**
-     * The cover came and a place is taught: tap it at once, no screenshot. Gone within 450 ms:
-     * done. Still up: the taught place is dropped for this run and this pop-up is closed the
-     * previous way - OK found on a screenshot (then the place that tap proves, kept for the run).
-     */
-    private void pressTaught(Page.Before before, Runnable then) {
-        popupCame();
-        notePopup("cover only (words and OK hidden)", "the OK place you taught");
-        popups++;
-        popupTaps++;
-        popupsSeen = true;
-        quietBoxes = 0;
-        coverThisRun = true;
-        log("pop-up: its cover came - tapping the OK place you taught (" + taught.centerX() + ","
-                + taught.centerY() + "), no screenshot");
-        tap(taught.centerX(), taught.centerY());
-        waitTaughtGone(before, SystemClock.uptimeMillis(), then);
-    }
-
-    private void waitTaughtGone(Page.Before before, long since, Runnable then) {
-        poll(() -> {
-            long waited = SystemClock.uptimeMillis() - since;
-            if (!Page.coverCame(service, before)) {
-                log("pop-up: gone (" + waited + " ms after the tap at the taught place)");
-                then.run();
-            } else if (waited < 450) {
-                waitTaughtGone(before, since, then);
-            } else {
-                taughtFailed = true;
-                log("pop-up: the taught place didn't close it - from now on this run finds OK on a screenshot, as before");
-                clearPopups(before, 20, then);
-            }
-        }, 40);
     }
 
     /** The cover came and OK's place is confirmed this run: tap it straight away, check it went. */
