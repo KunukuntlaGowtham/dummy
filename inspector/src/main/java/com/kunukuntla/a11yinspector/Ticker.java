@@ -367,6 +367,10 @@ final class Ticker {
         // Learned before: the OK's place from the last run is tried on the first cover straight
         // away (no screenshot) - checked: the cover still up after it, OK is found on a screenshot.
         runSpot = !clear && coverApp && okSpot != null ? new Rect(okSpot) : null;
+        // OK's place is learned from the first tick only: a place kept from before is used as
+        // it is (and not replaced this run); with none, the first pop-up closed by a tap found
+        // on a screenshot teaches it.
+        spotLocked = runSpot != null;
         coverThisRun = false;
         if (!clear) missedChanged(); // a new run: nothing missed yet
     }
@@ -769,6 +773,8 @@ final class Ticker {
      * close it. Not kept across runs.
      */
     private Rect runSpot;
+    /** OK's place is settled for this run (learned from the first tick, or kept from before): no re-learning. */
+    private boolean spotLocked;
 
     /** Where the pop-up's OK is (learned from a screenshot once, kept for next time), or null. */
     private Rect okSpot;
@@ -782,11 +788,13 @@ final class Ticker {
         popupTaps++;
         popupsSeen = true;
         quietBoxes = 0;
-        okSpot = new Rect(r);
-        service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
-                .putString(spotKey, r.flattenToString()).putString("ok_spot", r.flattenToString()).apply();
+        if (!spotLocked) {
+            okSpot = new Rect(r);
+            service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
+                    .putString(spotKey, r.flattenToString()).putString("ok_spot", r.flattenToString()).apply();
+        }
         log("pop-up (drawn, not reported): tapping its purple button at " + r.centerX() + "," + r.centerY()
-                + " - its place is remembered");
+                + (spotLocked ? " - found on a screenshot (OK's place isn't learned again this run)" : " - its place is remembered"));
         tap(r.centerX(), r.centerY());
         if (Page.coverCame(service, before)) {
             coverThisRun = true;
@@ -830,8 +838,11 @@ final class Ticker {
                 tap(runSpot.centerX(), runSpot.centerY());
                 waitSpotGone(before, SystemClock.uptimeMillis(), taps + 1, then);
             } else {
-                log("pop-up: still up after taps at the kept place - finding its OK on a screenshot");
+                log("pop-up: still up after taps at the kept place - this run finds OK on a screenshot, as before; the kept place is dropped and learned again next run");
                 runSpot = null;
+                okSpot = null;
+                service.getSharedPreferences("popup", android.content.Context.MODE_PRIVATE).edit()
+                        .remove(spotKey).apply();
                 clearPopups(before, 20, then);
             }
         }, 40);
@@ -870,8 +881,11 @@ final class Ticker {
             if (!Page.coverCame(service, before)) {
                 log("pop-up: gone (" + waited + " ms)");
                 if (tapped != null) {
-                    if (runSpot == null) log("pop-up: its OK place is kept for this run - next pop-ups get a tap there, no screenshot");
-                    runSpot = new Rect(tapped);
+                    if (!spotLocked) {
+                        log("pop-up: its OK place is learned from this first tick - next pop-ups get a tap there, no screenshot");
+                        runSpot = new Rect(tapped);
+                        spotLocked = true;
+                    }
                 }
                 then.run();
             } else if (waited >= 1200) {
