@@ -1456,8 +1456,16 @@ public class InspectorService extends AccessibilityService {
      */
     private void retryPage2() {
         rlog("page 2: waiting for its checkbox");
-        waitUntil(() -> emptyBox() != null || anyBoxTicked(), 3000, seen -> {
+        long t0 = android.os.SystemClock.uptimeMillis();
+        // Page 2 coming back keeps its date and slot, so its declaration is there at once. With
+        // neither a checkbox nor a slot after 2.5 s it came back empty (reset): filled in, as Go does.
+        waitUntil(() -> emptyBox() != null || anyBoxTicked()
+                || android.os.SystemClock.uptimeMillis() - t0 > 2500 && !Booker.slotShown(this), 3500, seen -> {
             AccessibilityNodeInfo box = emptyBox();
+            if (box == null && !anyBoxTicked() && !Booker.slotShown(this)) {
+                refillPage2();
+                return;
+            }
             if (box == null) {
                 rlog(seen ? "page 2: checkbox already ticked" : "page 2: no checkbox came in 3 s");
                 page2Continue();
@@ -1494,6 +1502,17 @@ public class InspectorService extends AccessibilityService {
      * Page 2's Continue (also below the screen - brought up and pressed), then page 3. No
      * Continue at all in 2.5 s: a full Go.
      */
+    /** Page 2 came back with nothing chosen on it (no slot, no checkbox): Go's full fill, then page 3. */
+    private void refillPage2() {
+        if (getSharedPreferences("settings", MODE_PRIVATE).getString("book_date", "").isEmpty()) {
+            endRetry("page 2 came back empty and no date is saved (📅 Book) to fill it with");
+            return;
+        }
+        rlog("page 2: nothing chosen on it (no slot, no checkbox) - filling it with Go");
+        Toast.makeText(this, "↻ Page 2 came back empty - filling it with Go", Toast.LENGTH_SHORT).show();
+        startSaved();
+    }
+
     private void page2Continue() {
         waitUntil(() -> pressableButton(PageKind::isContinue) != null, 2500, on -> {
             if (!on) {

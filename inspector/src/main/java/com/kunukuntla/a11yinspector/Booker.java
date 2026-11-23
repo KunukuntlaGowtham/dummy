@@ -315,6 +315,24 @@ final class Booker {
         return out;
     }
 
+    /**
+     * A slot card's choice is on the page (a radio, or its small round unnamed button): a date has
+     * been chosen on it. A page 2 that was reset has none, nor its "I hereby declare" checkbox.
+     */
+    static boolean slotShown(AccessibilityService service) {
+        float density = service.getResources().getDisplayMetrics().density;
+        int min = Math.round(10 * density), max = Math.round(34 * density), skew = Math.round(6 * density);
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (isRadio(n) && !Page.role(n).toLowerCase(Locale.ROOT).contains("radiogroup")) return true;
+            if (!n.isClickable() || !Page.label(n).isEmpty()) continue;
+            String cls = String.valueOf(n.getClassName());
+            if (!cls.endsWith("Button") || cls.endsWith("ImageButton")) continue;
+            Rect r = Page.bounds(n);
+            if (r.width() >= min && r.width() <= max && Math.abs(r.width() - r.height()) <= skew) return true;
+        }
+        return false;
+    }
+
     /** The page's dropdown boxes (its text fields), in page order - also those scrolled out of view. */
     static java.util.List<AccessibilityNodeInfo> dropdownBoxes(AccessibilityService service) {
         java.util.List<AccessibilityNodeInfo> out = new java.util.ArrayList<>();
