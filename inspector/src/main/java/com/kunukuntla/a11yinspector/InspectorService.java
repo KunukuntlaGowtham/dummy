@@ -111,7 +111,7 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, deleteButton, watchButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, watchButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -451,18 +451,7 @@ public class InspectorService extends AccessibilityService {
                 lastMissed = new ArrayList<>(rows);
             }
         });
-        tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> tickTap(false), v -> {
-            // Long press: ▶ Go's full automation from this page (Tick page: tick, rows not added -
-            // back, delete, forward; Continue; Confirm). Pressed again while it runs: stops.
-            closeCard();
-            if (ticker.isRunning()) {
-                ticker.stop("Stopped");
-            } else if (goRunning()) {
-                stopGo();
-            } else if (!busy()) {
-                startGo();
-            }
-        });
+        tickButton = floating("☑\nTick", 0xEE6A2C91, 226, v -> tickTap(false), v -> tickTap(true));
         clearer = new Ticker(this, (summary, log) -> {
             saveReport(log);
             clearButton.setText("✖\nClear");
@@ -548,8 +537,7 @@ public class InspectorService extends AccessibilityService {
             Booker.options(this, handler, this::askBooking);
         });
         showReportButton();
-        // No 🤖 Auto button any more: a switch left ON from before must not keep acting by itself.
-        getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_flow", false).apply();
+        showAutoButton();
         showDeleteButton();
         showWatchButton();
         applyShown();
@@ -585,7 +573,7 @@ public class InspectorService extends AccessibilityService {
         showAuto();
     }
 
-    /** Long press on 📋 Report: this page is page 1 - pages 2, 3, 4 follow it in order from here. */
+    /** Long press on 🤖: this page is page 1 - pages 2, 3, 4 follow it in order from here. */
     private void markPage1() {
         closeCard();
         try {
@@ -893,13 +881,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, deleteButton, watchButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "report", "delete", "watch"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
@@ -974,7 +962,7 @@ public class InspectorService extends AccessibilityService {
                 return;
             }
             showCard(lastSummary.isEmpty() ? "No run yet - Tick, Clear, Book or Go first." : lastSummary);
-        }, v -> markPage1());
+        });
     }
 
     /** Choices saved for Go (an option or a date). */

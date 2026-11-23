@@ -106,7 +106,7 @@ public class MainActivity extends Activity {
         settings.setOrientation(LinearLayout.VERTICAL);
         settings.setPadding(0, dp(4), 0, dp(24));
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
-        settings.addView(card("🤖 Auto flow (long-press ☑ Tick or tap ▶ Go runs it)", 0xFF37474F, autoFlow()));
+        settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
         settings.addView(card("🧪 Test mode", 0xFFC62828, testMode()));
         settings.addView(card("📱 Phone setup", 0xFF1565C0, phoneSetup()));
         ScrollView settingsTab = new ScrollView(this);
@@ -248,7 +248,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "📋 Report", "🗑 Delete", "👁 Watch"};
+    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete", "👁 Watch"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons
@@ -556,13 +556,13 @@ public class MainActivity extends Activity {
         start.addView(numbered(1, "Turn A11y Inspector on in Accessibility (the chip at the top of this app)."));
         start.addView(numbered(2, "⚙ Settings → 🤖 Auto flow: choose page 2's option, date and slot (or 📅 Book on page 2)."));
         start.addView(numbered(3, "Open the TTD app. The round buttons float at the side - drag them anywhere."));
-        start.addView(numbered(4, "On the sevaks list, long-press 📋 Report once: \"this is page 1\" (locked - Back never goes past it)."));
+        start.addView(numbered(4, "On the sevaks list, long-press 🤖 once: \"this is page 1\" (locked - Back never goes past it)."));
         start.addView(numbered(5, "Tap ▶ Go on any page - it runs the rest by itself."));
         h.addView(card("🚀 Getting started", 0xFF2E7D32, start));
 
         LinearLayout flow = new LinearLayout(this);
         flow.setOrientation(LinearLayout.VERTICAL);
-        flow.addView(note("One tap on ▶ Go runs it all from the page you're on (also by long-pressing ☑ Tick):"));
+        flow.addView(note("One tap on ▶ Go runs it all from the page you're on (🤖 Auto on or off):"));
         flow.addView(flowStep(PAGE1, "Page 1 · Sevaks list", "▶ Go presses Continue"));
         flow.addView(flowArrow());
         flow.addView(flowStep(PAGE2, "Page 2 · Calendar & slot", "Go picks the option, the date, the slot, ticks \"I hereby declare\" once, then Continue"));
@@ -586,7 +586,7 @@ public class MainActivity extends Activity {
 
         LinearLayout retry = new LinearLayout(this);
         retry.setOrientation(LinearLayout.VERTICAL);
-        retry.addView(note("✋ LONG-PRESS = automatic. Long-press ☑ Tick (it is ▶ Go from the page you are on; or long-press 🗑 after a Tick) and it all runs by itself:"));
+        retry.addView(note("✋ LONG-PRESS = automatic. Long-press ☑ Tick (or long-press 🗑 after a Tick) and it all runs by itself:"));
         retry.addView(flowStep(PAGE3, "Page 3 · you long-press ☑ Tick", "it ticks; rows not ticked go in the red ❌ box, e.g. rows 3, 7, 11"));
         retry.addView(flowArrow("Back"));
         retry.addView(flowStep(PAGE2, "Page 2", "passed straight through"));
@@ -598,7 +598,7 @@ public class MainActivity extends Activity {
         retry.addView(flowStep(PAGE3, "Page 3", "nothing to tick - Continue at once"));
         retry.addView(flowArrow());
         retry.addView(flowStep(PAGE4, "Page 4", "Confirm at once"));
-        retry.addView(note("All rows ticked: nothing to delete - Continue → Confirm as usual."));
+        retry.addView(note("All rows ticked: nothing to delete - with 🤖 Auto on, Continue → Confirm as usual. ⚙ Settings can make 🤖 Auto do this trip after every Tick."));
         h.addView(card("✋ Automatic: long-press ☑ Tick", 0xFFC62828, retry));
 
         LinearLayout test = new LinearLayout(this);
@@ -622,7 +622,7 @@ public class MainActivity extends Activity {
                 "deep scan + screenshot, saved in 📋 Report - send it when something goes wrong"));
         buttons.addView(buttonHelp(0x6A2C91, "☑", "Tick", "page 3",
                 "MANUAL - ticks every sevak and clears the pop-up after each; rows it couldn't add go in the red ❌ box. Tap again: stop",
-                "FULL AUTOMATION (same as ▶ Go from this page) - ticks, rows not added → back to page 1, delete them, forward, Continue, Confirm. Long-press again: stop"));
+                "AUTOMATIC - ticks, then rows not added → back to page 1, delete them, forward to page 4 by itself"));
         buttons.addView(buttonHelp(0xE65100, "✖", "Clear", "any page",
                 "closes the pop-ups on the screen now",
                 "Auto-clear on / off (thick green ring = on): every new pop-up closed by itself"));
@@ -632,9 +632,12 @@ public class MainActivity extends Activity {
         buttons.addView(buttonHelp(0x00897B, "▶", "Go", "page 1, 2 or 3",
                 "FULLY AUTOMATIC from the page you're on - page 1: Continue, page 2: fills it, page 3: Tick (missed rows: back, delete, forward), page 4: Confirm. While it runs (■ Stop): tap to stop; do a step by hand, tap ▶ Go to go on",
                 "the same form as 📅 Book"));
+        buttons.addView(buttonHelp(0x37474F, "🤖", "Auto", "any page",
+                "Auto on / off: Go → Tick → Continue → Confirm by itself",
+                "\"this page is page 1\" (locked) - pages 2, 3, 4 follow in order, and Back never goes past page 1"));
         buttons.addView(buttonHelp(0x455A64, "📋", "Report", "any page",
                 "the last run's result; tap again to close. The full reports are in this app's 📋 Report tab",
-                "\"this page is page 1\" (locked) - pages 2, 3, 4 follow in order, and Back never goes past page 1"));
+                null));
         buttons.addView(buttonHelp(0xC62828, "🗑", "Delete", "page 1",
                 "MANUAL (on page 1) - deletes the people the last Tick couldn't add (the red ❌ box; test mode: its numbers), nothing else pressed",
                 "AUTOMATIC (any page) - back to page 1, delete them, forward to page 4 by itself"));
