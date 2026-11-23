@@ -107,11 +107,12 @@ public class InspectorService extends AccessibilityService {
         if (ticker != null) ticker.stop("Stopped");
         if (deleter != null) deleter.stop("Stopped");
         if (missedBox != null) missedBox.hide();
+        closeTeach();
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, watchButton, pageBadge}) {
+        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, watchButton, teachButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -540,6 +541,7 @@ public class InspectorService extends AccessibilityService {
         showAutoButton();
         showDeleteButton();
         showWatchButton();
+        showTeachButton();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -681,6 +683,100 @@ public class InspectorService extends AccessibilityService {
             rowNames = readRowNames();
         } catch (RuntimeException e) {
             rowNames = new ArrayList<>();
+        }
+    }
+
+    // ---- 🎓 Teach OK: where a pop-up's OK comes, tapped at once next time ----------------------
+
+    private TextView teachButton;
+    private View teachOverlay;
+
+    /**
+     * 🎓 Teach OK: with a pop-up up, press this and tap its OK: the place is kept for the app
+     * (and the tap is made for you, so the pop-up closes). Tick and Delete then tap that place
+     * the moment a pop-up's cover comes. A tap there that doesn't close the pop-up drops it for
+     * that run, and the pop-up is closed the way it was before (OK found on a screenshot).
+     * Long press: forget the taught place.
+     */
+    private void showTeachButton() {
+        teachButton = floating("🎓\nTeach OK", 0xEE00796B, 830, v -> {
+            closeCard();
+            if (teachOverlay != null) {
+                closeTeach();
+                return;
+            }
+            if (busy()) return;
+            String app = appInFront();
+            if (app.isEmpty()) {
+                Toast.makeText(this, "Open the app's page with the pop-up first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            startTeach(app);
+        }, v -> {
+            String app = appInFront();
+            if (app.isEmpty()) return;
+            OkTeach.clear(this, app);
+            Toast.makeText(this, "🎓 Taught OK place forgotten for this app", Toast.LENGTH_SHORT).show();
+        });
+    }
+
+    private void closeTeach() {
+        if (teachOverlay == null) return;
+        try {
+            windowManager.removeView(teachOverlay);
+        } catch (RuntimeException ignored) {
+        }
+        teachOverlay = null;
+    }
+
+    /** A see-through cover over everything: the next tap is where OK is. */
+    @SuppressLint("ClickableViewAccessibility")
+    private void startTeach(String app) {
+        android.widget.FrameLayout cover = new android.widget.FrameLayout(this);
+        cover.setBackgroundColor(0x33000000);
+        TextView hint = new TextView(this);
+        hint.setText("🎓 Tap the pop-up's OK button\n(tap here to cancel)");
+        hint.setTextColor(Color.WHITE);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        hint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(dp(16), dp(10), dp(16), dp(10));
+        hint.setBackground(Glass.darkPanel(getResources().getDisplayMetrics().density));
+        android.widget.FrameLayout.LayoutParams hlp = new android.widget.FrameLayout.LayoutParams(
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.CENTER_HORIZONTAL);
+        hlp.topMargin = dp(60);
+        cover.addView(hint, hlp);
+        cover.setOnTouchListener((v, e) -> {
+            if (e.getActionMasked() != MotionEvent.ACTION_UP) return true;
+            int x = Math.round(e.getRawX()), y = Math.round(e.getRawY());
+            int[] at = new int[2];
+            hint.getLocationOnScreen(at);
+            boolean onHint = x >= at[0] && x <= at[0] + hint.getWidth() && y >= at[1] && y <= at[1] + hint.getHeight();
+            closeTeach();
+            if (onHint) return true;
+            OkTeach.put(this, app, x, y, dp(16));
+            Toast.makeText(this, "🎓 OK place kept: " + x + "," + y, Toast.LENGTH_SHORT).show();
+            // The tap is made for you, so the pop-up closes.
+            handler.postDelayed(() -> {
+                android.graphics.Path path = new android.graphics.Path();
+                path.moveTo(x, y);
+                dispatchGesture(new android.accessibilityservice.GestureDescription.Builder()
+                        .addStroke(new android.accessibilityservice.GestureDescription.StrokeDescription(path, 0, 60)).build(), null, null);
+            }, 120);
+            return true;
+        });
+        WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+                        | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
+        try {
+            windowManager.addView(cover, lp);
+            teachOverlay = cover;
+        } catch (RuntimeException e) {
+            Toast.makeText(this, "Couldn't show the cover: " + e.getMessage(), Toast.LENGTH_LONG).show();
         }
     }
 
@@ -881,13 +977,13 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton};
+        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton, teachButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch", "teach"};
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
