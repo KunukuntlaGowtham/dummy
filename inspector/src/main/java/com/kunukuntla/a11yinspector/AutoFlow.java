@@ -317,7 +317,7 @@ final class AutoFlow {
     }
 
     private void backTo2(int tries) {
-        if (tries == 0) pressBack();
+        if (tries % 2 == 0) pressBack();
         else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK); // a pop-up took the first
         waitFor(k -> k == PageKind.Kind.CALENDAR, SystemClock.uptimeMillis(), f -> {
             PageKind.Facts now = readNow();
@@ -325,8 +325,8 @@ final class AutoFlow {
                 backTo1(0);
             } else if (now != null && host.isPage1(now)) {
                 atPage1(now); // already on page 1 (page 2 went by quickly): never a Back more
-            } else if (tries < 1) {
-                backTo2(tries + 1); // a pop-up on top took the first Back
+            } else if (tries < 2) {
+                backTo2(tries + 1); // a pop-up on top took the first Back (three tries in all)
             } else {
                 host.say("↩ Back: page 2 didn't come - stopped");
                 if (missed) host.backFailed();
@@ -337,7 +337,7 @@ final class AutoFlow {
     }
 
     private void backTo1(int tries) {
-        if (tries == 0) pressBack();
+        if (tries % 2 == 0) pressBack();
         else service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK);
         waitFor(k -> k != PageKind.Kind.CALENDAR, SystemClock.uptimeMillis(), f -> {
             PageKind.Facts now = f == null ? readNow() : f;
@@ -345,8 +345,8 @@ final class AutoFlow {
                 atPage1(f);
             } else if (now != null && host.isPage1(now)) {
                 atPage1(now);
-            } else if (tries < 1 && now != null && PageKind.decide(now) == PageKind.Kind.CALENDAR) {
-                // Still page 2 for sure: one Back more (never from a page that isn't page 2).
+            } else if (tries < 2 && now != null && PageKind.decide(now) == PageKind.Kind.CALENDAR) {
+                // Still page 2 for sure: a Back more, twice at most (never from a page that isn't page 2).
                 backTo1(tries + 1);
             } else {
                 host.say("↩ Back: still on page 2 - stopped");

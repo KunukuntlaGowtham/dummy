@@ -283,6 +283,7 @@ public class InspectorService extends AccessibilityService {
             @Override
             public void say(String message) {
                 Toast.makeText(InspectorService.this, message, Toast.LENGTH_SHORT).show();
+                rlog(message);
             }
 
             @Override
@@ -299,6 +300,7 @@ public class InspectorService extends AccessibilityService {
             @Override
             public void backFailed() {
                 testTripEnded(); // a test trip that stopped early still turns test mode off
+                saveRetryLog("↩ Back didn't reach page 1 - stopped"); // the steps are in 📋 Report
             }
 
             @Override
@@ -1345,8 +1347,47 @@ public class InspectorService extends AccessibilityService {
 
     /** 🗑 Delete: the trip now - test mode's numbers, else the rows the last Tick didn't add. */
     private void deleteNow() {
-        if (flow == null || flow.busy()) return;
+        if (flow == null) return;
+        if (flow.busy()) {
+            // Never a silent stop: said, and in the report.
+            Toast.makeText(this, "🗑 Not going back: a Back or Continue is still going - tap 🗑 again in a moment",
+                    Toast.LENGTH_LONG).show();
+            rlog("🗑 not going back: Auto was still busy with a Back / Continue");
+            saveRetryLog("↩ Trip not started: Auto was busy");
+            return;
+        }
+        // Which page first: it can read as nothing for a moment (a pop-up cover, a page redrawing) -
+        // that is never taken for page 1.
+        whenPageKnown(android.os.SystemClock.uptimeMillis() + 3000, k -> deleteNowOn(k));
+    }
+
+    /** The page in front, waiting up to the time given while it reads as nothing. */
+    private void whenPageKnown(long until, java.util.function.Consumer<PageKind.Kind> then) {
+        PageKind.Facts f = null;
+        PageKind.Kind k;
+        try {
+            f = PageKind.read(this);
+            k = PageKind.decide(f);
+        } catch (RuntimeException e) {
+            k = PageKind.Kind.OTHER;
+        }
+        if (k == PageKind.Kind.OTHER && onPage1(f)) k = PageKind.Kind.SEVAK_LIST;
+        if (k != PageKind.Kind.OTHER || android.os.SystemClock.uptimeMillis() >= until) {
+            then.accept(k);
+            return;
+        }
+        handler.postDelayed(() -> whenPageKnown(until, then), 120);
+    }
+
+    private void deleteNowOn(PageKind.Kind k) {
         boolean test = testMode();
+        if (k == PageKind.Kind.OTHER || k == PageKind.Kind.CONFIRM) {
+            Toast.makeText(this, "🗑 Couldn't tell which page this is (" + k.title() + ") - not going back. "
+                    + "Open page 3 or page 1 and tap 🗑 again", Toast.LENGTH_LONG).show();
+            rlog("🗑 not going back: the page read as " + k.title() + " for 3 s");
+            saveRetryLog("↩ Trip not started: page not known");
+            return; // nothing was taken: the list of who to delete is still there
+        }
         Missed m = test ? null : takeMissed();
         List<Integer> numbers = test ? testNumbers() : m.numbers;
         if (!test && numbers.isEmpty()) {
@@ -1357,12 +1398,8 @@ public class InspectorService extends AccessibilityService {
         tripNumbers = numbers;
         tripNames = test ? null : m.names;
         flow.holdConfirm(test); // a test trip never presses Confirm
-        PageKind.Kind k;
-        try {
-            k = PageKind.decide(PageKind.read(this));
-        } catch (RuntimeException e) {
-            k = PageKind.Kind.OTHER;
-        }
+        rlog("🗑 trip: " + k.title() + " - " + (numbers.isEmpty() ? "no delete" : "delete " + numbers
+                + (tripNames == null ? "" : " " + tripNames)));
         if (k == PageKind.Kind.TICKING || k == PageKind.Kind.CALENDAR) {
             Toast.makeText(this, "↻ " + (numbers.isEmpty() ? "No delete" : "Delete " + numbers)
                     + ": back to page 1, then forward", Toast.LENGTH_SHORT).show();
@@ -1550,6 +1587,7 @@ public class InspectorService extends AccessibilityService {
     private long retryStart;
 
     private void rlog(String step) {
+        if (retryLog.length() > 20000) retryLog.setLength(0);
         if (retryLog.length() == 0) retryStart = android.os.SystemClock.uptimeMillis();
         retryLog.append(String.format(java.util.Locale.ROOT, "%6d ms  ",
                 android.os.SystemClock.uptimeMillis() - retryStart)).append(step).append('\n');
