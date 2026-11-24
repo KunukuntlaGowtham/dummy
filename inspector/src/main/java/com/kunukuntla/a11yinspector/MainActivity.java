@@ -264,7 +264,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private static final String[] SHOWN_NAMES = {"🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete", "👁 Watch"};
+    private static final String[] SHOWN_NAMES = {"☑ Next", "🧹 OK", "🔍 Scan", "☑ Tick", "✖ Clear", "📅 Book", "▶ Go", "🤖 Auto", "📋 Report", "🗑 Delete", "👁 Watch"};
 
     /**
      * Which round buttons are on the screen: one chip each, tap to show / hide it. The buttons

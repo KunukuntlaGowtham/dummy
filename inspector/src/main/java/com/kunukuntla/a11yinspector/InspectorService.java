@@ -149,7 +149,8 @@ public class InspectorService extends AccessibilityService {
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
-        for (View v : new View[] {button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, watchButton, pageBadge}) {
+        if (handy != null) handy.hideMarker();
+        for (View v : new View[] {handyTickButton, handyClearButton, button, tickButton, clearButton, bookButton, goButton, reportButton, autoButton, deleteButton, watchButton, pageBadge}) {
             if (v == null) continue;
             try {
                 windowManager.removeView(v);
@@ -598,6 +599,7 @@ public class InspectorService extends AccessibilityService {
         showAutoButton();
         showDeleteButton();
         showWatchButton();
+        showHandyButtons();
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
     }
@@ -661,6 +663,48 @@ public class InspectorService extends AccessibilityService {
         GradientDrawable bg = (GradientDrawable) autoButton.getBackground();
         bg.setStroke(on ? dp(3) : Math.round(1.5f * getResources().getDisplayMetrics().density),
                 on ? 0xFF34C759 : 0x99FFFFFF);
+    }
+
+    // ---- ☑ Next and 🧹 OK: the two handy buttons, one step at a time -----------------------
+
+    private TextView handyTickButton, handyClearButton;
+    private Handy handy;
+
+    /**
+     * ☑ Next ticks the next unticked box once; the pop-up that comes is cleared by 🧹 OK (the OK, or the
+     * purple button found on the screen), which then points at the box to tick next. Two buttons by the
+     * thumb instead of a finger travelling over the screen.
+     */
+    private void showHandyButtons() {
+        handy = new Handy(this, windowManager);
+        handyTickButton = floating("☑\nNext", 0xEE2E7D32, 0, v -> {
+            closeCard();
+            if (busy()) return;
+            Toast.makeText(this, handy.tick(), Toast.LENGTH_SHORT).show();
+        }, v -> {
+            handy.reset();
+            Toast.makeText(this, "☑ Refused rows are offered again", Toast.LENGTH_SHORT).show();
+        });
+        handyClearButton = floating("🧹\nOK", 0xEE00838F, 0, v -> {
+            closeCard();
+            if (busy()) return;
+            handy.hideMarker();
+            Toast.makeText(this, "🧹 Looking for the pop-up's OK…", Toast.LENGTH_SHORT).show();
+            clearer.clearNow();
+            waitClearThenPoint(0);
+        });
+    }
+
+    /** The clear has ended (up to ~9 s): the next box is pointed at. */
+    private void waitClearThenPoint(int waited) {
+        handler.postDelayed(() -> {
+            if (destroyed) return;
+            if (clearer.isRunning() && waited < 60) {
+                waitClearThenPoint(waited + 1);
+                return;
+            }
+            Toast.makeText(this, handy.point(), Toast.LENGTH_SHORT).show();
+        }, 150);
     }
 
     // ---- 👁 Watch: the red box follows the ticks you make by hand on page 3 ----------------
@@ -973,17 +1017,17 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton};
+        return new View[] {handyTickButton, handyClearButton, button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch"};
+    static final String[] SHOWN_KEYS = {"next", "okclear", "scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch"};
 
     /** Shown until you choose otherwise: only ☑ Tick, 🤖 Auto and 🗑 Delete (the others are in Settings). */
     static boolean shownDefault(String key) {
-        return key.equals("tick") || key.equals("auto") || key.equals("delete");
+        return key.equals("tick") || key.equals("auto") || key.equals("delete") || key.equals("next") || key.equals("okclear");
     }
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
