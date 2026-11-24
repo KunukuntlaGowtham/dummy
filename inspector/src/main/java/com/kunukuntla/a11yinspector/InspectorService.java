@@ -393,8 +393,9 @@ public class InspectorService extends AccessibilityService {
         // delete, forward; Continue; Confirm) - once for each arrival at page 3.
         boolean tripPages = kind == PageKind.Kind.SEVAK_LIST || kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.CONFIRM;
         if (tripPages && !retrying && (flow == null || !flow.busy())) autoTickDone = false;
-        if (auto && kind == PageKind.Kind.TICKING && !autoTickDone && !retrying && !goRunning()
-                && flow != null && !flow.busy()) {
+        // (⚙ Settings: "Auto starts Tick when page 3 opens" - off: Auto only carries on after a Tick you start.)
+        if (auto && sp.getBoolean("auto_start_page3", true) && kind == PageKind.Kind.TICKING && !autoTickDone
+                && !retrying && !goRunning() && flow != null && !flow.busy()) {
             autoTickDone = true;
             handler.postDelayed(this::autoTickStart, 700); // the rows are still being drawn
         }
@@ -781,7 +782,9 @@ public class InspectorService extends AccessibilityService {
 
     /** 700 ms after page 3 came (Auto on): still page 3 and nothing running - the automatic Tick starts. */
     private void autoTickStart() {
-        if (destroyed || !AutoFlow.enabled(this) || ticker.isRunning() || clearer.isRunning() || booker.isRunning()
+        if (destroyed || !AutoFlow.enabled(this)
+                || !getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_start_page3", true)
+                || ticker.isRunning() || clearer.isRunning() || booker.isRunning()
                 || deleting() || scanning || retrying || (flow != null && flow.busy())) return;
         PageKind.Kind k;
         try {
