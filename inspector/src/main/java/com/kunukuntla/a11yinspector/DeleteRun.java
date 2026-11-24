@@ -77,6 +77,9 @@ final class DeleteRun {
      */
     void start(List<Integer> numbers, List<String> expect) {
         if (running) return;
+        // ⚙ Settings can turn the name check off (for a while): then each profile is deleted by its number alone.
+        boolean checkNames = service.getSharedPreferences("settings", Context.MODE_PRIVATE).getBoolean("delete_name_check", true);
+        if (!checkNames) expect = null;
         names.clear();
         for (int i = 0; i < numbers.size(); i++) names.add(expect != null && i < expect.size() ? expect.get(i) : null);
         running = true;
@@ -96,7 +99,8 @@ final class DeleteRun {
             }
         }
         runBase = new Page.Before(service);
-        log("deleting " + numbers + " (each as numbered on screen when its turn comes)");
+        log("deleting " + numbers + " (each as numbered on screen when its turn comes)"
+                + (checkNames ? "" : " - NAME CHECK OFF: by number only"));
         nextProfile();
     }
 

@@ -411,6 +411,8 @@ public class MainActivity extends Activity {
         retry.setPadding(dp(16), dp(6), 0, dp(4));
         retry.addView(settingChip(sp, "auto_delete_missed", "🤖 After every Tick: rows not ticked - back, delete, retry once",
                 "Auto deletes rows not ticked", false), chipLp());
+        retry.addView(settingChip(sp, "delete_name_check", "🔎 Delete checks each name (turn off to delete by number only - careful)",
+                "Delete checks names", true), chipLp());
         HorizontalScrollView wide2 = new HorizontalScrollView(this);
         wide2.setHorizontalScrollBarEnabled(false);
         wide2.addView(retry);
