@@ -22,9 +22,6 @@ android {
             "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF6emNwdXZjcmhiYXNubnNmdmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1NDc2MTgsImV4cCI6MjA4NTEyMzYxOH0._MAMf4jVmNBarBLM1nSKdbjeq7lxRUjfQCnf5cxK4X8")
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.trim()}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseKey.trim()}\"")
-        // The licence layer (off while LICENSE_PUBLIC_KEY is empty) and Play Integrity (off while the project number is empty).
-        buildConfigField("String", "LICENSE_PUBLIC_KEY", "\"${setting("licensePublicKey", "LICENSE_PUBLIC_KEY", "").trim()}\"")
-        buildConfigField("String", "INTEGRITY_PROJECT_NUMBER", "\"${setting("integrityProject", "INTEGRITY_PROJECT_NUMBER", "").trim()}\"")
     }
 
     buildFeatures {
@@ -58,7 +55,5 @@ android {
 
 
 dependencies {
-    // Play Integrity (used only when INTEGRITY_PROJECT_NUMBER is set in the build).
-    implementation("com.google.android.play:integrity:1.4.0")
     testImplementation("junit:junit:4.13.2")
 }
