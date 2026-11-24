@@ -20,17 +20,15 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * Bin Press. Opened on the sevaks list, the round 🗑 button starts it: for each number you typed in
- * the app (highest first) it finds that profile and taps its delete bin - then goes straight on to
- * the next number. It does not wait for a pop-up and does not close one in between. When all are
- * tapped it presses Back (once, or as often as set), looks at the page to see who is gone, and taps
- * again for anyone still there. The report lists the time of every press, bins and Backs.
+ * the app (highest first) it finds that profile and taps its delete bin ONCE - then goes straight on
+ * to the next number. It does not wait for a pop-up, does not close one, and does not check whether
+ * anyone is gone. When all are tapped it presses Back (once, or as often as set - or not at all when
+ * that is switched off) and stops. The report lists the time of every press.
  * Independent of any other app: its own reading of the page, its own taps.
  */
 public class BinService extends AccessibilityService {
@@ -49,15 +47,13 @@ public class BinService extends AccessibilityService {
     private long startedAt;
 
     private final List<Integer> todo = new ArrayList<>();
-    /** The people tapped this run (by name), and how many cards had each name at the start. */
+    /** The people tapped this run (by name). */
     private final List<String> tapped = new ArrayList<>();
     /** Every press, in order, with the time it happened. */
     private final List<String> presses = new ArrayList<>();
     private long lastPressAt;
     private final java.text.SimpleDateFormat clock = new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT);
-    private final Map<String, Integer> startCounts = new HashMap<>();
     private final StringBuilder log = new StringBuilder();
-    private int pass;
 
     @Override
     protected void onServiceConnected() {
@@ -160,18 +156,15 @@ public class BinService extends AccessibilityService {
         }
         running = true;
         gen++;
-        pass = 0;
         startedAt = SystemClock.uptimeMillis();
         todo.clear();
         todo.addAll(numbers);
         tapped.clear();
         presses.clear();
         lastPressAt = 0;
-        startCounts.clear();
         log.setLength(0);
-        for (Cards.Card c : Cards.read(this)) startCounts.merge(c.name, 1, Integer::sum);
         setButton(true);
-        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - no waiting for pop-ups; "
+        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - once each, no waiting for pop-ups, no checking; "
                 + (backs() == 0 ? "Back is OFF (stays on the page)" : "then Back x" + backs()));
         next();
     }
@@ -247,7 +240,7 @@ public class BinService extends AccessibilityService {
         if (!running) return;
         int g = gen;
         if (done >= backs()) {
-            verify(SystemClock.uptimeMillis());
+            finish();
             return;
         }
         handler.postDelayed(() -> {
@@ -259,61 +252,10 @@ public class BinService extends AccessibilityService {
         }, done == 0 ? 400 : 600);
     }
 
-    /**
-     * Back pressed: the page looked at (up to 3.5 s, until everyone tapped is gone). Anyone still
-     * there is tapped again - once - found by name, since their numbers have moved.
-     */
-    private void verify(long since) {
-        if (!running) return;
-        int g = gen;
-        handler.postDelayed(() -> {
-            if (g != gen) return;
-            List<String> still = stillThere();
-            boolean timeUp = SystemClock.uptimeMillis() - since >= 3500;
-            if (still.isEmpty()) {
-                finish(still);
-            } else if (timeUp) {
-                if (pass == 0) {
-                    pass = 1;
-                    List<Integer> again = new ArrayList<>();
-                    for (Cards.Card c : Cards.read(this)) if (still.contains(c.name)) again.add(c.number);
-                    java.util.Collections.sort(again, java.util.Collections.reverseOrder());
-                    if (again.isEmpty()) {
-                        finish(still);
-                    } else {
-                        say("not gone yet: " + still + " - tapping their bins once more (now " + again + ")");
-                        todo.addAll(again);
-                        next();
-                    }
-                } else {
-                    finish(still);
-                }
-            } else {
-                verify(since);
-            }
-        }, 250);
-    }
-
-    /** Tapped names with as many cards on the page as at the start. */
-    private List<String> stillThere() {
-        Map<String, Integer> now = new HashMap<>();
-        for (Cards.Card c : Cards.read(this)) now.merge(c.name, 1, Integer::sum);
-        List<String> still = new ArrayList<>();
-        for (String name : tapped) {
-            Integer before = startCounts.get(name);
-            Integer after = now.get(name);
-            if (before != null && (after == null ? 0 : after) >= before) still.add(name);
-        }
-        return still;
-    }
-
-    private void finish(List<String> still) {
-        List<String> gone = new ArrayList<>(tapped);
-        gone.removeAll(still);
-        StringBuilder sum = new StringBuilder();
-        sum.append(still.isEmpty() ? "Done - all gone" : "Done - some still on the list");
-        if (!gone.isEmpty()) sum.append("\nGone: ").append(String.join(", ", gone));
-        if (!still.isEmpty()) sum.append("\nSTILL THERE: ").append(String.join(", ", still));
+    /** Everything tapped once: stop. Nothing is looked at, nothing is tapped again. */
+    private void finish() {
+        StringBuilder sum = new StringBuilder("Done - tapped " + tapped.size() + " bin(s) once each");
+        if (!tapped.isEmpty()) sum.append(": ").append(String.join(", ", tapped));
         stop(sum.toString());
     }
 

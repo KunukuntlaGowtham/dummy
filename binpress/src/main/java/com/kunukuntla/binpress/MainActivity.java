@@ -77,8 +77,9 @@ public class MainActivity extends Activity {
         TextView how = new TextView(this);
         how.setText("How: turn Bin Press on in Accessibility, open the sevaks list in the booking app, then tap the red 🗑 Go "
                 + "button. It taps the bins from the highest number down (so your numbers stay right), one after the other - it "
-                + "does not wait for pop-ups in between. When all are tapped it presses Back (unless you switch that off), "
-                + "checks who is gone and taps again for anyone still there. The report lists the time of every press. Tap the button again to stop.");
+                + "taps each bin once and does not wait for pop-ups. When all are tapped it presses Back (unless you switch "
+                + "that off) and stops - it does not check who is gone and does not tap again. The report lists the time of every "
+                + "press. Tap the button again to stop.");
         how.setPadding(0, pad, 0, pad / 2);
         page.addView(how);
 
