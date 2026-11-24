@@ -121,6 +121,7 @@ final class DeleteRun {
         startCounts.clear();
         for (SevakDeleter.Card c : SevakDeleter.cards(service)) startCounts.merge(c.name, 1, Integer::sum);
         verifyText = "";
+        log(cardsLine().trim());
         log("deleting " + numbers + " (each as numbered on screen when its turn comes)"
                 + (checkNames ? "" : " - NAME CHECK OFF: by number only"));
         nextProfile();
@@ -231,6 +232,7 @@ final class DeleteRun {
         original = todo.remove(0);
         expected = names.isEmpty() ? null : names.remove(0);
         name = ""; // this profile's own name, once its card is found (never the last one's)
+        tapRetries = 0;
         int now = original; // as numbered on screen now - the page is read again for each
         List<SevakDeleter.Card> cards = SevakDeleter.cards(service);
         SevakDeleter.Card card = null;
@@ -297,6 +299,7 @@ final class DeleteRun {
         failed.add(original);
         failedWho.add(expected != null && !expected.isEmpty() ? expected : name);
         report(false, lastLine);
+        log(cardsLine());
         shiftAfterFailure(todo, original);
         nextProfile();
     }
@@ -352,8 +355,12 @@ final class DeleteRun {
     /** Profiles with this profile's name before the delete (it counts as gone once there is one fewer). */
     private int sameNameBefore;
 
+    /** The bin tapped again when no pop-up came (a tap that missed): at most twice per profile. */
+    private int tapRetries, tappedNumber;
+
     private void tapBin(SevakDeleter.Card card, int count, Rect r) {
         name = card.name;
+        tappedNumber = card.number;
         lateCloses = 0;
         sameNameBefore = 0;
         for (SevakDeleter.Card c : SevakDeleter.cards(service)) if (c.name.equals(name)) sameNameBefore++;
@@ -380,6 +387,9 @@ final class DeleteRun {
             if (!came) {
                 if (stage == 1) log("  no pop-up came");
                 else log("  no 2nd pop-up");
+                // A tap that missed (the page moved, the bin wasn't ready): the same card's bin again -
+                // only while nothing has gone (same number of cards, the same card still there).
+                if (stage == 1 && !up && tapRetries < 2 && retryTap()) return;
                 checkGone();
                 return;
             }
@@ -468,6 +478,47 @@ final class DeleteRun {
      * The profile gone: fewer profiles, the same on two looks in a row, no pop-up up. A pop-up
      * that comes meanwhile (late) is closed first - up to twice - then the profile is looked at.
      */
+    private boolean retryTap() {
+        List<SevakDeleter.Card> now = SevakDeleter.cards(service);
+        if (now.size() != cardsBefore) return false;
+        SevakDeleter.Card c = null;
+        for (SevakDeleter.Card x : now) if (x.number == tappedNumber && x.name.equals(name)) c = x;
+        if (c == null || c.bin == null) return false;
+        tapRetries++;
+        log("  no pop-up - tapping " + name + "'s bin again (try " + (tapRetries + 1) + ")");
+        int count = now.size(), num = c.number;
+        String nm = c.name;
+        Rect r = SevakDeleter.where(c.bin);
+        if (r != null) {
+            tapBin(c, count, r);
+            return true;
+        }
+        c.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+        int g = gen;
+        handler.postDelayed(() -> {
+            if (g != gen) return;
+            SevakDeleter.Card c2 = sameCard(num, nm);
+            Rect r2 = c2 == null || c2.bin == null ? null : SevakDeleter.where(c2.bin);
+            if (r2 == null) checkGone();
+            else tapBin(c2, count, r2);
+        }, 350);
+        return true;
+    }
+
+    /** The profiles on the page now, for the report: "1 Name, 2 Name (no bin) ...". */
+    private String cardsLine() {
+        StringBuilder sb = new StringBuilder("  profiles on the page: ");
+        int n = 0;
+        for (SevakDeleter.Card c : SevakDeleter.cards(service)) {
+            if (n++ >= 40) {
+                sb.append(" ...");
+                break;
+            }
+            sb.append(n == 1 ? "" : ", ").append(c.number).append(' ').append(c.name).append(c.bin == null ? " (no bin)" : "");
+        }
+        return n == 0 ? "  profiles on the page: none read" : sb.toString();
+    }
+
     private void checkGone() {
         int g = gen;
         int[] last = {-1};
