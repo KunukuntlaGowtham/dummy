@@ -680,7 +680,7 @@ public class InspectorService extends AccessibilityService {
         handyTickButton = floating("☑\nNext", 0xEE2E7D32, 0, v -> {
             closeCard();
             if (busy()) return;
-            Toast.makeText(this, handy.tick(), Toast.LENGTH_SHORT).show();
+            handy.tick(msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
         }, v -> {
             handy.reset();
             Toast.makeText(this, "☑ Refused rows are offered again", Toast.LENGTH_SHORT).show();
@@ -688,23 +688,10 @@ public class InspectorService extends AccessibilityService {
         handyClearButton = floating("🧹\nOK", 0xEE00838F, 0, v -> {
             closeCard();
             if (busy()) return;
-            handy.hideMarker();
-            Toast.makeText(this, "🧹 Looking for the pop-up's OK…", Toast.LENGTH_SHORT).show();
-            clearer.clearNow();
-            waitClearThenPoint(0);
+            handy.clear(msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show(), () -> {
+                if (!destroyed) handy.point(msg -> Toast.makeText(this, msg, Toast.LENGTH_SHORT).show());
+            });
         });
-    }
-
-    /** The clear has ended (up to ~9 s): the next box is pointed at. */
-    private void waitClearThenPoint(int waited) {
-        handler.postDelayed(() -> {
-            if (destroyed) return;
-            if (clearer.isRunning() && waited < 60) {
-                waitClearThenPoint(waited + 1);
-                return;
-            }
-            Toast.makeText(this, handy.point(), Toast.LENGTH_SHORT).show();
-        }, 150);
     }
 
     // ---- 👁 Watch: the red box follows the ticks you make by hand on page 3 ----------------
