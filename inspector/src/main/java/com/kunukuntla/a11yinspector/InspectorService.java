@@ -111,8 +111,8 @@ public class InspectorService extends AccessibilityService {
             int t = event.getEventType();
             if (t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                     || t == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-                pageCheckSoon();
-                if (watching) watchSoon(); // 👁 Watch: the red box follows a hand tick at once
+                if (readsThis(evPkg.toString())) pageCheckSoon();
+                if (watching && readsThis(evPkg.toString())) watchSoon(); // 👁 Watch: the red box follows a hand tick at once
                 // Right after page 3's Continue: page 4's Confirm pressed the moment it comes.
                 if (flow != null) flow.onEvent(evPkg.toString());
             }
@@ -326,6 +326,25 @@ public class InspectorService extends AccessibilityService {
 
     /** The page changed: look which page it is shortly (changes come in bursts). */
     private long lastPageCheck;
+
+    /** When another app (not the booking app) was last read for the page badge. */
+    private long lastOtherRead;
+
+    /**
+     * 💡 Light reading (on by default; Settings): the booking app's page is read on every change, any
+     * other app at most once every 4 s - the page's tree is never walked on each scroll of every app.
+     * (The booking app is the one the last page 2 / page 3 was seen in; none known yet: all are read.)
+     */
+    private boolean readsThis(String pkg) {
+        android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
+        if (!sp.getBoolean("light_reading", true)) return true;
+        String booking = sp.getString("booking_pkg", "");
+        if (booking.isEmpty() || booking.equals(pkg)) return true;
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastOtherRead < 4000) return false;
+        lastOtherRead = now;
+        return true;
+    }
 
     private void pageCheckSoon() {
         if (pageCheckQueued || pageBadge == null) return;

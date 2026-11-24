@@ -184,7 +184,7 @@ final class PageKind {
                 f.confirmShown = f.confirmShown || n.isVisibleToUser();
             }
         }
-        f.days = Booker.dayCells(service).size();
+        f.days = Booker.dayCells(service, nodes).size();
         return f;
     }
 }
