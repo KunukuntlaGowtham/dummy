@@ -83,6 +83,8 @@ public class DeleteLedgerTest {
         assertEquals(1, later.size());
         assertEquals(DeleteLedger.DELETED, later.get(0).state);
         assertEquals("Vemuri Anitha", later.get(0).name);
+        // ...and even the record goes after half an hour
+        assertEquals(0, DeleteLedger.expire(l, 1500 + 31 * 60 * 1000).size());
     }
 
     @Test

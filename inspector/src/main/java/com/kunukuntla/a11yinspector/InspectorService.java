@@ -301,6 +301,8 @@ public class InspectorService extends AccessibilityService {
             @Override
             public void backFailed() {
                 testTripEnded(); // a test trip that stopped early still turns test mode off
+                tripNumbers = null; // the list for this trip is dropped: no later trip may take it up
+                tripNames = null;
                 saveRetryLog("↩ Back didn't reach page 1 - stopped"); // the steps are in 📋 Report
             }
 
@@ -755,6 +757,8 @@ public class InspectorService extends AccessibilityService {
             // The saved list (who, deleted or not) goes in the report too.
             saveReport(log + "\nSAVED LIST (who to delete, and what became of each)\n"
                     + DeleteLedger.text(DeleteLedger.load(this)) + "\n");
+            // Everyone deleted: nothing is left to resume, so the list is emptied (never half-kept).
+            if (summary.startsWith("✅")) DeleteLedger.clear(this);
             deleteButton.setText("🗑\nDelete");
             finished(summary);
             if (retrying) {
@@ -829,6 +833,10 @@ public class InspectorService extends AccessibilityService {
         }
         tickAuto = auto;
         retryUsed = false; // a new booking: its one retry again
+        // ...and its own list: nothing of the last booking's delete list (who, deleted or not) is kept.
+        tripNumbers = null;
+        tripNames = null;
+        DeleteLedger.clear(this);
         if (flow != null) flow.holdConfirm(false);
         tickButton.setText(auto ? "■\nStop\nauto" : "■\nStop");
         ticker.start();
@@ -1525,6 +1533,8 @@ public class InspectorService extends AccessibilityService {
 
     private void endRetry(String why) {
         retrying = false;
+        tripNumbers = null;
+        tripNames = null;
         endGo();
         testTripEnded();
         saveRetryLog("↻ Retry stopped: " + why);

@@ -20,6 +20,8 @@ final class DeleteLedger {
     private static final int KEEP = 120;
     /** People still to delete (pending / failed) are forgotten this long after they were saved or last tried. */
     static final long TO_DO_MS = 5L * 60 * 1000;
+    /** What was deleted stays as the record this long (a new Tick or a clean delete empties the list sooner). */
+    static final long DELETED_MS = 30L * 60 * 1000;
     private static final String PREFS = "ledger", KEY = "list";
 
     static final class Entry {
@@ -87,11 +89,15 @@ final class DeleteLedger {
 
     /**
      * The list without the people still to delete that are older than 5 minutes (the page has
-     * moved on: names and rows from long ago must never be deleted now). Deleted ones stay, as the record.
+     * moved on: names and rows from long ago must never be deleted now), and without the deleted
+     * ones older than 30 minutes (they are only the record).
      */
     static List<Entry> expire(List<Entry> list, long now) {
         List<Entry> out = new ArrayList<>();
-        for (Entry e : list) if (DELETED.equals(e.state) || now - e.at <= TO_DO_MS) out.add(e);
+        for (Entry e : list) {
+            long keep = DELETED.equals(e.state) ? DELETED_MS : TO_DO_MS;
+            if (now - e.at <= keep) out.add(e);
+        }
         return out;
     }
 

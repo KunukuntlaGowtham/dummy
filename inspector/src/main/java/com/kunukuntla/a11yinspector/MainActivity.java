@@ -113,7 +113,7 @@ public class MainActivity extends Activity {
         settings.setOrientation(LinearLayout.VERTICAL);
         settings.setPadding(0, dp(4), 0, dp(24));
         settings.addView(card("👤 Account", 0xFF5856D6, account()));
-        settings.addView(card("🗑 Delete list (saved)", 0xFFC62828, deleteList()));
+        settings.addView(card("🗑 Delete list (this booking only)", 0xFFC62828, deleteList()));
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
         settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
         settings.addView(card("🧪 Test mode", 0xFFC62828, testMode()));
