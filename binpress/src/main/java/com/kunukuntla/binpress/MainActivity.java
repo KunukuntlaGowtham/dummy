@@ -21,7 +21,7 @@ import java.util.List;
 /** Bin Press: type the numbers, turn the service on, then press 🗑 Go on the sevaks list. */
 public class MainActivity extends Activity {
 
-    private EditText numbers, gap;
+    private EditText numbers, gap, backs;
     private TextView status, log;
 
     @Override
@@ -58,6 +58,11 @@ public class MainActivity extends Activity {
         gap.setInputType(InputType.TYPE_CLASS_NUMBER);
         page.addView(gap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        page.addView(label("Back presses after all the bins are tapped (1 - 3)"));
+        backs = new EditText(this);
+        backs.setInputType(InputType.TYPE_CLASS_NUMBER);
+        page.addView(backs, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
         Button save = new Button(this);
         save.setText("Save");
         save.setOnClickListener(v -> save());
@@ -66,12 +71,24 @@ public class MainActivity extends Activity {
         TextView how = new TextView(this);
         how.setText("How: turn Bin Press on in Accessibility, open the sevaks list in the booking app, then tap the red 🗑 Go "
                 + "button. It taps the bins from the highest number down (so your numbers stay right), one after the other - it "
-                + "does not wait for pop-ups, does not press Back and does not close them. At the end it checks who is gone and "
-                + "taps again for anyone still there. Tap the button again to stop.");
+                + "does not wait for pop-ups in between. When all are tapped it presses Back, checks who is gone and taps "
+                + "again for anyone still there. The report lists the time of every press. Tap the button again to stop.");
         how.setPadding(0, pad, 0, pad / 2);
         page.addView(how);
 
         page.addView(label("Last run"));
+        Button share = new Button(this);
+        share.setText("Share the report");
+        share.setOnClickListener(v -> {
+            String text = prefs().getString(BinService.KEY_LOG, "");
+            if (text.isEmpty()) {
+                Toast.makeText(this, "No run yet", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
+            startActivity(Intent.createChooser(send, "Share the Bin Press report"));
+        });
+        page.addView(share);
         log = new TextView(this);
         log.setTextIsSelectable(true);
         page.addView(log);
@@ -100,8 +117,16 @@ public class MainActivity extends Activity {
         } catch (NumberFormatException ignored) {
         }
         b = Math.max(30, Math.min(1500, b));
-        prefs().edit().putString(BinService.KEY_NUMBERS, numbers.getText().toString().trim()).putInt(BinService.KEY_GAP, b).apply();
+        int bk = 1;
+        try {
+            bk = Integer.parseInt(backs.getText().toString().trim());
+        } catch (NumberFormatException ignored) {
+        }
+        bk = Math.max(1, Math.min(3, bk));
+        prefs().edit().putString(BinService.KEY_NUMBERS, numbers.getText().toString().trim()).putInt(BinService.KEY_GAP, b)
+                .putInt(BinService.KEY_BACKS, bk).apply();
         gap.setText(String.valueOf(b));
+        backs.setText(String.valueOf(bk));
         Toast.makeText(this, list.isEmpty() ? "Saved - but no numbers found" : "Saved: " + list + " (highest first)",
                 Toast.LENGTH_SHORT).show();
     }
@@ -111,6 +136,7 @@ public class MainActivity extends Activity {
         super.onResume();
         numbers.setText(prefs().getString(BinService.KEY_NUMBERS, ""));
         gap.setText(String.valueOf(prefs().getInt(BinService.KEY_GAP, BinService.DEFAULT_GAP_MS)));
+        backs.setText(String.valueOf(prefs().getInt(BinService.KEY_BACKS, 1)));
         boolean on = BinService.connected;
         status.setText(on ? "● Service is on - open the sevaks list and tap 🗑 Go"
                 : "○ Service is off - turn Bin Press on in Accessibility settings");

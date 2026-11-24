@@ -28,15 +28,15 @@ import java.util.Map;
 /**
  * Bin Press. Opened on the sevaks list, the round 🗑 button starts it: for each number you typed in
  * the app (highest first) it finds that profile and taps its delete bin - then goes straight on to
- * the next number. It does not wait for a pop-up, never presses Back and never closes a pop-up: it
- * stays on that page and taps the next bin at once. When all are tapped it looks once at the page to
- * see who is gone, and taps again for anyone still there.
+ * the next number. It does not wait for a pop-up and does not close one in between. When all are
+ * tapped it presses Back (once, or as often as set), looks at the page to see who is gone, and taps
+ * again for anyone still there. The report lists the time of every press, bins and Backs.
  * Independent of any other app: its own reading of the page, its own taps.
  */
 public class BinService extends AccessibilityService {
 
     static final String PREFS = "binpress";
-    static final String KEY_NUMBERS = "numbers", KEY_GAP = "gap", KEY_LOG = "log";
+    static final String KEY_NUMBERS = "numbers", KEY_GAP = "gap", KEY_BACKS = "backs", KEY_LOG = "log";
     static final int DEFAULT_GAP_MS = 100;
 
     static volatile boolean connected;
@@ -51,6 +51,10 @@ public class BinService extends AccessibilityService {
     private final List<Integer> todo = new ArrayList<>();
     /** The people tapped this run (by name), and how many cards had each name at the start. */
     private final List<String> tapped = new ArrayList<>();
+    /** Every press, in order, with the time it happened. */
+    private final List<String> presses = new ArrayList<>();
+    private long lastPressAt;
+    private final java.text.SimpleDateFormat clock = new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.ROOT);
     private final Map<String, Integer> startCounts = new HashMap<>();
     private final StringBuilder log = new StringBuilder();
     private int pass;
@@ -129,6 +133,19 @@ public class BinService extends AccessibilityService {
         return getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    private int backs() {
+        return Math.max(1, Math.min(3, prefs().getInt(KEY_BACKS, 1)));
+    }
+
+    /** One press, written down: its clock time, and how long after the start and after the press before. */
+    private void markPress(String what) {
+        long now = SystemClock.uptimeMillis();
+        presses.add(String.format(Locale.ROOT, "%2d. %s  %s   (+%d ms from the start, +%d ms after the last press)",
+                presses.size() + 1, clock.format(new java.util.Date()), what, now - startedAt,
+                lastPressAt == 0 ? 0 : now - lastPressAt));
+        lastPressAt = now;
+    }
+
     private int gap() {
         return Math.max(30, Math.min(1500, prefs().getInt(KEY_GAP, DEFAULT_GAP_MS)));
     }
@@ -146,11 +163,13 @@ public class BinService extends AccessibilityService {
         todo.clear();
         todo.addAll(numbers);
         tapped.clear();
+        presses.clear();
+        lastPressAt = 0;
         startCounts.clear();
         log.setLength(0);
         for (Cards.Card c : Cards.read(this)) startCounts.merge(c.name, 1, Integer::sum);
         setButton(true);
-        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - no waiting for pop-ups, no Back");
+        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - no waiting for pop-ups; then Back x" + backs());
         next();
     }
 
@@ -160,8 +179,10 @@ public class BinService extends AccessibilityService {
         gen++;
         setButton(false);
         say("END: " + why);
-        String text = why + "\n\nSTEPS\n" + log;
-        prefs().edit().putString(KEY_LOG, text).apply();
+        StringBuilder text = new StringBuilder(why).append("\n\nPRESSES (when each happened)\n");
+        for (String p : presses) text.append(p).append('\n');
+        text.append("\nSTEPS\n").append(log);
+        prefs().edit().putString(KEY_LOG, text.toString()).apply();
         Toast.makeText(this, why, Toast.LENGTH_LONG).show();
     }
 
@@ -174,7 +195,7 @@ public class BinService extends AccessibilityService {
     private void next() {
         if (!running) return;
         if (todo.isEmpty()) {
-            verify(SystemClock.uptimeMillis());
+            pressBacks(0);
             return;
         }
         number = todo.remove(0);
@@ -211,14 +232,32 @@ public class BinService extends AccessibilityService {
             return;
         }
         say("profile " + number + " " + card.name + ": bin tapped at " + r.centerX() + "," + r.centerY());
+        markPress("BIN  " + number + "  " + card.name);
         if (!tapped.contains(card.name)) tapped.add(card.name);
         tap(r.centerX(), r.centerY(), () -> handler.postDelayed(() -> {
             if (g == gen) next();
         }, gap()));
     }
 
+    /** All bins tapped: Back pressed (as often as set), each press written down; then the page is looked at. */
+    private void pressBacks(int done) {
+        if (!running) return;
+        int g = gen;
+        if (done >= backs()) {
+            verify(SystemClock.uptimeMillis());
+            return;
+        }
+        handler.postDelayed(() -> {
+            if (g != gen) return;
+            markPress("BACK " + (done + 1) + " of " + backs());
+            say("Back pressed (" + (done + 1) + " of " + backs() + ")");
+            performGlobalAction(GLOBAL_ACTION_BACK);
+            pressBacks(done + 1);
+        }, done == 0 ? 400 : 600);
+    }
+
     /**
-     * All bins tapped: the page looked at (up to 3.5 s, until everyone tapped is gone). Anyone still
+     * Back pressed: the page looked at (up to 3.5 s, until everyone tapped is gone). Anyone still
      * there is tapped again - once - found by name, since their numbers have moved.
      */
     private void verify(long since) {
