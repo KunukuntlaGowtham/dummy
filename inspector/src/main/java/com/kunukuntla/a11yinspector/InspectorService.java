@@ -981,6 +981,11 @@ public class InspectorService extends AccessibilityService {
 
     static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch"};
 
+    /** Shown until you choose otherwise: only ☑ Tick, 🤖 Auto and 🗑 Delete (the others are in Settings). */
+    static boolean shownDefault(String key) {
+        return key.equals("tick") || key.equals("auto") || key.equals("delete");
+    }
+
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
             (sp, key) -> {
                 if (key != null && key.startsWith("show_")) {
@@ -1002,19 +1007,22 @@ public class InspectorService extends AccessibilityService {
         // As far apart as the screen allows (up to 20 dp between): every shown button fits, any phone.
         int shown = 0;
         for (int i = 0; i < views.length; i++) {
-            if (views[i] == null || !sp.getBoolean("show_" + SHOWN_KEYS[i], true)) continue;
+            if (views[i] == null || !sp.getBoolean("show_" + SHOWN_KEYS[i], shownDefault(SHOWN_KEYS[i]))) continue;
             shown++;
         }
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
         int screenDp = Math.round(dm.heightPixels / dm.density);
-        int top = Math.min(140, Math.max(60, screenDp / 6));
+        // Bottom right, where the thumb reaches when the phone is held: the first button lowest, the
+        // others stacked up above it (as far apart as the screen allows).
+        int bottomMargin = 128; // dp: above the navigation bar and the thumb's rest
         int step = shown <= 1 ? BUTTON_STEP
-                : Math.max(58, Math.min(BUTTON_STEP, (screenDp - top - 56 - 48) / (shown - 1)));
+                : Math.max(58, Math.min(BUTTON_STEP, (screenDp - bottomMargin - 56 - 60) / (shown - 1)));
+        int x = dm.widthPixels - dp(56) - dp(14);
         int k = 0;
         for (int i = 0; i < views.length; i++) {
             View v = views[i];
             if (v == null) continue;
-            boolean on = sp.getBoolean("show_" + SHOWN_KEYS[i], true);
+            boolean on = sp.getBoolean("show_" + SHOWN_KEYS[i], shownDefault(SHOWN_KEYS[i]));
             // 🗑 only in test mode: no stray tap can delete.
             v.setVisibility(on ? View.VISIBLE : View.GONE);
             try {
@@ -1022,8 +1030,8 @@ public class InspectorService extends AccessibilityService {
                 // A hidden button's window lets every touch through to the page under it.
                 if (on) {
                     lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                    lp.x = dp(12);
-                    lp.y = dp(top + step * k);
+                    lp.x = x;
+                    lp.y = dm.heightPixels - dp(56) - dp(bottomMargin) - dp(step) * k;
                 } else {
                     lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
                 }

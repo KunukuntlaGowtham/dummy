@@ -285,7 +285,7 @@ public class MainActivity extends Activity {
             chip.setTextSize(13);
             chip.setPadding(dp(12), dp(7), dp(12), dp(7));
             Runnable paint = () -> {
-                boolean on = sp.getBoolean(key, true);
+                boolean on = sp.getBoolean(key, InspectorService.shownDefault(key.substring(5)));
                 chip.setText((on ? "✓ " : "") + name);
                 chip.setTextColor(on ? Color.WHITE : GREEN);
                 GradientDrawable bg = new GradientDrawable();
@@ -296,7 +296,7 @@ public class MainActivity extends Activity {
             };
             paint.run();
             chip.setOnClickListener(v -> {
-                sp.edit().putBoolean(key, !sp.getBoolean(key, true)).apply();
+                sp.edit().putBoolean(key, !sp.getBoolean(key, InspectorService.shownDefault(key.substring(5)))).apply();
                 paint.run();
             });
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(

@@ -263,6 +263,12 @@ final class DeleteRun {
             tapBin(card, cards.size(), r);
             return;
         }
+        // Off screen: clicked through accessibility first - no scrolling at all. If no pop-up comes
+        // (the click did nothing), the retry below brings the bin on screen and taps it.
+        if (clickThrough(card.bin)) {
+            tapBin(card, cards.size(), null);
+            return;
+        }
         // Off screen: brought on screen, and tapped the moment it shows (no fixed wait).
         card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
         int g = gen;
@@ -368,8 +374,12 @@ final class DeleteRun {
         cardsBefore = count;
         stepStart = SystemClock.uptimeMillis();
         before = new Page.Before(service);
-        log("profile " + original + " " + name + ": bin tapped at " + r.centerX() + "," + r.centerY());
-        tap(r);
+        if (r != null) {
+            log("profile " + original + " " + name + ": bin tapped at " + r.centerX() + "," + r.centerY());
+            tap(r);
+        } else {
+            log("profile " + original + " " + name + ": bin clicked through accessibility (off screen, no scrolling)");
+        }
         popup(1, false, SystemClock.uptimeMillis() + 2500);
     }
 
@@ -478,6 +488,18 @@ final class DeleteRun {
      * The profile gone: fewer profiles, the same on two looks in a row, no pop-up up. A pop-up
      * that comes meanwhile (late) is closed first - up to twice - then the profile is looked at.
      */
+    /** A click on the bin (or the box around it) through accessibility, with the bin anywhere on the page. */
+    private boolean clickThrough(AccessibilityNodeInfo bin) {
+        AccessibilityNodeInfo n = bin;
+        for (int up = 0; up < 3 && n != null; up++, n = n.getParent()) {
+            try {
+                if ((up == 0 || n.isClickable()) && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return false;
+    }
+
     private boolean retryTap() {
         List<SevakDeleter.Card> now = SevakDeleter.cards(service);
         if (now.size() != cardsBefore) return false;
