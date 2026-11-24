@@ -288,7 +288,8 @@ public class InspectorService extends AccessibilityService {
 
             @Override
             public boolean mayGoBack() {
-                // Only when asked (Settings, or ▶ Go running it all): else Tick only notes the rows.
+                // With 🤖 Auto ON, ▶ Go running, or the Settings chip: rows not added go back to page 1
+                // and are deleted. Otherwise Tick only notes the rows.
                 return (retryOn() || AutoFlow.goActive) && !retryUsed;
             }
 
@@ -1177,8 +1178,13 @@ public class InspectorService extends AccessibilityService {
     /** The retry runs: delete on page 1, Continue, page 2's checkbox, page 3's Tick. */
     private boolean retrying;
 
+    /**
+     * Rows Tick didn't add are taken back to page 1, deleted and retried: when 🤖 Auto is ON (that is
+     * what Auto mode is for), or when the Settings chip asks for it with Auto off.
+     */
     private boolean retryOn() {
-        return getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_delete_missed", false);
+        return AutoFlow.enabled(this)
+                || getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_delete_missed", false);
     }
 
     /** Back on page 1 for rows Tick missed: delete them (numbered as after each delete), then Continue. */
