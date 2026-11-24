@@ -36,7 +36,7 @@ import java.util.Map;
 public class BinService extends AccessibilityService {
 
     static final String PREFS = "binpress";
-    static final String KEY_NUMBERS = "numbers", KEY_GAP = "gap", KEY_BACKS = "backs", KEY_LOG = "log";
+    static final String KEY_NUMBERS = "numbers", KEY_GAP = "gap", KEY_BACKS = "backs", KEY_BACK_ON = "back_on", KEY_LOG = "log";
     static final int DEFAULT_GAP_MS = 100;
 
     static volatile boolean connected;
@@ -133,7 +133,9 @@ public class BinService extends AccessibilityService {
         return getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    /** How many Back presses at the end: 0 when "Press Back at the end" is switched off in the app. */
     private int backs() {
+        if (!prefs().getBoolean(KEY_BACK_ON, true)) return 0;
         return Math.max(1, Math.min(3, prefs().getInt(KEY_BACKS, 1)));
     }
 
@@ -169,7 +171,8 @@ public class BinService extends AccessibilityService {
         log.setLength(0);
         for (Cards.Card c : Cards.read(this)) startCounts.merge(c.name, 1, Integer::sum);
         setButton(true);
-        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - no waiting for pop-ups; then Back x" + backs());
+        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - no waiting for pop-ups; "
+                + (backs() == 0 ? "Back is OFF (stays on the page)" : "then Back x" + backs()));
         next();
     }
 

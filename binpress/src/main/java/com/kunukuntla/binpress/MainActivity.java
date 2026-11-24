@@ -10,6 +10,7 @@ import android.text.InputType;
 import android.view.Gravity;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.CheckBox;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -22,6 +23,7 @@ import java.util.List;
 public class MainActivity extends Activity {
 
     private EditText numbers, gap, backs;
+    private CheckBox backOn;
     private TextView status, log;
 
     @Override
@@ -58,6 +60,10 @@ public class MainActivity extends Activity {
         gap.setInputType(InputType.TYPE_CLASS_NUMBER);
         page.addView(gap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        backOn = new CheckBox(this);
+        backOn.setText("Go back after all the bins are tapped (off: stay on the page)");
+        page.addView(backOn);
+
         page.addView(label("Back presses after all the bins are tapped (1 - 3)"));
         backs = new EditText(this);
         backs.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -71,8 +77,8 @@ public class MainActivity extends Activity {
         TextView how = new TextView(this);
         how.setText("How: turn Bin Press on in Accessibility, open the sevaks list in the booking app, then tap the red 🗑 Go "
                 + "button. It taps the bins from the highest number down (so your numbers stay right), one after the other - it "
-                + "does not wait for pop-ups in between. When all are tapped it presses Back, checks who is gone and taps "
-                + "again for anyone still there. The report lists the time of every press. Tap the button again to stop.");
+                + "does not wait for pop-ups in between. When all are tapped it presses Back (unless you switch that off), "
+                + "checks who is gone and taps again for anyone still there. The report lists the time of every press. Tap the button again to stop.");
         how.setPadding(0, pad, 0, pad / 2);
         page.addView(how);
 
@@ -124,7 +130,7 @@ public class MainActivity extends Activity {
         }
         bk = Math.max(1, Math.min(3, bk));
         prefs().edit().putString(BinService.KEY_NUMBERS, numbers.getText().toString().trim()).putInt(BinService.KEY_GAP, b)
-                .putInt(BinService.KEY_BACKS, bk).apply();
+                .putInt(BinService.KEY_BACKS, bk).putBoolean(BinService.KEY_BACK_ON, backOn.isChecked()).apply();
         gap.setText(String.valueOf(b));
         backs.setText(String.valueOf(bk));
         Toast.makeText(this, list.isEmpty() ? "Saved - but no numbers found" : "Saved: " + list + " (highest first)",
@@ -137,6 +143,7 @@ public class MainActivity extends Activity {
         numbers.setText(prefs().getString(BinService.KEY_NUMBERS, ""));
         gap.setText(String.valueOf(prefs().getInt(BinService.KEY_GAP, BinService.DEFAULT_GAP_MS)));
         backs.setText(String.valueOf(prefs().getInt(BinService.KEY_BACKS, 1)));
+        backOn.setChecked(prefs().getBoolean(BinService.KEY_BACK_ON, true));
         boolean on = BinService.connected;
         status.setText(on ? "● Service is on - open the sevaks list and tap 🗑 Go"
                 : "○ Service is off - turn Bin Press on in Accessibility settings");
