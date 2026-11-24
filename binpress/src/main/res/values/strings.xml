@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Bin Press</string>
-    <string name="service_description">Taps the delete bin of the sevak profiles you name, and presses Back when a pop-up comes.</string>
+    <string name="service_description">Taps the delete bin of the sevak profiles you name, one after the other, as fast as it can.</string>
 </resources>

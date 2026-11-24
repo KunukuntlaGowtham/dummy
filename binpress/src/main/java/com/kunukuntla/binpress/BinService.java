@@ -20,19 +20,24 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * Bin Press. Opened on the sevaks list, the round 🗑 button starts it: for each number you typed
- * in the app (highest first) it finds that profile, taps its delete bin, and when a pop-up comes it
- * presses Back. Then it checks that the profile is gone and goes on to the next number.
+ * Bin Press. Opened on the sevaks list, the round 🗑 button starts it: for each number you typed in
+ * the app (highest first) it finds that profile and taps its delete bin - then goes straight on to
+ * the next number. It does not wait for a pop-up, never presses Back and never closes a pop-up: it
+ * stays on that page and taps the next bin at once. When all are tapped it looks once at the page to
+ * see who is gone, and taps again for anyone still there.
  * Independent of any other app: its own reading of the page, its own taps.
  */
 public class BinService extends AccessibilityService {
 
     static final String PREFS = "binpress";
-    static final String KEY_NUMBERS = "numbers", KEY_BACKS = "backs", KEY_LOG = "log";
+    static final String KEY_NUMBERS = "numbers", KEY_GAP = "gap", KEY_LOG = "log";
+    static final int DEFAULT_GAP_MS = 100;
 
     static volatile boolean connected;
 
@@ -44,8 +49,11 @@ public class BinService extends AccessibilityService {
     private long startedAt;
 
     private final List<Integer> todo = new ArrayList<>();
-    private final List<String> deleted = new ArrayList<>(), failed = new ArrayList<>();
+    /** The people tapped this run (by name), and how many cards had each name at the start. */
+    private final List<String> tapped = new ArrayList<>();
+    private final Map<String, Integer> startCounts = new HashMap<>();
     private final StringBuilder log = new StringBuilder();
+    private int pass;
 
     @Override
     protected void onServiceConnected() {
@@ -121,6 +129,10 @@ public class BinService extends AccessibilityService {
         return getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
+    private int gap() {
+        return Math.max(30, Math.min(1500, prefs().getInt(KEY_GAP, DEFAULT_GAP_MS)));
+    }
+
     private void start() {
         List<Integer> numbers = Numbers.parse(prefs().getString(KEY_NUMBERS, ""));
         if (numbers.isEmpty()) {
@@ -129,15 +141,17 @@ public class BinService extends AccessibilityService {
         }
         running = true;
         gen++;
+        pass = 0;
         startedAt = SystemClock.uptimeMillis();
         todo.clear();
         todo.addAll(numbers);
-        deleted.clear();
-        failed.clear();
+        tapped.clear();
+        startCounts.clear();
         log.setLength(0);
+        for (Cards.Card c : Cards.read(this)) startCounts.merge(c.name, 1, Integer::sum);
         setButton(true);
-        say("deleting " + numbers + " (highest first); " + backs() + " Back press(es) when a pop-up comes");
-        handler.postDelayed(this::next, 150);
+        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - no waiting for pop-ups, no Back");
+        next();
     }
 
     private void stop(String why) {
@@ -146,146 +160,137 @@ public class BinService extends AccessibilityService {
         gen++;
         setButton(false);
         say("END: " + why);
-        StringBuilder sum = new StringBuilder(why).append('\n');
-        if (!deleted.isEmpty()) sum.append("Deleted: ").append(String.join(", ", deleted)).append('\n');
-        if (!failed.isEmpty()) sum.append("NOT deleted: ").append(String.join(", ", failed)).append('\n');
-        String text = sum + "\nSTEPS\n" + log;
+        String text = why + "\n\nSTEPS\n" + log;
         prefs().edit().putString(KEY_LOG, text).apply();
-        Toast.makeText(this, sum.toString().trim(), Toast.LENGTH_LONG).show();
-    }
-
-    private int backs() {
-        return Math.max(1, Math.min(3, prefs().getInt(KEY_BACKS, 1)));
+        Toast.makeText(this, why, Toast.LENGTH_LONG).show();
     }
 
     private void say(String s) {
         log.append(String.format(Locale.ROOT, "%6d ms  ", SystemClock.uptimeMillis() - startedAt)).append(s).append('\n');
     }
 
+    private int number;
+
     private void next() {
         if (!running) return;
         if (todo.isEmpty()) {
-            stop(failed.isEmpty() ? "Done - all deleted" : "Done - some not deleted");
+            verify(SystemClock.uptimeMillis());
             return;
         }
         number = todo.remove(0);
-        tapTries = 0;
-        findAndTap(0);
+        fire(0);
     }
 
-    private int number, tapTries;
-    private String name = "";
-    private int cardsBefore;
-
-    /** Find the profile (up to ~3 s: the page may still be drawing), bring its bin on screen, tap it. */
-    private void findAndTap(int tries) {
+    /** Find the profile (a moment if the page is still drawing), bring its bin on screen, tap it, go on. */
+    private void fire(int tries) {
         if (!running) return;
         int g = gen;
         Cards.Card card = Cards.find(this, number);
         if (card == null || card.bin == null) {
-            if (tries < 10) {
+            if (tries < 8) {
                 handler.postDelayed(() -> {
-                    if (g == gen) findAndTap(tries + 1);
-                }, 300);
+                    if (g == gen) fire(tries + 1);
+                }, 150);
                 return;
             }
-            say("profile " + number + ": " + (card == null ? "not on the page" : "has no bin") + " ✗");
-            failed.add(String.valueOf(number));
+            say("profile " + number + ": " + (card == null ? "not on the page" : "has no bin") + " - skipped");
             next();
             return;
         }
         Rect r = Cards.where(card.bin);
         if (r == null) {
-            if (tries < 10) {
+            if (tries < 8) {
                 card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
                 handler.postDelayed(() -> {
-                    if (g == gen) findAndTap(tries + 1);
-                }, 400);
+                    if (g == gen) fire(tries + 1);
+                }, 250);
                 return;
             }
-            say("profile " + number + " " + card.name + ": its bin never came on screen ✗");
-            failed.add(number + " " + card.name);
+            say("profile " + number + " " + card.name + ": its bin never came on screen - skipped");
             next();
             return;
         }
-        name = card.name;
-        cardsBefore = Cards.read(this).size();
-        String sig = Cards.signature(this);
-        say("profile " + number + " " + name + ": tapping its bin at " + r.centerX() + "," + r.centerY());
-        tap(r.centerX(), r.centerY());
-        waitForPopup(sig, SystemClock.uptimeMillis());
+        say("profile " + number + " " + card.name + ": bin tapped at " + r.centerX() + "," + r.centerY());
+        if (!tapped.contains(card.name)) tapped.add(card.name);
+        tap(r.centerX(), r.centerY(), () -> handler.postDelayed(() -> {
+            if (g == gen) next();
+        }, gap()));
     }
 
-    /** The page changed (a pop-up came): up to 3 s. */
-    private void waitForPopup(String sig, long since) {
+    /**
+     * All bins tapped: the page looked at (up to 3.5 s, until everyone tapped is gone). Anyone still
+     * there is tapped again - once - found by name, since their numbers have moved.
+     */
+    private void verify(long since) {
         if (!running) return;
         int g = gen;
         handler.postDelayed(() -> {
             if (g != gen) return;
-            boolean changed = !Cards.signature(this).equals(sig);
-            long waited = SystemClock.uptimeMillis() - since;
-            if (changed) {
-                say("  pop-up came after " + waited + " ms");
-                handler.postDelayed(() -> pressBack(0), 350); // a moment to be drawn
-            } else if (waited >= 3000) {
-                say("  no pop-up came");
-                if (tapTries < 1 && Cards.read(this).size() == cardsBefore) {
-                    tapTries++;
-                    say("  tapping the bin once more");
-                    findAndTap(0);
+            List<String> still = stillThere();
+            boolean timeUp = SystemClock.uptimeMillis() - since >= 3500;
+            if (still.isEmpty()) {
+                finish(still);
+            } else if (timeUp) {
+                if (pass == 0) {
+                    pass = 1;
+                    List<Integer> again = new ArrayList<>();
+                    for (Cards.Card c : Cards.read(this)) if (still.contains(c.name)) again.add(c.number);
+                    java.util.Collections.sort(again, java.util.Collections.reverseOrder());
+                    if (again.isEmpty()) {
+                        finish(still);
+                    } else {
+                        say("not gone yet: " + still + " - tapping their bins once more (now " + again + ")");
+                        todo.addAll(again);
+                        next();
+                    }
                 } else {
-                    checkGone();
+                    finish(still);
                 }
             } else {
-                waitForPopup(sig, since);
+                verify(since);
             }
-        }, 100);
+        }, 250);
     }
 
-    private void pressBack(int done) {
-        if (!running) return;
-        say("  Back pressed (" + (done + 1) + " of " + backs() + ")");
-        performGlobalAction(GLOBAL_ACTION_BACK);
-        if (done + 1 < backs()) {
-            int g = gen;
-            handler.postDelayed(() -> {
-                if (g == gen) pressBack(done + 1);
-            }, 600);
-        } else {
-            checkGone();
+    /** Tapped names with as many cards on the page as at the start. */
+    private List<String> stillThere() {
+        Map<String, Integer> now = new HashMap<>();
+        for (Cards.Card c : Cards.read(this)) now.merge(c.name, 1, Integer::sum);
+        List<String> still = new ArrayList<>();
+        for (String name : tapped) {
+            Integer before = startCounts.get(name);
+            Integer after = now.get(name);
+            if (before != null && (after == null ? 0 : after) >= before) still.add(name);
         }
+        return still;
     }
 
-    /** Gone: fewer profiles on the page, seen on two looks in a row (not a page still redrawing); up to 3 s. */
-    private void checkGone() {
-        gone(SystemClock.uptimeMillis(), -1);
+    private void finish(List<String> still) {
+        List<String> gone = new ArrayList<>(tapped);
+        gone.removeAll(still);
+        StringBuilder sum = new StringBuilder();
+        sum.append(still.isEmpty() ? "Done - all gone" : "Done - some still on the list");
+        if (!gone.isEmpty()) sum.append("\nGone: ").append(String.join(", ", gone));
+        if (!still.isEmpty()) sum.append("\nSTILL THERE: ").append(String.join(", ", still));
+        stop(sum.toString());
     }
 
-    private void gone(long since, int last) {
-        if (!running) return;
-        int g = gen;
-        handler.postDelayed(() -> {
-            if (g != gen) return;
-            int now = Cards.read(this).size();
-            boolean ok = now > 0 && now < cardsBefore && now == last;
-            if (ok) {
-                say("profile " + number + " " + name + ": deleted ✓ (" + (SystemClock.uptimeMillis() - since) + " ms)");
-                deleted.add(number + " " + name);
-                handler.postDelayed(this::next, 200);
-            } else if (SystemClock.uptimeMillis() - since >= 3000) {
-                say("profile " + number + " " + name + ": still there ✗ (" + now + " profiles, were " + cardsBefore + ")");
-                failed.add(number + " " + name);
-                handler.postDelayed(this::next, 200);
-            } else {
-                gone(since, now);
-            }
-        }, 150);
-    }
-
-    private void tap(int x, int y) {
+    private void tap(int x, int y, Runnable then) {
         Path p = new Path();
         p.moveTo(Math.max(0, x), Math.max(0, y));
-        dispatchGesture(new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(p, 0, 60)).build(), null, null);
+        GestureDescription gd = new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(p, 0, 50)).build();
+        boolean sent = dispatchGesture(gd, new GestureResultCallback() {
+            @Override
+            public void onCompleted(GestureDescription g) {
+                then.run();
+            }
+
+            @Override
+            public void onCancelled(GestureDescription g) {
+                then.run();
+            }
+        }, handler);
+        if (!sent) then.run();
     }
 }

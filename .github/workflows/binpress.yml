@@ -46,7 +46,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: Bin Press build ${{ github.run_number }}
           body: |
-            Bin Press - types the numbers, taps each profile's delete bin, presses Back when a pop-up comes. Built from ${{ github.sha }}.
+            Bin Press - types the numbers, taps each profile's delete bin one after the other, no waiting for pop-ups. Built from ${{ github.sha }}.
             Download: https://github.com/${{ github.repository }}/releases/download/bin-${{ github.run_number }}/BinPress.apk
           files: BinPress.apk
           make_latest: "false"
