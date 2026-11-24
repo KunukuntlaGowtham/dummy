@@ -1,0 +1,52 @@
+name: Build Bin Press APK
+
+on:
+  push:
+    branches: ["deleter-app"]
+    paths: ["binpress/**", ".github/workflows/binpress.yml", "settings.gradle.kts"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: binpress-apk
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :binpress:testDebugUnitTest :binpress:assembleDebug -PversionCode=${{ github.run_number }}
+          cp binpress/build/outputs/apk/debug/binpress-debug.apk BinPress.apk
+          ls -l BinPress.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BinPress-apk
+          path: BinPress.apk
+
+      # Its own releases (bin-N), never marked latest.
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: bin-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Bin Press build ${{ github.run_number }}
+          body: |
+            Bin Press - types the numbers, taps each profile's delete bin, presses Back when a pop-up comes. Built from ${{ github.sha }}.
+            Download: https://github.com/${{ github.repository }}/releases/download/bin-${{ github.run_number }}/BinPress.apk
+          files: BinPress.apk
+          make_latest: "false"
