@@ -479,6 +479,7 @@ public class InspectorService extends AccessibilityService {
                 } catch (RuntimeException e) {
                     rowNames = new ArrayList<>();
                 }
+                if (!summary.startsWith("Stopped")) ledgerSave();
                 if (summary.startsWith("Stopped")) endGo();
                 boolean autoRun = tickAuto;
                 tickAuto = false;
@@ -734,6 +735,7 @@ public class InspectorService extends AccessibilityService {
         } catch (RuntimeException e) {
             rowNames = new ArrayList<>();
         }
+        ledgerSave();
     }
 
     // ---- 🗑 Delete (testing): sevak profiles by their numbers, each with its 2 pop-ups --------
@@ -747,7 +749,9 @@ public class InspectorService extends AccessibilityService {
 
     private void showDeleteButton() {
         deleter = new DeleteRun(this, (summary, log) -> {
-            saveReport(log);
+            // The saved list (who, deleted or not) goes in the report too.
+            saveReport(log + "\nSAVED LIST (who to delete, and what became of each)\n"
+                    + DeleteLedger.text(DeleteLedger.load(this)) + "\n");
             deleteButton.setText("🗑\nDelete");
             finished(summary);
             if (retrying) {
@@ -756,6 +760,7 @@ public class InspectorService extends AccessibilityService {
                 else handler.postDelayed(this::retryContinuePage1, 150);
             }
         });
+        deleter.setProfileListener((who, number, ok, why) -> DeleteLedger.result(this, who, number, ok, why));
         deleteButton = floating("🗑\nDelete", 0xEEC62828, 688, v -> {
             closeCard();
             if (deleter.isRunning()) deleter.stop("Stopped");
@@ -1210,6 +1215,52 @@ public class InspectorService extends AccessibilityService {
      * never deletes the same numbers again, now other people).
      */
     private Missed takeMissed() {
+        Missed fromTick = takeFromTick();
+        if (!fromTick.numbers.isEmpty()) return fromTick;
+        // Nothing new from Tick: the people still to delete in the saved list (a delete that stopped
+        // or failed half way) - by their names; a number kept from before may be someone else now.
+        Missed m = new Missed();
+        List<DeleteLedger.Entry> todo = DeleteLedger.todo(DeleteLedger.load(this));
+        for (DeleteLedger.Entry e : todo) {
+            m.numbers.add(Math.max(1, e.row));
+            m.names.add(e.name);
+        }
+        return m;
+    }
+
+    private String nothingToDelete() {
+        int hand = DeleteLedger.byHand(DeleteLedger.load(this)).size();
+        return "🗑 Nothing to delete - the last Tick added every row"
+                + (hand == 0 ? "" : " (" + hand + " row(s) with no readable name are left for you - Settings → 🗑 Delete list)");
+    }
+
+    /** Page 3 rows and names -> the ledger (also what the red box shows): who is to be deleted, saved. */
+    private void ledgerSave() {
+        List<Integer> nums = new ArrayList<>();
+        List<String> names = new ArrayList<>();
+        List<Integer> rows = new ArrayList<>();
+        int unknown = 0;
+        for (String r : lastMissed) {
+            try {
+                rows.add(Integer.parseInt(r.trim()));
+            } catch (NumberFormatException e) {
+                unknown++;
+            }
+        }
+        java.util.Collections.sort(rows);
+        for (int row : rows) {
+            nums.add(row);
+            String n = row - 1 < rowNames.size() ? rowNames.get(row - 1) : "";
+            names.add(n == null ? "" : n);
+        }
+        for (int i = 0; i < unknown; i++) { // a box that never came on screen: left for you
+            nums.add(-1);
+            names.add("");
+        }
+        DeleteLedger.saveMissed(this, nums, names);
+    }
+
+    private Missed takeFromTick() {
         Missed m = new Missed();
         m.numbers.addAll(MissedBox.afterRemoving(lastMissed));
         List<Integer> rows = new ArrayList<>();
@@ -1246,12 +1297,8 @@ public class InspectorService extends AccessibilityService {
             }
             out.add(name);
         }
-        // Two rows with the same name: the names can't be trusted - by number only.
-        java.util.Set<String> seen = new java.util.HashSet<>();
-        for (String name : out) {
-            if (name.isEmpty()) continue;
-            if (!seen.add(name.toLowerCase(java.util.Locale.ROOT))) return new ArrayList<>();
-        }
+        // (Two rows with the same name keep their names: the delete checks the card at the number
+        // has that name, and stops - never deletes blind - when two cards have it.)
         return out;
     }
 
@@ -1303,7 +1350,7 @@ public class InspectorService extends AccessibilityService {
         Missed m = test ? null : takeMissed();
         List<Integer> numbers = test ? testNumbers() : m.numbers;
         if (!test && numbers.isEmpty()) {
-            Toast.makeText(this, "🗑 Nothing to delete - the last Tick added every row", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, nothingToDelete(), Toast.LENGTH_SHORT).show();
             return;
         }
         retryUsed = false;
@@ -1335,7 +1382,7 @@ public class InspectorService extends AccessibilityService {
         List<Integer> numbers = test ? testNumbers() : m.numbers;
         if (numbers.isEmpty()) {
             Toast.makeText(this, test ? "🗑 Test mode's numbers are 0 - nothing to delete"
-                    : "🗑 Nothing to delete - the last Tick added every row", Toast.LENGTH_SHORT).show();
+                    : nothingToDelete(), Toast.LENGTH_SHORT).show();
             return;
         }
         Toast.makeText(this, "🗑 Deleting " + numbers + " here only (no Continue after)", Toast.LENGTH_SHORT).show();

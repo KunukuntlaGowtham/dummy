@@ -113,6 +113,7 @@ public class MainActivity extends Activity {
         settings.setOrientation(LinearLayout.VERTICAL);
         settings.setPadding(0, dp(4), 0, dp(24));
         settings.addView(card("👤 Account", 0xFF5856D6, account()));
+        settings.addView(card("🗑 Delete list (saved)", 0xFFC62828, deleteList()));
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
         settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
         settings.addView(card("🧪 Test mode", 0xFFC62828, testMode()));
@@ -180,6 +181,7 @@ public class MainActivity extends Activity {
         }
         if (status == null) return;
         if (refreshDate != null) refreshDate.run();
+        if (ledgerText != null) ledgerText.setText(DeleteLedger.text(DeleteLedger.load(this)));
         boolean on = serviceOn();
         status.setText(on ? "●  Scan button is on" : "○  Off - tap to turn on in Accessibility");
         GradientDrawable chip = new GradientDrawable();
@@ -1018,6 +1020,26 @@ public class MainActivity extends Activity {
             Auth.signOut(this);
             Toast.makeText(this, "Signed out", Toast.LENGTH_SHORT).show();
             recreate();
+        }));
+        box.addView(row);
+        return box;
+    }
+
+    private TextView ledgerText;
+
+    /** Who is to be deleted and what became of each: kept on the phone, shown here. */
+    private View deleteList() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        ledgerText = note(DeleteLedger.text(DeleteLedger.load(this)));
+        box.addView(ledgerText);
+        LinearLayout row = new LinearLayout(this);
+        row.setPadding(0, dp(6), 0, 0);
+        row.addView(pill("Refresh", v -> ledgerText.setText(DeleteLedger.text(DeleteLedger.load(this)))));
+        row.addView(pill("Clear list", v -> {
+            DeleteLedger.clear(this);
+            ledgerText.setText(DeleteLedger.text(DeleteLedger.load(this)));
+            Toast.makeText(this, "Delete list cleared", Toast.LENGTH_SHORT).show();
         }));
         box.addView(row);
         return box;

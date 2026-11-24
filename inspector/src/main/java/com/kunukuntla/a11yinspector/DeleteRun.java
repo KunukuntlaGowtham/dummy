@@ -27,6 +27,23 @@ final class DeleteRun {
         void done(String summary, String log);
     }
 
+    /** One profile's result, the moment it is known: who (page 3's name, else the card's), the number, deleted or not, why. */
+    interface ProfileListener {
+        void result(String who, int number, boolean ok, String why);
+    }
+
+    private ProfileListener profileListener;
+
+    void setProfileListener(ProfileListener l) {
+        profileListener = l;
+    }
+
+    private void report(boolean ok, String why) {
+        if (profileListener == null) return;
+        String who = expected != null && !expected.isEmpty() ? expected : name;
+        profileListener.result(who, original, ok, why);
+    }
+
     private final AccessibilityService service;
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
     private final Listener listener;
@@ -90,6 +107,8 @@ final class DeleteRun {
         todo.addAll(numbers);
         deleted.clear();
         failed.clear();
+        deletedWho.clear();
+        failedWho.clear();
         pkg = "";
         for (android.view.accessibility.AccessibilityWindowInfo w : Page.windows(service)) {
             AccessibilityNodeInfo root = w.getRoot();
@@ -110,11 +129,19 @@ final class DeleteRun {
         gen++;
         log("END: " + why);
         StringBuilder sum = new StringBuilder(why).append('\n');
-        if (!deleted.isEmpty()) sum.append("🗑 Deleted: ").append(join(deleted)).append('\n');
-        if (!failed.isEmpty()) sum.append("✗ Not deleted: ").append(join(failed)).append('\n');
+        if (!deleted.isEmpty()) sum.append("🗑 Deleted: ").append(join(deleted)).append(named(deletedWho)).append('\n');
+        if (!failed.isEmpty()) sum.append("✗ Not deleted: ").append(join(failed)).append(named(failedWho)).append('\n');
         sum.append("⏱ ").append(SystemClock.uptimeMillis() - start).append(" ms");
         listener.done(sum.toString(), "A11y Inspector - Delete (testing)\n=========================\n" + sum
                 + "\n\nSTEPS\n" + log);
+    }
+
+    private final List<String> deletedWho = new ArrayList<>(), failedWho = new ArrayList<>();
+
+    private static String named(List<String> who) {
+        StringBuilder sb = new StringBuilder();
+        for (String w : who) if (w != null && !w.isEmpty()) sb.append(sb.length() == 0 ? " (" : ", ").append(w);
+        return sb.length() == 0 ? "" : sb.append(')').toString();
     }
 
     private static String join(List<Integer> l) {
@@ -123,7 +150,10 @@ final class DeleteRun {
         return sb.toString();
     }
 
+    private String lastLine = "";
+
     private void log(String s) {
+        lastLine = s.trim();
         log.append(String.format(java.util.Locale.ROOT, "%6d ms  ", SystemClock.uptimeMillis() - start)).append(s).append('\n');
     }
 
@@ -163,6 +193,7 @@ final class DeleteRun {
     private void deleteNext() {
         original = todo.remove(0);
         expected = names.isEmpty() ? null : names.remove(0);
+        name = ""; // this profile's own name, once its card is found (never the last one's)
         int now = original; // as numbered on screen now - the page is read again for each
         List<SevakDeleter.Card> cards = SevakDeleter.cards(service);
         SevakDeleter.Card card = null;
@@ -227,6 +258,8 @@ final class DeleteRun {
      */
     private void notDeleted() {
         failed.add(original);
+        failedWho.add(expected != null && !expected.isEmpty() ? expected : name);
+        report(false, lastLine);
         shiftAfterFailure(todo, original);
         nextProfile();
     }
@@ -434,11 +467,34 @@ final class DeleteRun {
             if (gone) {
                 runBase = new Page.Before(service); // the page as it is now, rebuilt, no pop-up
                 deleted.add(original);
+                deletedWho.add(expected != null && !expected.isEmpty() ? expected : name);
                 log("profile " + original + " " + name + ": deleted ✓ (" + ms + " ms)");
+                report(true, "");
             } else {
-                log("profile " + original + " " + name + ": still there? ✗ (" + ms + " ms, "
-                        + SevakDeleter.cards(service).size() + " profiles, were " + cardsBefore + ")");
-                notDeleted();
+                // Not seen gone yet: the page may still be rebuilding its list - looked at once more
+                // before it counts as not deleted (a wrong ✗ moves every later number by one).
+                log("profile " + original + " " + name + ": not seen gone yet (" + ms + " ms, "
+                        + SevakDeleter.cards(service).size() + " profiles, were " + cardsBefore + ") - looking once more");
+                handler.postDelayed(() -> {
+                    if (g != gen) return;
+                    List<SevakDeleter.Card> now = SevakDeleter.cards(service);
+                    int same = 0;
+                    for (SevakDeleter.Card c : now) if (c.name.equals(name)) same++;
+                    boolean goneNow = !now.isEmpty() && now.size() < cardsBefore && same < sameNameBefore
+                            && Page.popup(service, before) == null && !Page.coverCame(service, before);
+                    if (goneNow) {
+                        runBase = new Page.Before(service);
+                        deleted.add(original);
+                        deletedWho.add(expected != null && !expected.isEmpty() ? expected : name);
+                        log("profile " + original + " " + name + ": deleted ✓ (seen on the second look, "
+                                + (SystemClock.uptimeMillis() - stepStart) + " ms)");
+                        report(true, "");
+                        nextProfile();
+                    } else {
+                        log("profile " + original + " " + name + ": still there ✗ (" + now.size() + " profiles, were " + cardsBefore + ")");
+                        notDeleted();
+                    }
+                }, 1200);
                 return;
             }
             nextProfile();
