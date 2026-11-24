@@ -45,6 +45,10 @@ final class Handy {
     private final Set<Integer> refused = new HashSet<>();
     /** The box just ticked by ☑ Next (-1: none): read at the next step - unticked then means refused. */
     private int pending = -1;
+    /** The pending box was seen ticked (only then can reading it unticked later mean "refused"). */
+    private boolean pendingSeenTicked;
+    /** When the pending box was pressed. */
+    private long pendingAt;
     /** The page just before the last ☑ Next tick: a button or cover not in it belongs to a pop-up. */
     private Page.Before before;
     private int gen;
@@ -65,10 +69,29 @@ final class Handy {
         return Page.popup(service, before) != null || Page.coverCame(service, before);
     }
 
-    /** The row just ticked, read now: unticked means the page refused it. */
-    private void settlePending(List<AccessibilityNodeInfo> boxes) {
-        if (pending >= 0 && pending < boxes.size() && !Page.isChecked(boxes.get(pending))) refused.add(pending);
+    /**
+     * The row ticked last, settled before the next step: it counts as refused only when it was seen
+     * ticked and now reads unticked on two reads 250 ms apart (after each add the page rebuilds its list,
+     * and a box reads ☐ for a moment then). A box never seen ticked is simply offered again.
+     */
+    private void settle(Runnable then) {
+        int idx = pending;
+        boolean seen = pendingSeenTicked;
         pending = -1;
+        pendingSeenTicked = false;
+        if (idx < 0 || !seen || boxCheckedAt(idx)) {
+            then.run();
+            return;
+        }
+        handler.postDelayed(() -> {
+            if (!boxCheckedAt(idx)) refused.add(idx);
+            then.run();
+        }, 250);
+    }
+
+    private boolean boxCheckedAt(int idx) {
+        List<AccessibilityNodeInfo> now = boxes();
+        return idx < now.size() && Page.isChecked(now.get(idx));
     }
 
     private int next(List<AccessibilityNodeInfo> boxes) {
@@ -82,14 +105,26 @@ final class Handy {
 
     /** ☑ Next: the next unticked box is pressed once; {@code say} gets what happened (also later, when it is known). */
     void tick(Consumer<String> say) {
+        // The last press still being taken by the page (no tick and no pop-up yet): a second press now
+        // could untick it - wait.
+        if (pending >= 0 && !pendingSeenTicked && SystemClock.uptimeMillis() - pendingAt < 1200 && !popupUp()) {
+            say.accept("Wait - box " + (pending + 1) + " is still being added");
+            return;
+        }
         gen++;
         hideMarker();
+        int g = gen;
+        settle(() -> {
+            if (g == gen) tickNow(say);
+        });
+    }
+
+    private void tickNow(Consumer<String> say) {
         List<AccessibilityNodeInfo> boxes = boxes();
         if (boxes.isEmpty()) {
             say.accept("No checkboxes on this page");
             return;
         }
-        settlePending(boxes);
         int i = next(boxes);
         if (i < 0) {
             say.accept(refused.isEmpty() ? "Every box is ticked ✓"
@@ -106,6 +141,8 @@ final class Handy {
             return;
         }
         pending = i;
+        pendingAt = SystemClock.uptimeMillis();
+        pendingSeenTicked = false;
         int g = gen, idx = i, total = boxes.size();
         // Did it take? A tick, or a pop-up (the page answered), within ~0.45 s; if not, its label is pressed once.
         handler.postDelayed(() -> {
@@ -129,8 +166,16 @@ final class Handy {
     /** Ticked, or the page answered with a pop-up. */
     private boolean tookAt(int idx) {
         List<AccessibilityNodeInfo> now = boxes();
-        if (idx < now.size() && Page.isChecked(now.get(idx))) return true;
-        return popupUp();
+        if (idx < now.size() && Page.isChecked(now.get(idx))) {
+            if (idx == pending) pendingSeenTicked = true;
+            return true;
+        }
+        if (popupUp()) {
+            // The page answered: the box was taken (ticked while its pop-up is up).
+            if (idx == pending) pendingSeenTicked = true;
+            return true;
+        }
+        return false;
     }
 
     /** A click on the box's label (the nearest pressable box around it), else a tap where it is drawn. */
@@ -257,12 +302,20 @@ final class Handy {
         gen++;
         int g = gen;
         hideMarker();
+        // The page rebuilds its list after the pop-up: a moment first, then the last box is settled.
+        handler.postDelayed(() -> {
+            if (g == gen) settle(() -> {
+                if (g == gen) pointNow(g, say);
+            });
+        }, 200);
+    }
+
+    private void pointNow(int g, Consumer<String> say) {
         List<AccessibilityNodeInfo> boxes = boxes();
         if (boxes.isEmpty()) {
             say.accept("No checkboxes on this page");
             return;
         }
-        settlePending(boxes);
         int i = next(boxes);
         if (i < 0) {
             say.accept(refused.isEmpty() ? "Every box is ticked ✓"
@@ -303,6 +356,7 @@ final class Handy {
         gen++;
         refused.clear();
         pending = -1;
+        pendingSeenTicked = false;
         hideMarker();
     }
 
