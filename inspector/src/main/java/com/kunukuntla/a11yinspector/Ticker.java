@@ -746,8 +746,8 @@ final class Ticker {
             }
             // Wait for it to go (up to 1.5 s), then look once more: a second pop-up may follow.
             // A lone ✕ closes one box: done. A dialog may be followed by a second one: look again.
-            if (p.crossOnly) waitGone(gone, 0, before, then);
-            else waitGone(gone, 0, before, () -> secondLook(before, then));
+            if (p.crossOnly) waitGone(gone, 0, then);
+            else waitGone(gone, 0, () -> secondLook(before, then));
         }, 50);
     }
 
@@ -926,7 +926,7 @@ final class Ticker {
         }, 60);
     }
 
-    private void waitGone(AccessibilityNodeInfo n, long waited, Page.Before before, Runnable then) {
+    private void waitGone(AccessibilityNodeInfo n, long waited, Runnable then) {
         later(() -> {
             boolean still;
             try {
@@ -934,17 +934,11 @@ final class Ticker {
             } catch (RuntimeException e) {
                 still = false;
             }
-            // This app's pop-up has a cover that goes the moment it closes, while the button's node can
-            // be reported ~0.8 s longer (the page's fade-out): the cover gone counts as gone - the next row at once.
-            if (still && coverApp && before != null && !Page.coverCame(service, before)) {
-                log("pop-up: its cover is gone after " + (waited + 50) + " ms - not waiting for the button's node");
-                still = false;
-            }
             if (!still || waited >= 1500) {
                 if (still) log("pop-up: its button is still there after 1.5 s");
                 then.run();
             } else {
-                waitGone(n, waited + 50, before, then);
+                waitGone(n, waited + 50, then);
             }
         }, 50);
     }
