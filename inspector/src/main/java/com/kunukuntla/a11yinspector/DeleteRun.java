@@ -118,6 +118,9 @@ final class DeleteRun {
             }
         }
         runBase = new Page.Before(service);
+        startCounts.clear();
+        for (SevakDeleter.Card c : SevakDeleter.cards(service)) startCounts.merge(c.name, 1, Integer::sum);
+        verifyText = "";
         log("deleting " + numbers + " (each as numbered on screen when its turn comes)"
                 + (checkNames ? "" : " - NAME CHECK OFF: by number only"));
         nextProfile();
@@ -131,12 +134,45 @@ final class DeleteRun {
         StringBuilder sum = new StringBuilder(why).append('\n');
         if (!deleted.isEmpty()) sum.append("🗑 Deleted: ").append(join(deleted)).append(named(deletedWho)).append('\n');
         if (!failed.isEmpty()) sum.append("✗ Not deleted: ").append(join(failed)).append(named(failedWho)).append('\n');
+        if (!verifyText.isEmpty()) sum.append(verifyText).append('\n');
         sum.append("⏱ ").append(SystemClock.uptimeMillis() - start).append(" ms");
         listener.done(sum.toString(), "A11y Inspector - Delete (testing)\n=========================\n" + sum
                 + "\n\nSTEPS\n" + log);
     }
 
     private final List<String> deletedWho = new ArrayList<>(), failedWho = new ArrayList<>();
+    /** How many cards had each name when the run started (for the final check). */
+    private final java.util.Map<String, Integer> startCounts = new java.util.HashMap<>();
+    private String verifyText = "";
+
+    /**
+     * Before it ends: the page read once more - each person said to be deleted must have one card
+     * fewer with that name than at the start; one who doesn't is marked "not deleted" after all.
+     */
+    private void verifyAtEnd() {
+        List<SevakDeleter.Card> now = SevakDeleter.cards(service);
+        if (now.isEmpty() || deletedWho.isEmpty()) {
+            verifyText = deletedWho.isEmpty() ? "" : "Not checked at the end (the sevaks list isn't showing)";
+            return;
+        }
+        java.util.Map<String, Integer> cur = new java.util.HashMap<>();
+        for (SevakDeleter.Card c : now) cur.merge(c.name, 1, Integer::sum);
+        List<String> gone = new ArrayList<>(), still = new ArrayList<>();
+        for (String who : deletedWho) {
+            if (who == null || who.isEmpty()) continue;
+            int before0 = 0, after = 0;
+            for (java.util.Map.Entry<String, Integer> e : startCounts.entrySet()) if (sameName(e.getKey(), who)) before0 += e.getValue();
+            for (java.util.Map.Entry<String, Integer> e : cur.entrySet()) if (sameName(e.getKey(), who)) after += e.getValue();
+            if (before0 > 0 && after >= before0) still.add(who);
+            else gone.add(who);
+        }
+        StringBuilder sb = new StringBuilder("Checked on the sevaks list at the end: ");
+        sb.append(gone.isEmpty() ? "" : "gone ✓ " + gone);
+        if (!still.isEmpty()) sb.append(gone.isEmpty() ? "" : "; ").append("⚠ STILL THERE ").append(still);
+        verifyText = sb.toString();
+        log(verifyText);
+        for (String who : still) if (profileListener != null) profileListener.result(who, -1, false, "still on the list when checked at the end");
+    }
 
     private static String named(List<String> who) {
         StringBuilder sb = new StringBuilder();
@@ -165,6 +201,7 @@ final class DeleteRun {
     private void nextProfile() {
         if (!running) return;
         if (todo.isEmpty()) {
+            verifyAtEnd();
             stop(failed.isEmpty() ? "✅ Done" : "Done - some not deleted");
             return;
         }

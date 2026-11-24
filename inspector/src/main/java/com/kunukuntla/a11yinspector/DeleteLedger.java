@@ -18,6 +18,8 @@ final class DeleteLedger {
 
     static final String PENDING = "pending", DELETED = "deleted", FAILED = "failed";
     private static final int KEEP = 120;
+    /** People still to delete (pending / failed) are forgotten this long after they were saved or last tried. */
+    static final long TO_DO_MS = 5L * 60 * 1000;
     private static final String PREFS = "ledger", KEY = "list";
 
     static final class Entry {
@@ -83,12 +85,22 @@ final class DeleteLedger {
         return out;
     }
 
-    /** The result for one person: found by name (the same person), else by the row. */
+    /**
+     * The list without the people still to delete that are older than 5 minutes (the page has
+     * moved on: names and rows from long ago must never be deleted now). Deleted ones stay, as the record.
+     */
+    static List<Entry> expire(List<Entry> list, long now) {
+        List<Entry> out = new ArrayList<>();
+        for (Entry e : list) if (DELETED.equals(e.state) || now - e.at <= TO_DO_MS) out.add(e);
+        return out;
+    }
+
+    /** The result for one person: found by name (the same person), else by the row. A "no" can also overturn a "deleted". */
     static boolean mark(List<Entry> list, String name, int row, boolean ok, String why, long now) {
         Entry hit = null;
         if (name != null && !name.isEmpty()) {
             for (Entry e : list) {
-                if (!DELETED.equals(e.state) && !e.name.isEmpty() && DeleteRun.sameName(e.name, name)) {
+                if ((!DELETED.equals(e.state) || !ok) && !e.name.isEmpty() && DeleteRun.sameName(e.name, name)) {
                     hit = e;
                     break;
                 }
@@ -128,7 +140,7 @@ final class DeleteLedger {
     }
 
     static String text(List<Entry> list) {
-        if (list.isEmpty()) return "Nothing saved yet.";
+        if (list.isEmpty()) return "Nothing saved. (People still to delete are kept for 5 minutes, then dropped; the deleted ones stay.)";
         StringBuilder sb = new StringBuilder();
         java.text.SimpleDateFormat t = new java.text.SimpleDateFormat("d MMM HH:mm", java.util.Locale.ROOT);
         for (int i = list.size() - 1; i >= 0; i--) {
@@ -139,13 +151,16 @@ final class DeleteLedger {
             if (!e.why.isEmpty()) sb.append("  - ").append(e.why);
             sb.append("  (").append(t.format(new java.util.Date(e.at))).append(")\n");
         }
-        return sb.toString().trim();
+        return sb.toString().trim() + "\n(To-delete entries are dropped 5 minutes after they were saved.)";
     }
 
     // ---- on the phone ---------------------------------------------------------------------
 
     static List<Entry> load(Context c) {
-        return parse(c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, ""));
+        List<Entry> all = parse(c.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY, ""));
+        List<Entry> fresh = expire(all, System.currentTimeMillis());
+        if (fresh.size() != all.size()) save(c, fresh); // the old ones are really dropped
+        return fresh;
     }
 
     private static void save(Context c, List<Entry> list) {

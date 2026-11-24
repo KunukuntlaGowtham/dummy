@@ -72,4 +72,25 @@ public class DeleteLedgerTest {
         DeleteLedger.mark(l, "Anitha Vemuri", 3, true, "", 5);
         assertEquals(DeleteLedger.DELETED, l.get(0).state);
     }
+
+    @Test
+    public void peopleStillToDeleteAreDroppedAfterFiveMinutesButDeletedOnesStay() {
+        List<DeleteLedger.Entry> l = two(); // saved at 1000
+        DeleteLedger.mark(l, "Vemuri Anitha", 3, true, "", 1500);
+        List<DeleteLedger.Entry> soon = DeleteLedger.expire(l, 1000 + 4 * 60 * 1000);
+        assertEquals(2, soon.size());
+        List<DeleteLedger.Entry> later = DeleteLedger.expire(l, 1000 + 6 * 60 * 1000);
+        assertEquals(1, later.size());
+        assertEquals(DeleteLedger.DELETED, later.get(0).state);
+        assertEquals("Vemuri Anitha", later.get(0).name);
+    }
+
+    @Test
+    public void aLaterNoOverturnsADeleted() {
+        List<DeleteLedger.Entry> l = two();
+        DeleteLedger.mark(l, "Vemuri Anitha", 3, true, "", 2000);
+        DeleteLedger.mark(l, "Vemuri Anitha", -1, false, "still on the list when checked at the end", 2100);
+        assertEquals(DeleteLedger.FAILED, l.get(0).state);
+        assertEquals(1, DeleteLedger.todo(l).size() - 1); // it is to do again, besides the other one
+    }
 }
