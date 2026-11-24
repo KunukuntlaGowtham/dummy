@@ -633,7 +633,7 @@ public class MainActivity extends Activity {
                 "FULLY AUTOMATIC from the page you're on - page 1: Continue, page 2: fills it, page 3: Tick (missed rows: back, delete, forward), page 4: Confirm. While it runs (■ Stop): tap to stop; do a step by hand, tap ▶ Go to go on",
                 "the same form as 📅 Book"));
         buttons.addView(buttonHelp(0x37474F, "🤖", "Auto", "any page",
-                "Auto on / off: Go → Tick → Continue → Confirm by itself",
+                "Auto on: reaching page 3 starts Tick by itself - the same automatic trip as a long-pressed Tick (rows not added: back, delete, forward), then Continue → Confirm. Off: nothing starts by itself",
                 "\"this page is page 1\" (locked) - pages 2, 3, 4 follow in order, and Back never goes past page 1"));
         buttons.addView(buttonHelp(0x455A64, "📋", "Report", "any page",
                 "the last run's result; tap again to close. The full reports are in this app's 📋 Report tab",

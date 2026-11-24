@@ -347,6 +347,15 @@ public class InspectorService extends AccessibilityService {
         lastFacts = f;
         lastKind = kind;
         pageKind = kind;
+        // 🤖 Auto on: page 3 ticks by itself, as a long-pressed Tick does (rows not added: back,
+        // delete, forward; Continue; Confirm) - once for each arrival at page 3.
+        boolean tripPages = kind == PageKind.Kind.SEVAK_LIST || kind == PageKind.Kind.CALENDAR || kind == PageKind.Kind.CONFIRM;
+        if (tripPages && !retrying && (flow == null || !flow.busy())) autoTickDone = false;
+        if (auto && kind == PageKind.Kind.TICKING && !autoTickDone && !retrying && !goRunning()
+                && flow != null && !flow.busy()) {
+            autoTickDone = true;
+            handler.postDelayed(this::autoTickStart, 700); // the rows are still being drawn
+        }
         if (watching && kind == PageKind.Kind.TICKING) watchSoon(); // page 3 came: its red box at once
         // During the retry its own steps press Continue: Auto's would press it twice.
         if (auto && flow != null && !retrying) flow.onPage(kind, f, sp.getString("booking_pkg", ""), confirmInOrder);
@@ -567,7 +576,7 @@ public class InspectorService extends AccessibilityService {
             if (flow != null) flow.clearTickEnded(); // a Tick that ended before is never acted on now
             if (!on) cancelLinkedTick();
             Toast.makeText(this, on
-                    ? "🤖 Auto ON: Go → Tick → Continue → Confirm runs by itself"
+                    ? "🤖 Auto ON: page 3 ticks by itself (as a long-pressed Tick), then Continue → Confirm"
                     : "🤖 Auto OFF - each button runs on its own", Toast.LENGTH_SHORT).show();
         }, v -> markPage1());
         showAuto();
@@ -725,6 +734,28 @@ public class InspectorService extends AccessibilityService {
      * ticks, then - rows not added - back to page 1, delete them, forward to page 4 by itself.
      * While it runs, either one stops it.
      */
+    /** Page 3 was reached with 🤖 Auto on: Tick's automatic trip has started (until page 3 is left). */
+    private boolean autoTickDone;
+
+    /** 700 ms after page 3 came (Auto on): still page 3 and nothing running - the automatic Tick starts. */
+    private void autoTickStart() {
+        if (destroyed || !AutoFlow.enabled(this) || ticker.isRunning() || clearer.isRunning() || booker.isRunning()
+                || deleting() || scanning || retrying || (flow != null && flow.busy())) return;
+        PageKind.Kind k;
+        try {
+            k = PageKind.decide(PageKind.read(this));
+        } catch (RuntimeException e) {
+            autoTickDone = false;
+            return;
+        }
+        if (k != PageKind.Kind.TICKING) {
+            autoTickDone = false; // not page 3 after all: looked at again when it is
+            return;
+        }
+        Toast.makeText(this, "🤖 Auto: page 3 - ticking started", Toast.LENGTH_SHORT).show();
+        tickTap(true);
+    }
+
     private void tickTap(boolean auto) {
         closeCard();
         if (ticker.isRunning()) {
