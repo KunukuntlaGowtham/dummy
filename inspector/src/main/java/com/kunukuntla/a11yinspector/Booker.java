@@ -646,12 +646,8 @@ final class Booker {
     }
 
     static Map<AccessibilityNodeInfo, int[]> dayCells(AccessibilityService service) {
-        return dayCells(service, Page.nodes(service));
-    }
-
-    /** The day cells among nodes already read (no second walk of the page). */
-    static Map<AccessibilityNodeInfo, int[]> dayCells(AccessibilityService service, java.util.List<AccessibilityNodeInfo> nodes) {
         Map<AccessibilityNodeInfo, int[]> out = new HashMap<>();
+        java.util.List<AccessibilityNodeInfo> nodes = Page.nodes(service);
         for (AccessibilityNodeInfo n : nodes) {
             String id = n.getViewIdResourceName();
             String text = Page.label(n);

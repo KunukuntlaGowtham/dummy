@@ -415,8 +415,6 @@ public class MainActivity extends Activity {
                 "Auto deletes rows not ticked", false), chipLp());
         retry.addView(settingChip(sp, "auto_start_page3", "🤖 Auto starts Tick by itself when page 3 opens (off: you start Tick)",
                 "Auto starts Tick on page 3", true), chipLp());
-        retry.addView(settingChip(sp, "light_reading", "💡 Light reading: other apps' pages are not read on every change",
-                "Light reading", true), chipLp());
         retry.addView(settingChip(sp, "delete_name_check", "🔎 Delete checks each name (turn off to delete by number only - careful)",
                 "Delete checks names", true), chipLp());
         HorizontalScrollView wide2 = new HorizontalScrollView(this);

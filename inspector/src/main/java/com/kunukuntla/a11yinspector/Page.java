@@ -30,7 +30,9 @@ final class Page {
     /** The page's nodes (not our own windows, not the status bar), in page order. */
     static List<AccessibilityNodeInfo> nodes(AccessibilityService service) {
         List<AccessibilityNodeInfo> out = new ArrayList<>();
-        for (AccessibilityNodeInfo root : roots(service)) {
+        for (AccessibilityWindowInfo w : windows(service)) {
+            AccessibilityNodeInfo root = w.getRoot();
+            if (root == null) continue;
             List<AccessibilityNodeInfo> stack = new ArrayList<>();
             stack.add(root);
             while (!stack.isEmpty() && out.size() < 6000) {
@@ -39,27 +41,6 @@ final class Page {
                 out.add(n);
                 for (int i = n.getChildCount() - 1; i >= 0; i--) stack.add(n.getChild(i));
             }
-        }
-        return out;
-    }
-
-    /** The roots of the page's windows (as {@link #windows}), each asked for once. */
-    static List<AccessibilityNodeInfo> roots(AccessibilityService service) {
-        List<AccessibilityNodeInfo> out = new ArrayList<>();
-        String own = service.getPackageName();
-        List<AccessibilityWindowInfo> all;
-        try {
-            all = service.getWindows();
-        } catch (RuntimeException e) {
-            all = new ArrayList<>();
-        }
-        for (AccessibilityWindowInfo w : all) {
-            if (w.getType() == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
-            if (w.getType() == AccessibilityWindowInfo.TYPE_SYSTEM) continue;
-            if (w.getType() == AccessibilityWindowInfo.TYPE_INPUT_METHOD) continue;
-            AccessibilityNodeInfo root = w.getRoot();
-            if (root == null || own.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) continue;
-            out.add(root);
         }
         return out;
     }
