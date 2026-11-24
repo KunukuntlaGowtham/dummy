@@ -53,7 +53,45 @@ public class InspectorService extends AccessibilityService {
     @Override
     protected void onServiceConnected() {
         windowManager = getSystemService(WindowManager.class);
+        Auth.check(this, ok -> { });
+        handler.postDelayed(accountCheck, Auth.CHECK_EVERY_MS);
         showButton();
+    }
+
+    /** Every 15 minutes in the background: the account (and its licence) checked with Supabase. */
+    private final Runnable accountCheck = new Runnable() {
+        @Override
+        public void run() {
+            if (destroyed) return;
+            Auth.refreshIfNeeded(InspectorService.this);
+            handler.postDelayed(this, Auth.CHECK_EVERY_MS);
+        }
+    };
+
+    /**
+     * Signed out, no valid licence, or not checked online for 24 h: the round buttons don't work
+     * (only Stop of a run already going). Signed in: the session is renewed when it's due.
+     */
+    private boolean locked() {
+        if (Auth.signedIn(this)) {
+            Auth.refreshIfNeeded(this);
+            return false;
+        }
+        boolean running = scanning || deleting() || pendingTick != null || retrying || AutoFlow.goActive
+                || (ticker != null && ticker.isRunning()) || (clearer != null && clearer.isRunning())
+                || (booker != null && booker.isRunning());
+        if (running) return false;
+        if (Auth.offlineTooLong(this)) {
+            Toast.makeText(this, "🔒 Not checked online - checking now (needs internet)…", Toast.LENGTH_SHORT).show();
+            Auth.check(this, ok -> Toast.makeText(this, ok ? "✓ Account checked - tap again"
+                    : Auth.hasSession(this) ? "🔒 Still locked - " + (License.lastError(this).isEmpty()
+                            ? "connect to the internet and tap again" : License.lastError(this))
+                    : "🔒 Signed out - open the app", Toast.LENGTH_LONG).show());
+            return true;
+        }
+        Toast.makeText(this, Auth.configured() ? "🔒 Sign in first - open the app"
+                : "🔒 Sign-in isn't set up in this build", Toast.LENGTH_LONG).show();
+        return true;
     }
 
     @Override
@@ -151,7 +189,7 @@ public class InspectorService extends AccessibilityService {
         boolean[] dragged = {false}, longDone = {false};
         Runnable onLong = () -> {
             longDone[0] = true;
-            scan(true);
+            if (!locked()) scan(true);
         };
         button.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
@@ -180,7 +218,7 @@ public class InspectorService extends AccessibilityService {
                 case MotionEvent.ACTION_UP:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     handler.removeCallbacks(onLong);
-                    if (!dragged[0] && !longDone[0]) scan(false);
+                    if (!dragged[0] && !longDone[0] && !locked()) scan(false);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
@@ -306,6 +344,10 @@ public class InspectorService extends AccessibilityService {
 
     private void checkPage() {
         if (destroyed || pageBadge == null) return;
+        if (!Auth.signedIn(this)) {
+            pageBadge.setVisibility(View.GONE); // locked: nothing is read or started by itself
+            return;
+        }
         android.content.SharedPreferences sp = getSharedPreferences("settings", MODE_PRIVATE);
         boolean show = sp.getBoolean("show_page", true), auto = AutoFlow.enabled(this);
         if (!show) pageBadge.setVisibility(View.GONE);
@@ -1759,7 +1801,7 @@ public class InspectorService extends AccessibilityService {
         boolean[] dragged = {false}, longDone = {false};
         Runnable longPress = () -> {
             longDone[0] = true;
-            if (onLong != null) onLong.onClick(b);
+            if (onLong != null && !locked()) onLong.onClick(b);
         };
         b.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
@@ -1788,7 +1830,7 @@ public class InspectorService extends AccessibilityService {
                 case MotionEvent.ACTION_UP:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     handler.removeCallbacks(longPress);
-                    if (!dragged[0] && !longDone[0]) onTap.onClick(v);
+                    if (!dragged[0] && !longDone[0] && !locked()) onTap.onClick(v);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
