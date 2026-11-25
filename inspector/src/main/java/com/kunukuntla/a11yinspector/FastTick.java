@@ -167,6 +167,7 @@ final class FastTick {
                 }
             }
             if (!lastReport.isEmpty()) all.append("\n\n----- ⚡ LAST RUN -----\n").append(lastReport);
+            if (FINISH.length() > 0) all.append("\n----- ⚡ AFTER THE TICKING -----\n").append(FINISH);
             android.content.ClipboardManager cb = service.getSystemService(android.content.ClipboardManager.class);
             if (cb != null) cb.setPrimaryClip(android.content.ClipData.newPlainText("Gowtham report", all.toString()));
             Toast.makeText(service, "⚡ Full report copied - paste it in a chat", Toast.LENGTH_SHORT).show();
@@ -288,6 +289,22 @@ final class FastTick {
 
     boolean isRunning() {
         return running;
+    }
+
+    /** What happened after the ticking (clear, decide, Continue), with times - in the long-press report. */
+    private static final StringBuilder FINISH = new StringBuilder();
+    private static long finishAt;
+
+    static void finishStart() {
+        FINISH.setLength(0);
+        finishAt = SystemClock.uptimeMillis();
+        note("ticking done");
+    }
+
+    static void note(String step) {
+        if (FINISH.length() > 4000) return;
+        FINISH.append(String.format(java.util.Locale.ROOT, "%6d ms  ", SystemClock.uptimeMillis() - finishAt))
+                .append(step).append('\n');
     }
 
     /** ⚡'s look at page 3 after its run ends now (the trip back takes the rows). */

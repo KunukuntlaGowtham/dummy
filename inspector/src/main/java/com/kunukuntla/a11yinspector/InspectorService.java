@@ -1027,6 +1027,7 @@ public class InspectorService extends AccessibilityService {
         // check before clearing would miss it. Then: every box ☑ - page 3's Continue, page 4's
         // Confirm; a box not ☑ - back, deleted, forward to page 4 and Confirm (fully automatic).
         Toast.makeText(this, "⚡ Ticked - clearing the pop-ups, then checking", Toast.LENGTH_SHORT).show();
+        FastTick.finishStart();
         fastClear(g, 0, () -> fastCheck(g, 0, true));
     }
 
@@ -1043,25 +1044,28 @@ public class InspectorService extends AccessibilityService {
             return;
         }
         clearButton.setText("■\nStop");
+        FastTick.note("clearing the pop-ups (round " + (round + 1) + ")");
         clearer.clearNow();
         long until = android.os.SystemClock.uptimeMillis() + 15000;
         Runnable[] look = new Runnable[1];
         look[0] = () -> {
             if (fastFinishGone(g)) return;
             if (clearer.isRunning() && android.os.SystemClock.uptimeMillis() < until) {
-                handler.postDelayed(look[0], 150);
+                handler.postDelayed(look[0], 40); // looked at often: on at once when Clear ends
                 return;
             }
             if (clearer.isRunning()) clearer.stop("Stopped");
             // One cleared: another may be under it (pop-ups that came one after another) - again.
+            FastTick.note("Clear: " + lastSummary.replace('\n', ' '));
             if (lastSummary.startsWith("Pop-ups cleared") && round < 5) {
-                handler.postDelayed(() -> fastClear(g, round + 1, then), 250);
+                handler.postDelayed(() -> fastClear(g, round + 1, then), 100);
                 return;
             }
-            // The page unticks a refused row a moment after its pop-up goes.
-            handler.postDelayed(then, 500);
+            // The page unticks a refused row the moment its pop-up goes (Tick sees it ☐ at once):
+            // a short wait, and page 3 read twice 150 ms apart.
+            handler.postDelayed(then, 150);
         };
-        handler.postDelayed(look[0], 150);
+        handler.postDelayed(look[0], 40);
     }
 
     /** Page 3 read (twice, a moment apart): every box ☑ - Continue; else (pop-ups cleared) the trip. */
@@ -1092,13 +1096,15 @@ public class InspectorService extends AccessibilityService {
             return;
         }
         if (read == 0) {
-            handler.postDelayed(() -> fastCheck(g, 1, cleared), cleared ? 400 : 150);
+            handler.postDelayed(() -> fastCheck(g, 1, cleared), 150);
             return;
         }
         if (!empty.isEmpty()) {
+            FastTick.note("decided: row " + String.join(", ", empty) + " not added - back to delete");
             fastTrip(g, empty);
             return;
         }
+        FastTick.note("decided: every box ☑ - Continue");
         fastContinue(g, android.os.SystemClock.uptimeMillis() + 3000, cleared);
     }
 
@@ -1120,6 +1126,7 @@ public class InspectorService extends AccessibilityService {
         String pkg = c.getPackageName() == null ? "" : c.getPackageName().toString();
         if (flow != null) flow.confirmAfterFast(pkg); // page 4's Confirm pressed the moment it comes
         press(c);
+        FastTick.note("Continue pressed");
         Toast.makeText(this, "⚡ All ticked - Continue pressed, Confirm next", Toast.LENGTH_SHORT).show();
         fastAfterContinue(g, android.os.SystemClock.uptimeMillis(), cleared);
     }
