@@ -1022,6 +1022,16 @@ public class InspectorService extends AccessibilityService {
         if (destroyed || deleting() || ticker.isRunning() || retrying) return false;
         String key = String.join(",", rows);
         if (key.equals(watchedLast)) return true; // nothing changed since the last look
+        // Only on page 3: the page is read fresh (not the badge, it can lag) before anything is
+        // noted. Page 2's declaration box or page 4's rows never go to the list - the list noted
+        // last on page 3 is kept, and Fast's look ends.
+        PageKind.Kind kind;
+        try {
+            kind = PageKind.decide(PageKind.read(this));
+        } catch (RuntimeException e) {
+            return true; // not readable this time: nothing noted, looked at again 0.5 s later
+        }
+        if (kind != PageKind.Kind.TICKING) return false;
         watchedLast = key;
         missedBox.show(rows);
         lastMissed = new ArrayList<>(rows);
