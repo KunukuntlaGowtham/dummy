@@ -345,6 +345,7 @@ final class Ticker {
         tickedRows.clear();
         failedRows.clear();
         ticked = notTicked = popups = stillScreens = 0;
+        popupTaps = 0; // each run starts with its 3 presses (Clear kept the last run's count and pressed nothing)
         lastScreen = "";
         showTries = endChecks = 0;
         popupsSeen = false;
