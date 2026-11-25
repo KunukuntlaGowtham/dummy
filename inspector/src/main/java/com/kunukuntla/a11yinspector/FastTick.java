@@ -56,7 +56,7 @@ final class FastTick {
     private final List<Integer> todo = new ArrayList<>();
     /** Places that never read ☑ in this pass: tried again in the next one. */
     private final List<Integer> missed = new ArrayList<>();
-    private int pass, boxesAtStart, alreadyTicked, toTick;
+    private int pass, boxesAtStart, alreadyTicked, toTick, tickedCount;
 
     FastTick(AccessibilityService service, Listener listener) {
         this.service = service;
@@ -189,7 +189,19 @@ final class FastTick {
         }
     }
 
+    /** ⚡ was tapped and starts in a moment (what it stopped lets go of the page first). */
+    private static Runnable starting;
+
     private static void tapped(AccessibilityService service, TextView b) {
+        Handler h = new Handler(Looper.getMainLooper());
+        if (starting != null) {
+            // Tapped again in the moment before it starts (the button already says ■): that's Stop.
+            h.removeCallbacks(starting);
+            starting = null;
+            b.setText(lastCount.isEmpty() ? "⚡\nFast" : "⚡\n" + lastCount);
+            Toast.makeText(service, "⚡ Not started", Toast.LENGTH_SHORT).show();
+            return;
+        }
         if (shown.isRunning()) {
             shown.stop("⚡ Stopped");
             return;
@@ -199,20 +211,49 @@ final class FastTick {
             Toast.makeText(service, "🔒 Sign in first - open the app", Toast.LENGTH_LONG).show();
             return;
         }
+        // Only on page 3: on page 1, 2 or 4 nothing is stopped, ticked or cleared (page 2's
+        // declaration box is never ticked, 🗑's saved list is never wiped). A page that can't be
+        // told (still drawing, a pop-up) is let through: it may be page 3.
+        PageKind.Kind k;
+        try {
+            k = PageKind.decide(PageKind.read(service));
+        } catch (RuntimeException e) {
+            k = PageKind.Kind.OTHER;
+        }
+        if (k == PageKind.Kind.CALENDAR || k == PageKind.Kind.SEVAK_LIST || k == PageKind.Kind.CONFIRM) {
+            Toast.makeText(service, "⚡ This is " + k.title() + " - ⚡ ticks on page 3 only", Toast.LENGTH_SHORT).show();
+            return;
+        }
         lastCount = "";
         b.setText("■\nStop");
-        // Everything else stops first (Tick, Go, Delete, retry, Auto turned off) - then Fast.
-        boolean stopped = service instanceof InspectorService
-                && ((InspectorService) service).stopAllForFast();
+        // Everything else stops first (Tick, Go, Delete, retry; Auto off for now) - then Fast.
+        InspectorService s = service instanceof InspectorService ? (InspectorService) service : null;
+        boolean autoWasOwed = s != null && s.fastOwesAuto();
+        boolean stopped = s != null && s.stopAllForFast();
         if (stopped) {
-            Toast.makeText(service, "⚡ Everything else stopped (🤖 Auto off) - Fast tick starting",
-                    Toast.LENGTH_SHORT).show();
-            // A moment for what was stopped to let go of the page (a tap or Back on its way).
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            boolean autoOff = s.fastOwesAuto() && !autoWasOwed;
+            Toast.makeText(service, "⚡ Everything else stopped" + (autoOff ? " - 🤖 Auto off until page 1 or 2" : "")
+                    + " - Fast tick starting", Toast.LENGTH_SHORT).show();
+            starting = () -> {
+                starting = null;
                 if (!shown.isRunning()) shown.start();
-            }, 300);
+            };
+            h.postDelayed(starting, 300);
         } else {
             shown.start();
+        }
+    }
+
+    /** The calendar's screenshot is taken (▶ Go, 📅 Book): ⚡ hidden meanwhile, then as it was. */
+    private static int visibleBeforeShot = View.VISIBLE;
+
+    static void hideForShot(boolean hide) {
+        if (button == null) return;
+        if (hide) {
+            visibleBeforeShot = button.getVisibility();
+            button.setVisibility(View.INVISIBLE);
+        } else {
+            button.setVisibility(visibleBeforeShot);
         }
     }
 
@@ -223,6 +264,7 @@ final class FastTick {
     void start() {
         if (running) return;
         stopWatch();
+        autoBackGen++; // looked for again when this run (and its look at page 3) ends
         // A new booking's ticking, as ☑ Tick does: the red box and the saved delete list start empty.
         if (service instanceof InspectorService) ((InspectorService) service).fastStarted();
         running = true;
@@ -230,6 +272,7 @@ final class FastTick {
         start = SystemClock.uptimeMillis();
         log.setLength(0);
         done.clear();
+        tickedCount = 0;
         todo.clear();
         missed.clear();
         pass = 1;
@@ -280,6 +323,7 @@ final class FastTick {
         listener.done(s.toString(), report);
         // Not when you stopped it, nor with no boxes: then nothing is noted for 🗑 Delete.
         if (!why.startsWith("⚡ Stopped") && !why.startsWith("⚡ No")) startWatch();
+        else startAutoBack();
     }
 
     // ---- after the run: the rows not ticked go to the red box and 🗑 Delete's list ------
@@ -311,6 +355,11 @@ final class FastTick {
     private void watchLook(int g) {
         if (g != watchGen || running) return;
         if (!(service instanceof InspectorService)) return;
+        if (!watchOnce(g)) startAutoBack(); // the look at page 3 ended
+    }
+
+    /** One look; false when the look at page 3 ends. */
+    private boolean watchOnce(int g) {
         List<String> rows = new ArrayList<>();
         int i = 0;
         for (AccessibilityNodeInfo n : Page.nodes(service)) {
@@ -320,13 +369,50 @@ final class FastTick {
         }
         if (i == 0) {
             // Page 3 left (Continue, Back ...): the list noted last is kept, the look ends.
-            if (++noBoxLooks >= 2) return;
+            if (++noBoxLooks >= 2) return false;
         } else {
             noBoxLooks = 0;
-            if (!((InspectorService) service).fastRows(rows)) return; // Delete / Tick took over
+            if (!((InspectorService) service).fastRows(rows)) return false; // Delete / Tick took over, or not page 3
         }
-        if (SystemClock.uptimeMillis() >= watchUntil) return;
+        if (SystemClock.uptimeMillis() >= watchUntil) return false;
         handler.postDelayed(() -> watchLook(g), WATCH_EVERY_MS);
+        return true;
+    }
+
+    // ---- 🤖 Auto back on, if ⚡ turned it off --------------------------------------------
+
+    /*
+     * ⚡ turns 🤖 Auto off so it can't start the normal Tick meanwhile. It is turned back on when
+     * page 1 or page 2 is reached afterwards (the next booking, or 🗑's trip back) - pages where
+     * Auto presses nothing by itself. Looked at once a second, for up to 30 minutes.
+     */
+    private static final long AUTO_BACK_EVERY_MS = 1000;
+    private static final long AUTO_BACK_FOR_MS = 30 * 60 * 1000;
+    private int autoBackGen;
+
+    private void startAutoBack() {
+        if (!(service instanceof InspectorService) || !((InspectorService) service).fastOwesAuto()) return;
+        int g = ++autoBackGen;
+        long until = SystemClock.uptimeMillis() + AUTO_BACK_FOR_MS;
+        handler.postDelayed(() -> autoBackLook(g, until), AUTO_BACK_EVERY_MS);
+    }
+
+    private void autoBackLook(int g, long until) {
+        if (g != autoBackGen || running) return;
+        InspectorService s = (InspectorService) service;
+        if (!s.fastOwesAuto()) return;
+        PageKind.Kind k;
+        try {
+            k = PageKind.decide(PageKind.read(service));
+        } catch (RuntimeException e) {
+            k = PageKind.Kind.OTHER;
+        }
+        if (k == PageKind.Kind.CALENDAR || k == PageKind.Kind.SEVAK_LIST) {
+            s.fastAutoBack();
+            return;
+        }
+        if (SystemClock.uptimeMillis() >= until) return;
+        handler.postDelayed(() -> autoBackLook(g, until), AUTO_BACK_EVERY_MS);
     }
 
     // ---- one box after another ------------------------------------------------------------
@@ -389,7 +475,8 @@ final class FastTick {
 
     private void ticked(int idx, long t0, String how) {
         done.add(idx);
-        listener.progress(done.size(), toTick);
+        tickedCount++; // only boxes this run ticked (not ones found ☑ already)
+        listener.progress(Math.min(tickedCount, toTick), toTick);
         log("row " + (idx + 1) + ": ticked ✓ by a " + how + " (" + (SystemClock.uptimeMillis() - t0) + " ms)");
         later(this::nextBox, 0);
     }

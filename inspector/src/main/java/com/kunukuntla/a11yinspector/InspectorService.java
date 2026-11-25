@@ -553,6 +553,7 @@ public class InspectorService extends AccessibilityService {
 
             @Override
             public void accept(Boolean hide) {
+                FastTick.hideForShot(hide); // ⚡ off the calendar's screenshot too
                 View[] round = shownButtons();
                 View[] vs = java.util.Arrays.copyOf(round, round.length + 2);
                 vs[round.length] = pageBadge;
@@ -995,9 +996,35 @@ public class InspectorService extends AccessibilityService {
         endGo();
         if (AutoFlow.enabled(this)) {
             any = true;
+            fastOwesAuto = true; // turned back on when the next booking starts (page 1 or 2)
+            // Off the way the 🤖 button turns it off.
             getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_flow", false).apply();
+            booker.setHandOver(false);
+            if (flow != null) flow.clearTickEnded();
         }
         return any;
+    }
+
+    /** ⚡ turned 🤖 Auto off: it is owed back (turned on again on page 1 or 2). (FastTick only.) */
+    private boolean fastOwesAuto;
+
+    boolean fastOwesAuto() {
+        return fastOwesAuto;
+    }
+
+    /**
+     * 🤖 Auto back on, the way the 🤖 button turns it on - called by FastTick when page 1 or 2 is
+     * reached after ⚡ (the next booking, or Delete's trip back): there Auto does nothing by
+     * itself, so nothing is pressed by surprise. Not when you turned it on yourself meanwhile.
+     */
+    void fastAutoBack() {
+        if (!fastOwesAuto) return;
+        fastOwesAuto = false;
+        if (AutoFlow.enabled(this)) return;
+        getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_flow", true).apply();
+        booker.setHandOver(true);
+        if (flow != null) flow.clearTickEnded();
+        Toast.makeText(this, "🤖 Auto back ON (⚡ had turned it off)", Toast.LENGTH_SHORT).show();
     }
 
     /** ⚡ Fast started: a new booking's ticking, the lists reset as ☑ Tick does. (Used by FastTick only.) */
