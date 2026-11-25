@@ -22,6 +22,9 @@ android {
             "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF6emNwdXZjcmhiYXNubnNmdmd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk1NDc2MTgsImV4cCI6MjA4NTEyMzYxOH0._MAMf4jVmNBarBLM1nSKdbjeq7lxRUjfQCnf5cxK4X8")
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.trim()}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseKey.trim()}\"")
+        // ⬆ In-app updates: the branch this build comes from (CI passes it); empty = no update check.
+        val updateChannel = (project.findProperty("updateChannel") as String?)?.trim() ?: ""
+        buildConfigField("String", "UPDATE_CHANNEL", "\"$updateChannel\"")
     }
 
     buildFeatures {

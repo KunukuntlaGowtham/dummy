@@ -76,6 +76,27 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         stLp.topMargin = dp(8);
         head.addView(status, stLp);
+        // ⬆ A newer build of this app is out: tap to update (checked each time the app opens).
+        TextView updateBanner = new TextView(this);
+        updateBanner.setTextColor(Color.WHITE);
+        updateBanner.setTypeface(Typeface.DEFAULT_BOLD);
+        updateBanner.setPadding(dp(14), dp(8), dp(14), dp(8));
+        GradientDrawable ub = new GradientDrawable();
+        ub.setCornerRadius(dp(18));
+        ub.setColor(0xFFEF6C00);
+        updateBanner.setBackground(ub);
+        updateBanner.setVisibility(View.GONE);
+        updateBanner.setOnClickListener(v -> Updater.install(this, m -> Toast.makeText(this, m, Toast.LENGTH_LONG).show()));
+        LinearLayout.LayoutParams ubLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        ubLp.topMargin = dp(8);
+        head.addView(updateBanner, ubLp);
+        Updater.latest(n -> {
+            if (n > Updater.current()) {
+                updateBanner.setText("⬆ Build " + n + " is ready (you have " + Updater.current() + ") - tap to update");
+                updateBanner.setVisibility(View.VISIBLE);
+            }
+        });
         LinearLayout tabs = new LinearLayout(this);
         LinearLayout.LayoutParams tabsLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -113,6 +134,7 @@ public class MainActivity extends Activity {
         settings.setOrientation(LinearLayout.VERTICAL);
         settings.setPadding(0, dp(4), 0, dp(24));
         settings.addView(card("👤 Account", 0xFF5856D6, account()));
+        settings.addView(card("⬆ Updates", 0xFFEF6C00, updates()));
         settings.addView(card("🗑 Delete list (this booking only)", 0xFFC62828, deleteList()));
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
         settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
@@ -1071,6 +1093,33 @@ public class MainActivity extends Activity {
             DeleteLedger.clear(this);
             ledgerText.setText(DeleteLedger.text(DeleteLedger.load(this)));
             Toast.makeText(this, "Delete list cleared", Toast.LENGTH_SHORT).show();
+        }));
+        box.addView(row);
+        return box;
+    }
+
+    /** ⬆ This build's number, and a button that checks for a newer one and installs it. */
+    private View updates() {
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.addView(note(Updater.enabled()
+                ? "This is build " + Updater.current() + ". Tap to look for a newer build - it downloads and installs here."
+                : "This build (" + Updater.current() + ") wasn't made for in-app updates."));
+        if (!Updater.enabled()) return box;
+        LinearLayout row = new LinearLayout(this);
+        row.setPadding(0, dp(6), 0, 0);
+        row.addView(pill("Check for update", v -> {
+            Toast.makeText(this, "Looking for a newer build…", Toast.LENGTH_SHORT).show();
+            Updater.latest(n -> {
+                if (n < 0) {
+                    Toast.makeText(this, "Couldn't check - connect to the internet and try again", Toast.LENGTH_LONG).show();
+                } else if (n <= Updater.current()) {
+                    Toast.makeText(this, "You have the newest build (" + Updater.current() + ")", Toast.LENGTH_LONG).show();
+                } else {
+                    Toast.makeText(this, "Build " + n + " found - updating", Toast.LENGTH_SHORT).show();
+                    Updater.install(this, m -> Toast.makeText(this, m, Toast.LENGTH_LONG).show());
+                }
+            });
         }));
         box.addView(row);
         return box;

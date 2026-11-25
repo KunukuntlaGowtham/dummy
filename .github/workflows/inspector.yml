@@ -32,9 +32,10 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon :inspector:testDebugUnitTest :inspector:assembleDebug -PversionCode=${{ github.run_number }}
+          ./gradlew --no-daemon :inspector:testDebugUnitTest :inspector:assembleDebug -PversionCode=${{ github.run_number }} -PupdateChannel=${{ github.ref_name }}
           cp inspector/build/outputs/apk/debug/inspector-debug.apk Gowtham.apk
           ls -l Gowtham.apk
+          echo "${{ github.run_number }}" > version.txt
 
       - uses: actions/upload-artifact@v4
         with:
@@ -53,3 +54,20 @@ jobs:
             Download: https://github.com/${{ github.repository }}/releases/download/seva-${{ github.run_number }}/Gowtham.apk
           files: Gowtham.apk
           make_latest: "false"
+
+      # ⬆ The same build under one fixed address per branch (gowtham-<branch>): the app's
+      # Update reads version.txt there and downloads Gowtham.apk from there.
+      - name: Publish for in-app update
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: gowtham-${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          name: Gowtham updates (${{ github.ref_name }})
+          body: |
+            Newest build of ${{ github.ref_name }}: ${{ github.run_number }} (${{ github.sha }}).
+            The app's ⬆ Update downloads it from here.
+          files: |
+            Gowtham.apk
+            version.txt
+          make_latest: "false"
+          overwrite_files: true

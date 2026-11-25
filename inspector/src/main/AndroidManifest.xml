@@ -7,6 +7,9 @@
     <!-- Supabase sign-in and the licence check. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- ⬆ In-app updates: the new build is handed to Android's installer (you confirm). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
