@@ -23,7 +23,7 @@ import java.util.List;
 public class MainActivity extends Activity {
 
     private EditText numbers, gap, backs;
-    private CheckBox backOn;
+    private CheckBox backOn, waitClear;
     private TextView status, log;
 
     @Override
@@ -60,6 +60,10 @@ public class MainActivity extends Activity {
         gap.setInputType(InputType.TYPE_CLASS_NUMBER);
         page.addView(gap, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
+        waitClear = new CheckBox(this);
+        waitClear.setText("Next bin the moment I clear the first pop-up (off: all bins one after the other, no waiting)");
+        page.addView(waitClear);
+
         backOn = new CheckBox(this);
         backOn.setText("Go back after all the bins are tapped (off: stay on the page)");
         page.addView(backOn);
@@ -76,10 +80,11 @@ public class MainActivity extends Activity {
 
         TextView how = new TextView(this);
         how.setText("How: turn Bin Press on in Accessibility, open the sevaks list in the booking app, then tap the red 🗑 Go "
-                + "button. It taps the bins from the highest number down (so your numbers stay right), one after the other - it "
-                + "taps each bin once and does not wait for pop-ups. When all are tapped it presses Back (unless you switch "
-                + "that off) and stops - it does not check who is gone and does not tap again. The report lists the time of every "
-                + "press. Tap the button again to stop.");
+                + "button. It taps the bins from the highest number down (so your numbers stay right). With \"Next bin the moment "
+                + "I clear the first pop-up\" on: it taps a bin, you clear its first pop-up, and the moment you do it taps the "
+                + "next bin (it never waits for the second pop-up). Off: it taps all the bins one after the other. When all are "
+                + "done it presses Back (unless you switch that off) and stops. The report lists the time of every press - its "
+                + "bin taps, when each pop-up came and when you cleared it, and the Backs. Tap the button again to stop.");
         how.setPadding(0, pad, 0, pad / 2);
         page.addView(how);
 
@@ -131,7 +136,8 @@ public class MainActivity extends Activity {
         }
         bk = Math.max(1, Math.min(3, bk));
         prefs().edit().putString(BinService.KEY_NUMBERS, numbers.getText().toString().trim()).putInt(BinService.KEY_GAP, b)
-                .putInt(BinService.KEY_BACKS, bk).putBoolean(BinService.KEY_BACK_ON, backOn.isChecked()).apply();
+                .putInt(BinService.KEY_BACKS, bk).putBoolean(BinService.KEY_BACK_ON, backOn.isChecked())
+                .putBoolean(BinService.KEY_WAIT_CLEAR, waitClear.isChecked()).apply();
         gap.setText(String.valueOf(b));
         backs.setText(String.valueOf(bk));
         Toast.makeText(this, list.isEmpty() ? "Saved - but no numbers found" : "Saved: " + list + " (highest first)",
@@ -145,6 +151,7 @@ public class MainActivity extends Activity {
         gap.setText(String.valueOf(prefs().getInt(BinService.KEY_GAP, BinService.DEFAULT_GAP_MS)));
         backs.setText(String.valueOf(prefs().getInt(BinService.KEY_BACKS, 1)));
         backOn.setChecked(prefs().getBoolean(BinService.KEY_BACK_ON, true));
+        waitClear.setChecked(prefs().getBoolean(BinService.KEY_WAIT_CLEAR, true));
         boolean on = BinService.connected;
         status.setText(on ? "● Service is on - open the sevaks list and tap 🗑 Go"
                 : "○ Service is off - turn Bin Press on in Accessibility settings");

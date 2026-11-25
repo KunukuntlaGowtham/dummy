@@ -34,7 +34,7 @@ import java.util.Locale;
 public class BinService extends AccessibilityService {
 
     static final String PREFS = "binpress";
-    static final String KEY_NUMBERS = "numbers", KEY_GAP = "gap", KEY_BACKS = "backs", KEY_BACK_ON = "back_on", KEY_LOG = "log";
+    static final String KEY_NUMBERS = "numbers", KEY_GAP = "gap", KEY_BACKS = "backs", KEY_BACK_ON = "back_on", KEY_WAIT_CLEAR = "wait_clear", KEY_LOG = "log";
     static final int DEFAULT_GAP_MS = 100;
 
     static volatile boolean connected;
@@ -164,7 +164,8 @@ public class BinService extends AccessibilityService {
         lastPressAt = 0;
         log.setLength(0);
         setButton(true);
-        say("tapping the bins of " + numbers + " (highest first), " + gap() + " ms apart - once each, no waiting for pop-ups, no checking; "
+        say("tapping the bins of " + numbers + " (highest first), "
+                + (waitForYou() ? "the next one the moment you clear pop-up 1; " : gap() + " ms apart - once each, no waiting for pop-ups, no checking; ")
                 + (backs() == 0 ? "Back is OFF (stays on the page)" : "then Back x" + backs()));
         next();
     }
@@ -230,9 +231,72 @@ public class BinService extends AccessibilityService {
         say("profile " + number + " " + card.name + ": bin tapped at " + r.centerX() + "," + r.centerY());
         markPress("BIN  " + number + "  " + card.name);
         if (!tapped.contains(card.name)) tapped.add(card.name);
-        tap(r.centerX(), r.centerY(), () -> handler.postDelayed(() -> {
-            if (g == gen) next();
-        }, gap()));
+        String before = Cards.signature(this); // the page before the tap: a change after it is the pop-up
+        if (waitForYou()) {
+            // You clear the first pop-up; the moment it goes, the next bin is tapped (no wait for pop-up 2).
+            tap(r.centerX(), r.centerY(), () -> waitPopupCame(before, SystemClock.uptimeMillis(), g));
+        } else {
+            tap(r.centerX(), r.centerY(), () -> handler.postDelayed(() -> {
+                if (g == gen) next();
+            }, gap()));
+        }
+    }
+
+    /** "Next bin after I clear the first pop-up" (on by default): the app waits for you between bins. */
+    private boolean waitForYou() {
+        return prefs().getBoolean(KEY_WAIT_CLEAR, true);
+    }
+
+    /** After the bin: up to 3 s for the first pop-up to come (the page changes), checked every 50 ms. */
+    private void waitPopupCame(String before, long since, int g) {
+        handler.postDelayed(() -> {
+            if (g != gen || !running) return;
+            String now = Cards.signature(this);
+            if (!now.equals(before)) {
+                settleUp(now, 0, g); // it is coming: let it finish drawing
+            } else if (SystemClock.uptimeMillis() - since >= 3000) {
+                say("  no pop-up came within 3 s - on to the next bin");
+                markPress("(no pop-up for " + number + ")");
+                next();
+            } else {
+                waitPopupCame(before, since, g);
+            }
+        }, 50);
+    }
+
+    /** The pop-up drawn: the page the same on two looks in a row (up to ~1 s). */
+    private void settleUp(String last, int looks, int g) {
+        handler.postDelayed(() -> {
+            if (g != gen || !running) return;
+            String now = Cards.signature(this);
+            if (now.equals(last) || looks >= 8) {
+                markPress("pop-up 1 came for " + number);
+                say("  pop-up 1 is up - waiting for you to clear it");
+                waitYouCleared(now, SystemClock.uptimeMillis(), g);
+            } else {
+                settleUp(now, looks + 1, g);
+            }
+        }, 120);
+    }
+
+    /**
+     * Waiting for you to clear pop-up 1 (up to 60 s): the moment the page changes again - the pop-up
+     * gone, or pop-up 2 in its place - that is your tap; the next bin is tapped at once.
+     */
+    private void waitYouCleared(String up, long since, int g) {
+        handler.postDelayed(() -> {
+            if (g != gen || !running) return;
+            String now = Cards.signature(this);
+            if (!now.equals(up)) {
+                markPress("YOU cleared pop-up 1 for " + number);
+                say("  you cleared pop-up 1 - next bin at once (pop-up 2 is not waited for)");
+                next();
+            } else if (SystemClock.uptimeMillis() - since >= 60000) {
+                stop("Stopped - waited 60 s for you to clear the pop-up");
+            } else {
+                waitYouCleared(up, since, g);
+            }
+        }, 40);
     }
 
     /** All bins tapped: Back pressed (as often as set), each press written down; then the page is looked at. */
