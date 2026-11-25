@@ -770,16 +770,16 @@ public class InspectorService extends AccessibilityService {
             }
         });
         deleter.setProfileListener((who, number, ok, why) -> DeleteLedger.result(this, who, number, ok, why));
+        // 🗑 tap (no long press any more): on page 3 (or 2) - back to page 1, delete, forward to
+        // page 4; on page 1 - delete there, then forward. Tapped while it runs: stops it.
         deleteButton = floating("🗑\nDelete", 0xEEC62828, 688, v -> {
             closeCard();
             if (deleter.isRunning()) deleter.stop("Stopped");
-            else if (!busy()) deleteTap();
-        }, v -> {
-            // Long-press (automatic): back to page 1 if needed, delete, forward to page 4 by itself.
-            closeCard();
-            if (deleter.isRunning() || busy()) return;
-            Toast.makeText(this, "🗑 Delete AUTOMATIC: back to page 1, delete, forward", Toast.LENGTH_SHORT).show();
-            deleteNow();
+            else if (retrying) stopGo(); // the trip (back, delete, forward) stops
+            else if (!busy()) {
+                Toast.makeText(this, "🗑 Delete: back to page 1 if needed, delete, then forward", Toast.LENGTH_SHORT).show();
+                deleteNow();
+            }
         });
     }
 
