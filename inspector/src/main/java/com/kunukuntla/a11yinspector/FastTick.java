@@ -198,7 +198,19 @@ final class FastTick {
         }
         lastCount = "";
         b.setText("■\nStop");
-        shown.start();
+        // Everything else stops first (Tick, Go, Delete, retry, Auto turned off) - then Fast.
+        boolean stopped = service instanceof InspectorService
+                && ((InspectorService) service).stopAllForFast();
+        if (stopped) {
+            Toast.makeText(service, "⚡ Everything else stopped (🤖 Auto off) - Fast tick starting",
+                    Toast.LENGTH_SHORT).show();
+            // A moment for what was stopped to let go of the page (a tap or Back on its way).
+            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                if (!shown.isRunning()) shown.start();
+            }, 300);
+        } else {
+            shown.start();
+        }
     }
 
     boolean isRunning() {

@@ -970,6 +970,36 @@ public class InspectorService extends AccessibilityService {
         goButton.setText(goLabel());
     }
 
+    /**
+     * ⚡ Fast pressed: everything else stops first - Tick, Clear, Go / Book, Delete, the retry
+     * trip, a Tick waiting to start - and 🤖 Auto is turned off, so nothing starts again by itself
+     * while Fast ticks. (Added for FastTick only; nothing above calls it.) True when something was
+     * running.
+     */
+    boolean stopAllForFast() {
+        boolean any = pendingTick != null || retrying || AutoFlow.goActive || deleting()
+                || ticker.isRunning() || clearer.isRunning() || booker.isRunning()
+                || (flow != null && flow.busy());
+        AutoFlow.goActive = false; // first: what stops below doesn't report it as a failure
+        cancelLinkedTick();
+        if (booker.isRunning()) booker.stop("Stopped");
+        if (ticker.isRunning()) ticker.stop("Stopped");
+        if (clearer.isRunning()) clearer.stop("Stopped");
+        if (deleting()) deleter.stop("Stopped");
+        if (flow != null) flow.cancel();
+        if (retrying) {
+            retrying = false;
+            testTripEnded();
+            saveRetryLog("↻ Retry stopped: ⚡ Fast pressed");
+        }
+        endGo();
+        if (AutoFlow.enabled(this)) {
+            any = true;
+            getSharedPreferences("settings", MODE_PRIVATE).edit().putBoolean("auto_flow", false).apply();
+        }
+        return any;
+    }
+
     // ---- which round buttons are on the screen (chosen in the app) ---------------------
 
     /** The round buttons by name, in their order down the screen. */
