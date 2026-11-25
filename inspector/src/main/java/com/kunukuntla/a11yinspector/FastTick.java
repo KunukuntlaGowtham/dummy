@@ -68,6 +68,16 @@ final class FastTick {
     private static FastTick shown;
     private static TextView button;
     private static String lastReport = "";
+    /** The app's last reports (Tick, Delete, the trip ...), oldest first, at most 5. */
+    private static final List<String> REPORTS = new ArrayList<>();
+
+    static void keepReport(String text) {
+        if (text == null) return;
+        synchronized (REPORTS) {
+            REPORTS.add(text.length() > 30000 ? text.substring(0, 30000) + "\n…(cut)" : text);
+            while (REPORTS.size() > 5) REPORTS.remove(0);
+        }
+    }
     /** "ticked/total" of the last run, shown on the button. */
     private static String lastCount = "";
 
@@ -134,13 +144,26 @@ final class FastTick {
         boolean[] dragged = {false}, longDone = {false};
         Runnable longPress = () -> {
             longDone[0] = true;
-            if (lastReport.isEmpty()) {
-                Toast.makeText(service, "⚡ No Fast tick run yet", Toast.LENGTH_SHORT).show();
-                return;
+            // Everything to find a fault: what Auto / Delete hold now, the last reports (Tick,
+            // the trip, Delete ... newest first) and ⚡'s own last run.
+            StringBuilder all = new StringBuilder("GOWTHAM - FULL REPORT (long-press ⚡)\n=====================================\n");
+            if (service instanceof InspectorService) {
+                try {
+                    all.append(((InspectorService) service).fastState());
+                } catch (RuntimeException e) {
+                    all.append("state not readable: ").append(e).append('\n');
+                }
             }
+            synchronized (REPORTS) {
+                for (int i = REPORTS.size() - 1; i >= 0; i--) {
+                    all.append("\n\n----- REPORT ").append(REPORTS.size() - i).append(" (newest first) -----\n")
+                            .append(REPORTS.get(i));
+                }
+            }
+            if (!lastReport.isEmpty()) all.append("\n\n----- ⚡ LAST RUN -----\n").append(lastReport);
             android.content.ClipboardManager cb = service.getSystemService(android.content.ClipboardManager.class);
-            if (cb != null) cb.setPrimaryClip(android.content.ClipData.newPlainText("Fast tick report", lastReport));
-            Toast.makeText(service, "⚡ Report copied - paste it in a chat", Toast.LENGTH_SHORT).show();
+            if (cb != null) cb.setPrimaryClip(android.content.ClipData.newPlainText("Gowtham report", all.toString()));
+            Toast.makeText(service, "⚡ Full report copied - paste it in a chat", Toast.LENGTH_SHORT).show();
         };
         b.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {

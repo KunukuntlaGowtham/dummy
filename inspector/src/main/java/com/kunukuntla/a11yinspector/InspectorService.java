@@ -1005,6 +1005,36 @@ public class InspectorService extends AccessibilityService {
         return any;
     }
 
+    /** What Auto and Delete hold now, and the trip's steps so far - for ⚡'s long-press copy. (FastTick only.) */
+    String fastState() {
+        StringBuilder b = new StringBuilder();
+        b.append("🤖 Auto on: ").append(AutoFlow.enabled(this))
+                .append(" · Go running: ").append(AutoFlow.goActive)
+                .append(" · ⚡ owes Auto: ").append(fastOwesAuto).append('\n');
+        b.append("auto-start Tick on page 3: ")
+                .append(getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_start_page3", true))
+                .append(" · test mode: ").append(testMode()).append('\n');
+        b.append("page (badge): ").append(pageKind == null ? "?" : pageKind.title()).append('\n');
+        b.append("Tick running: ").append(ticker != null && ticker.isRunning())
+                .append(" · Delete running: ").append(deleting())
+                .append(" · trip running: ").append(retrying)
+                .append(" · Auto busy (Back/Continue): ").append(flow != null && flow.busy()).append('\n');
+        b.append("Tick running as automatic: ").append(tickAuto)
+                .append(" · this booking's retry used: ").append(retryUsed).append('\n');
+        b.append("rows not added (red box): ").append(lastMissed)
+                .append(" · names: ").append(rowNames).append('\n');
+        b.append("trip's numbers: ").append(tripNumbers).append(" · names: ").append(tripNames).append('\n');
+        b.append("last result: ").append(lastSummary.replace('\n', ' ')).append('\n');
+        b.append("\nSAVED DELETE LIST\n");
+        try {
+            b.append(DeleteLedger.text(DeleteLedger.load(this))).append('\n');
+        } catch (RuntimeException e) {
+            b.append("(not readable: ").append(e).append(")\n");
+        }
+        b.append("\nTRIP STEPS NOT SAVED YET\n").append(retryLog.length() == 0 ? "(none)\n" : retryLog.toString());
+        return b.toString();
+    }
+
     /** ⚡ turned 🤖 Auto off: it is owed back (turned on again on page 1 or 2). (FastTick only.) */
     private boolean fastOwesAuto;
 
@@ -1977,6 +2007,7 @@ public class InspectorService extends AccessibilityService {
     }
 
     private void saveReport(String text) {
+        FastTick.keepReport(text); // the last few reports, for ⚡'s long-press copy
         try (FileOutputStream out = openFileOutput(REPORT_FILE, MODE_PRIVATE)) {
             out.write(text.getBytes());
         } catch (java.io.IOException ignored) {
