@@ -209,24 +209,78 @@ final class AutoFlow {
     /** How long after page 3's Continue page 4's Confirm is waited for. */
     private static final long WATCH_MS = 20000;
 
-    private void pressConfirm() {
-        AccessibilityNodeInfo button = null;
+    /** Page 4's Confirm button that can be pressed now, or null. */
+    private AccessibilityNodeInfo confirmButton() {
         for (AccessibilityNodeInfo n : Page.nodes(service)) {
             if (!PageKind.isConfirm(Page.label(n))) continue; // also below the screen
             if (PageKind.inDialog(n)) continue; // a pop-up's Confirm is never page 4's
             AccessibilityNodeInfo b = PageKind.pressable(n);
-            if (b != null && b.isEnabled() && n.isEnabled()) {
-                button = b;
-                break;
-            }
+            if (b != null && b.isEnabled() && n.isEnabled()) return b;
         }
+        return null;
+    }
+
+    private void pressConfirm() {
+        AccessibilityNodeInfo button = confirmButton();
         if (button == null) return; // not there yet, or off: the next page change looks again
         confirmDone = true;
         watchUntil = 0;
-        if (!button.isVisibleToUser()) button.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-        if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(Page.bounds(button));
+        Set<String> before = texts();
+        int wins = windowCount();
+        clickConfirm(button);
         host.say("📍 Page 4: Confirm pressed");
         goActive = false; // the booking is through: Go's run ends
+        confirmTook(before, wins, SystemClock.uptimeMillis(), 0);
+    }
+
+    private void clickConfirm(AccessibilityNodeInfo button) {
+        if (!button.isVisibleToUser()) button.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+        if (!button.performAction(AccessibilityNodeInfo.ACTION_CLICK)) tap(Page.bounds(button));
+    }
+
+    /**
+     * Did the press take? A press that comes while page 4 is still getting ready can be ignored
+     * by the page. Watched for 2.5 s: anything that changes - the page, its words, a pop-up or
+     * loader, the button going or turning off - means it took, and nothing more is pressed. Only
+     * when page 4 stays exactly as it was, Confirm still on, it is pressed again (twice at most).
+     */
+    private void confirmTook(Set<String> before, int wins, long since, int again) {
+        int g = gen;
+        handler.postDelayed(() -> {
+            if (g != gen || holdConfirm || !enabled(service)) return;
+            Set<String> now = texts();
+            boolean same = now != null && now.equals(before) && windowCount() == wins;
+            AccessibilityNodeInfo button = same ? confirmButton() : null;
+            if (button == null) return; // the page reacted: the press took
+            if (SystemClock.uptimeMillis() - since < 2500) {
+                confirmTook(before, wins, since, again);
+                return;
+            }
+            if (again >= 2) {
+                host.say("📍 Page 4: Confirm pressed 3 times, the page didn't react - press it yourself");
+                return;
+            }
+            clickConfirm(button);
+            host.say("📍 Page 4: Confirm pressed again (the page didn't react to the last press)");
+            confirmTook(before, wins, SystemClock.uptimeMillis(), again + 1);
+        }, 150);
+    }
+
+    private Set<String> texts() {
+        try {
+            return PageKind.read(service).texts;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private int windowCount() {
+        // The page's own windows (a pop-up comes as one); ours (the message just said) don't count.
+        try {
+            return Page.windowIds(service).size();
+        } catch (RuntimeException e) {
+            return -1;
+        }
     }
 
     // ---- page 3: Continue, and Back when it doesn't go on ---------------------------------
