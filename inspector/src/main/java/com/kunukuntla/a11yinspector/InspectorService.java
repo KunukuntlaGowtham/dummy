@@ -1020,11 +1020,11 @@ public class InspectorService extends AccessibilityService {
      */
     void fastFinish() {
         int g = ++fastFinishGen;
-        // No pop-up cleared first: every box ☑ - page 3's Continue straight away (pressed through
-        // accessibility, behind the pop-ups), then page 4's Confirm. A box not ☑, or Continue not
-        // moving on: the pop-ups cleared, the rows not added found - back, deleted, forward to
-        // page 4 and Confirm (fully automatic, as 🤖 Auto does after ☑ Tick).
-        handler.postDelayed(() -> fastCheck(g, 0, false), 150);
+        // The pop-ups cleared FIRST: a refused sevak's box stays ☑ until its pop-up goes, so a
+        // check before clearing would miss it. Then: every box ☑ - page 3's Continue, page 4's
+        // Confirm; a box not ☑ - back, deleted, forward to page 4 and Confirm (fully automatic).
+        Toast.makeText(this, "⚡ Ticked - clearing the pop-ups, then checking", Toast.LENGTH_SHORT).show();
+        fastClear(g, 0, () -> fastCheck(g, 0, true));
     }
 
     private boolean fastFinishGone(int g) {
