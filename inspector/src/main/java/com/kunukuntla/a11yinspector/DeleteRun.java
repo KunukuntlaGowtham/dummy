@@ -105,6 +105,7 @@ final class DeleteRun {
         log.setLength(0);
         todo.clear();
         todo.addAll(numbers);
+        listWaits = 0;
         deleted.clear();
         failed.clear();
         deletedWho.clear();
@@ -119,7 +120,9 @@ final class DeleteRun {
         }
         runBase = new Page.Before(service);
         startCounts.clear();
-        for (SevakDeleter.Card c : SevakDeleter.cards(service)) startCounts.merge(c.name, 1, Integer::sum);
+        List<SevakDeleter.Card> atStart = SevakDeleter.cards(service);
+        for (SevakDeleter.Card c : atStart) startCounts.merge(c.name, 1, Integer::sum);
+        startCards = atStart.size();
         verifyText = "";
         log(cardsLine().trim());
         log("deleting " + numbers + " (each as numbered on screen when its turn comes)"
@@ -197,17 +200,34 @@ final class DeleteRun {
     // ---- one profile after another ------------------------------------------------------
 
     private int original, cardsBefore;
+    /** Times the list was read again for this profile because it wasn't whole yet. */
+    private int listWaits;
     private String name = "";
+
+    /** Profiles on the list when the run started: after each delete one fewer is expected. */
+    private int startCards;
+
+    /** How many profiles the list should have now: the start, less the ones deleted so far. */
+    private int expectedCards() {
+        return Math.max(1, startCards - deleted.size());
+    }
+
+    /**
+     * The list is whole again: as many profiles as expected (the start less those deleted), at
+     * least one with a bin, the same on two looks in a row. After a delete the page rebuilds its
+     * list: half drawn it can show one stray "profile" (a text like "23 Available") - never
+     * taken as the list.
+     */
+    private boolean listWhole(List<SevakDeleter.Card> cards) {
+        if (cards.size() < expectedCards()) return false;
+        for (SevakDeleter.Card c : cards) if (c.bin != null) return true;
+        return false;
+    }
 
     private void nextProfile() {
         if (!running) return;
-        if (todo.isEmpty()) {
-            verifyAtEnd();
-            stop(failed.isEmpty() ? "✅ Done" : "Done - some not deleted");
-            return;
-        }
-        // Before each: no pop-up up, and the list settled (the same profiles on two looks in
-        // a row) - after a delete the page rebuilds its list and shows its last pop-up.
+        // Before each (and before the check at the end): no pop-up up, and the list whole and
+        // settled - after a delete the page rebuilds its list and shows its last pop-up.
         int g = gen;
         long waitStart = SystemClock.uptimeMillis();
         int[] last = {-1};
@@ -216,14 +236,23 @@ final class DeleteRun {
                 last[0] = -1;
                 return false;
             }
-            int n = SevakDeleter.cards(service).size();
-            boolean settled = n > 0 && n == last[0];
+            List<SevakDeleter.Card> cards = SevakDeleter.cards(service);
+            int n = cards.size();
+            boolean settled = n > 0 && n == last[0] && listWhole(cards);
             last[0] = n;
             return settled;
-        }, SystemClock.uptimeMillis() + 3000, ready -> {
+        }, SystemClock.uptimeMillis() + 6000, ready -> {
             if (g != gen) return;
             long waited = SystemClock.uptimeMillis() - waitStart;
-            if (waited > 150) log("  page ready after " + waited + " ms" + (ready ? "" : " (not settled - going on)"));
+            if (waited > 150 || !ready) {
+                log("  page ready after " + waited + " ms" + (ready ? "" : " (list not whole: "
+                        + SevakDeleter.cards(service).size() + " profiles, " + expectedCards() + " expected - going on)"));
+            }
+            if (todo.isEmpty()) {
+                verifyAtEnd();
+                stop(failed.isEmpty() ? "✅ Done" : "Done - some not deleted");
+                return;
+            }
             deleteNext();
         });
     }
@@ -237,6 +266,20 @@ final class DeleteRun {
         List<SevakDeleter.Card> cards = SevakDeleter.cards(service);
         SevakDeleter.Card card = null;
         for (SevakDeleter.Card c : cards) if (c.number == now) card = c;
+        boolean notFound = card == null || expected != null && !sameName(card.name, expected);
+        if (notFound && !listWhole(cards) && listWaits++ < 2) {
+            // The list isn't whole yet (still being rebuilt): read again in a second, not a ✗.
+            log("profile " + original + ": the list isn't whole yet (" + cards.size() + " profiles, "
+                    + expectedCards() + " expected) - reading it again in 1 s");
+            todo.add(0, original);
+            names.add(0, expected);
+            int g = gen;
+            handler.postDelayed(() -> {
+                if (g == gen && running) deleteNext();
+            }, 1000);
+            return;
+        }
+        listWaits = 0;
         if (expected != null && (card == null || !sameName(card.name, expected))) {
             // Someone else at this number: the one card with the expected name, wherever it is.
             List<SevakDeleter.Card> named = new ArrayList<>();
