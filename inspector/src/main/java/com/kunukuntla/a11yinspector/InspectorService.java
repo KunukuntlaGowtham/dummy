@@ -979,6 +979,7 @@ public class InspectorService extends AccessibilityService {
      */
     boolean stopAllForFast() {
         fastFinishGen++; // a ⚡ finish under way (clear, Continue) gives up
+        fastTripConfirm = false;
         boolean any = pendingTick != null || retrying || AutoFlow.goActive || deleting()
                 || ticker.isRunning() || clearer.isRunning() || booker.isRunning()
                 || (flow != null && flow.busy());
@@ -1019,9 +1020,11 @@ public class InspectorService extends AccessibilityService {
      */
     void fastFinish() {
         int g = ++fastFinishGen;
-        // This version: no pop-up cleared - page 3's Continue straight away (pressed through
-        // accessibility, behind the pop-ups), then page 4's Confirm.
-        handler.postDelayed(() -> fastAllTicked(g, 0), 150);
+        // No pop-up cleared first: every box ☑ - page 3's Continue straight away (pressed through
+        // accessibility, behind the pop-ups), then page 4's Confirm. A box not ☑, or Continue not
+        // moving on: the pop-ups cleared, the rows not added found - back, deleted, forward to
+        // page 4 and Confirm (fully automatic, as 🤖 Auto does after ☑ Tick).
+        handler.postDelayed(() -> fastCheck(g, 0, false), 150);
     }
 
     private boolean fastFinishGone(int g) {
@@ -1029,10 +1032,11 @@ public class InspectorService extends AccessibilityService {
                 || booker.isRunning() || FastTick.busy();
     }
 
-    private void fastClear(int g, int round) {
+    /** The pop-ups cleared (as ✖ Clear does, again while it finds more), then {@code then}. */
+    private void fastClear(int g, int round, Runnable then) {
         if (fastFinishGone(g)) return;
         if (clearer.isRunning()) {
-            handler.postDelayed(() -> fastClear(g, round), 150);
+            handler.postDelayed(() -> fastClear(g, round, then), 150);
             return;
         }
         clearButton.setText("■\nStop");
@@ -1048,16 +1052,17 @@ public class InspectorService extends AccessibilityService {
             if (clearer.isRunning()) clearer.stop("Stopped");
             // One cleared: another may be under it (pop-ups that came one after another) - again.
             if (lastSummary.startsWith("Pop-ups cleared") && round < 5) {
-                handler.postDelayed(() -> fastClear(g, round + 1), 250);
+                handler.postDelayed(() -> fastClear(g, round + 1, then), 250);
                 return;
             }
-            // The page unticks a refused row a moment after its pop-up goes: read twice.
-            handler.postDelayed(() -> fastAllTicked(g, 0), 500);
+            // The page unticks a refused row a moment after its pop-up goes.
+            handler.postDelayed(then, 500);
         };
         handler.postDelayed(look[0], 150);
     }
 
-    private void fastAllTicked(int g, int read) {
+    /** Page 3 read (twice, a moment apart): every box ☑ - Continue; else (pop-ups cleared) the trip. */
+    private void fastCheck(int g, int read, boolean cleared) {
         if (fastFinishGone(g)) return;
         PageKind.Kind k;
         try {
@@ -1066,7 +1071,7 @@ public class InspectorService extends AccessibilityService {
             k = PageKind.Kind.OTHER;
         }
         if (k != PageKind.Kind.TICKING) {
-            Toast.makeText(this, "⚡ Not page 3 any more - Continue not pressed", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "⚡ Not page 3 any more - nothing pressed", Toast.LENGTH_SHORT).show();
             return;
         }
         int boxes = 0;
@@ -1077,24 +1082,33 @@ public class InspectorService extends AccessibilityService {
             if (!n.isChecked()) empty.add(String.valueOf(boxes));
         }
         if (boxes == 0) return;
-        if (!empty.isEmpty()) {
-            Toast.makeText(this, "⚡ Not added: row " + String.join(", ", empty)
-                    + " - Continue not pressed (🗑 deletes them)", Toast.LENGTH_LONG).show();
+        if (!empty.isEmpty() && !cleared) {
+            Toast.makeText(this, "⚡ Row " + String.join(", ", empty) + " not ticked - clearing the pop-ups first",
+                    Toast.LENGTH_SHORT).show();
+            fastClear(g, 0, () -> fastCheck(g, 0, true));
             return;
         }
         if (read == 0) {
-            handler.postDelayed(() -> fastAllTicked(g, 1), 150);
+            handler.postDelayed(() -> fastCheck(g, 1, cleared), cleared ? 400 : 150);
             return;
         }
-        fastContinue(g, android.os.SystemClock.uptimeMillis() + 3000);
+        if (!empty.isEmpty()) {
+            fastTrip(g, empty);
+            return;
+        }
+        fastContinue(g, android.os.SystemClock.uptimeMillis() + 3000, cleared);
     }
 
-    private void fastContinue(int g, long until) {
+    private void fastContinue(int g, long until, boolean cleared) {
         if (fastFinishGone(g)) return;
         AccessibilityNodeInfo c = pressableButton(PageKind::isContinue);
         if (c == null) {
             if (android.os.SystemClock.uptimeMillis() < until) {
-                handler.postDelayed(() -> fastContinue(g, until), 150);
+                handler.postDelayed(() -> fastContinue(g, until, cleared), 150);
+            } else if (!cleared) {
+                // Continue off with every box ☑: a refused row may still read ☑ behind its pop-up.
+                Toast.makeText(this, "⚡ Continue is off - clearing the pop-ups", Toast.LENGTH_SHORT).show();
+                fastClear(g, 0, () -> fastCheck(g, 0, true));
             } else {
                 Toast.makeText(this, "⚡ All ticked, but Continue stayed off - press it yourself", Toast.LENGTH_LONG).show();
             }
@@ -1104,6 +1118,53 @@ public class InspectorService extends AccessibilityService {
         if (flow != null) flow.confirmAfterFast(pkg); // page 4's Confirm pressed the moment it comes
         press(c);
         Toast.makeText(this, "⚡ All ticked - Continue pressed, Confirm next", Toast.LENGTH_SHORT).show();
+        fastAfterContinue(g, android.os.SystemClock.uptimeMillis(), cleared);
+    }
+
+    /** Up to 2.5 s for page 3 to go; still there: the pop-ups cleared and looked at again (once). */
+    private void fastAfterContinue(int g, long since, boolean cleared) {
+        handler.postDelayed(() -> {
+            if (fastFinishGone(g)) return;
+            PageKind.Kind k;
+            try {
+                k = PageKind.decide(PageKind.read(this));
+            } catch (RuntimeException e) {
+                k = PageKind.Kind.OTHER;
+            }
+            if (k != PageKind.Kind.TICKING) return; // moved on: Confirm is waited for on page 4
+            if (android.os.SystemClock.uptimeMillis() - since < 2500) {
+                fastAfterContinue(g, since, cleared);
+                return;
+            }
+            if (!cleared) {
+                Toast.makeText(this, "⚡ Continue didn't move on - clearing the pop-ups", Toast.LENGTH_SHORT).show();
+                fastClear(g, 0, () -> fastCheck(g, 0, true));
+            } else {
+                Toast.makeText(this, "⚡ Continue didn't move on - over to you", Toast.LENGTH_LONG).show();
+            }
+        }, 150);
+    }
+
+    /** ⚡'s trip: the trip back will press page 4's Confirm also with 🤖 Auto off. */
+    private boolean fastTripConfirm;
+
+    /** Rows not added after ⚡ (pop-ups cleared): noted, then back, deleted, forward, Confirm. */
+    private void fastTrip(int g, List<String> rows) {
+        if (fastFinishGone(g)) return;
+        FastTick.stopWatchNow(); // its look at page 3 must not note the rows again after the trip takes them
+        missedBox.show(rows);
+        lastMissed = new ArrayList<>(rows);
+        watchedLast = String.join(",", rows);
+        try {
+            rowNames = readRowNames();
+        } catch (RuntimeException e) {
+            rowNames = new ArrayList<>();
+        }
+        ledgerSave();
+        fastTripConfirm = true;
+        Toast.makeText(this, "⚡ Not added: row " + String.join(", ", rows) + " - back, delete, forward",
+                Toast.LENGTH_SHORT).show();
+        deleteNow();
     }
 
     /** What Auto and Delete hold now, and the trip's steps so far - for ⚡'s long-press copy. (FastTick only.) */
@@ -1161,6 +1222,7 @@ public class InspectorService extends AccessibilityService {
     /** ⚡ Fast started: a new booking's ticking, the lists reset as ☑ Tick does. (Used by FastTick only.) */
     void fastStarted() {
         fastFinishGen++; // the last ⚡'s finish (clear, Continue) never runs into this one
+        fastTripConfirm = false;
         retryUsed = false;
         tripNumbers = null;
         tripNames = null;
@@ -1963,6 +2025,8 @@ public class InspectorService extends AccessibilityService {
             }
             String pkg = c.getPackageName() == null ? "" : c.getPackageName().toString();
             if (flow != null && !testTrip()) flow.watchConfirm(pkg); // page 4's Confirm pressed the moment it comes
+            if (fastTripConfirm && flow != null && !testTrip()) flow.confirmAfterFast(pkg); // ⚡'s trip: also with Auto off
+            fastTripConfirm = false;
             press(c);
             rlog("page 3: Continue pressed - " + (testTrip() ? "test: Confirm left for you" : "Confirm next"));
             Toast.makeText(this, "↻ Page 3: Continue pressed - " + (testTrip() ? "test: Confirm left for you" : "Confirm next"),

@@ -57,6 +57,12 @@ final class FastTick {
     /** Places that never read ☑ in this pass: tried again in the next one. */
     private final List<Integer> missed = new ArrayList<>();
     private int pass, boxesAtStart, alreadyTicked, toTick, tickedCount;
+    /** ⚙ Settings "⚡ speed": a pause before each next box (0 = fastest). */
+    private long gapMs;
+
+    /** The speeds to choose from in ⚙ Settings: their pause before each next box, and their names. */
+    static final long[] GAPS = {0, 100, 250, 500};
+    static final String[] GAP_NAMES = {"Fastest", "Fast", "Medium", "Slow"};
 
     FastTick(AccessibilityService service, Listener listener) {
         this.service = service;
@@ -284,6 +290,13 @@ final class FastTick {
         return running;
     }
 
+    /** ⚡'s look at page 3 after its run ends now (the trip back takes the rows). */
+    static void stopWatchNow() {
+        if (shown == null) return;
+        shown.stopWatch();
+        shown.startAutoBack(); // 🤖 Auto still turned back on at page 1 or 2
+    }
+
     /** ⚡ is ticking now (or about to start). */
     static boolean busy() {
         return starting != null || shown != null && shown.running;
@@ -307,6 +320,8 @@ final class FastTick {
         log("⚡ Fast tick: every empty box, one after another - pop-ups are left for you to clear");
         List<AccessibilityNodeInfo> boxes = boxes();
         cached = boxes;
+        gapMs = service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).getLong("fast_gap_ms", 0);
+        if (gapMs > 0) log("⚙ speed: " + gapMs + " ms pause before each next box");
         boxesAtStart = boxes.size();
         alreadyTicked = 0;
         for (int i = 0; i < boxes.size(); i++) {
@@ -512,7 +527,7 @@ final class FastTick {
         tickedCount++; // only boxes this run ticked (not ones found ☑ already)
         listener.progress(Math.min(tickedCount, toTick), toTick);
         log("row " + (idx + 1) + ": ticked ✓ by a " + how + " (" + (SystemClock.uptimeMillis() - t0) + " ms)");
-        later(this::nextBox, 0);
+        later(this::nextBox, gapMs);
     }
 
     private void endOfPass() {

@@ -417,6 +417,7 @@ public class MainActivity extends Activity {
                 "Auto starts Tick on page 3", true), chipLp());
         retry.addView(settingChip(sp, "delete_name_check", "🔎 Delete checks each name (turn off to delete by number only - careful)",
                 "Delete checks names", true), chipLp());
+        retry.addView(fastSpeedChip(sp), chipLp());
         HorizontalScrollView wide2 = new HorizontalScrollView(this);
         wide2.setHorizontalScrollBarEnabled(false);
         wide2.addView(retry);
@@ -810,6 +811,35 @@ public class MainActivity extends Activity {
         paint.run();
         chip.setOnClickListener(v -> {
             sp.edit().putBoolean(key, !sp.getBoolean(key, byDefault)).apply();
+            paint.run();
+        });
+        return chip;
+    }
+
+    /** ⚡'s ticking speed: tap to go through Fastest → Fast → Medium → Slow (a pause before each next box). */
+    private TextView fastSpeedChip(android.content.SharedPreferences sp) {
+        TextView chip = new TextView(this);
+        chip.setTypeface(Typeface.DEFAULT_BOLD);
+        chip.setTextSize(13);
+        chip.setPadding(dp(12), dp(7), dp(12), dp(7));
+        Runnable paint = () -> {
+            long gap = sp.getLong("fast_gap_ms", 0);
+            int i = 0;
+            for (int k = 0; k < FastTick.GAPS.length; k++) if (FastTick.GAPS[k] == gap) i = k;
+            chip.setText("⚡ speed: " + FastTick.GAP_NAMES[i] + (gap == 0 ? "" : " (" + gap + " ms pause per box)"));
+            chip.setTextColor(Color.WHITE);
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(18));
+            bg.setColor(GREEN);
+            chip.setBackground(bg);
+            chip.setContentDescription("Fast tick speed " + FastTick.GAP_NAMES[i]);
+        };
+        paint.run();
+        chip.setOnClickListener(v -> {
+            long gap = sp.getLong("fast_gap_ms", 0);
+            int i = 0;
+            for (int k = 0; k < FastTick.GAPS.length; k++) if (FastTick.GAPS[k] == gap) i = k;
+            sp.edit().putLong("fast_gap_ms", FastTick.GAPS[(i + 1) % FastTick.GAPS.length]).apply();
             paint.run();
         });
         return chip;
