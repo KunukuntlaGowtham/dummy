@@ -78,7 +78,10 @@ final class FastTick {
     @SuppressLint("ClickableViewAccessibility")
     static void showButton(AccessibilityService service) {
         // The service started again (Accessibility turned off and on): the old button goes first.
-        if (shown != null) shown.stop("⚡ Stopped");
+        if (shown != null) {
+            shown.stop("⚡ Stopped");
+            shown.stopWatch();
+        }
         if (button != null) {
             try {
                 button.getContext().getSystemService(WindowManager.class).removeView(button);
@@ -219,6 +222,9 @@ final class FastTick {
 
     void start() {
         if (running) return;
+        stopWatch();
+        // A new booking's ticking, as ☑ Tick does: the red box and the saved delete list start empty.
+        if (service instanceof InspectorService) ((InspectorService) service).fastStarted();
         running = true;
         gen++;
         start = SystemClock.uptimeMillis();
@@ -272,6 +278,55 @@ final class FastTick {
         log("— " + s.toString().replace('\n', ' '));
         String report = "⚡ FAST TICK\n" + s + "\n\nSTEPS\n" + log;
         listener.done(s.toString(), report);
+        // Not when you stopped it, nor with no boxes: then nothing is noted for 🗑 Delete.
+        if (!why.startsWith("⚡ Stopped") && !why.startsWith("⚡ No")) startWatch();
+    }
+
+    // ---- after the run: the rows not ticked go to the red box and 🗑 Delete's list ------
+
+    /*
+     * A row the page refuses unticks itself - often only when you clear its pop-up. So after the
+     * run the page is looked at every 0.5 s: every row not ☑ (never ticked, or unticked by the
+     * page) goes to the red box and the saved delete list, the same way ☑ Tick and 👁 Watch
+     * note them - 🗑 Delete then deletes them as before. The look ends when page 3 is left
+     * (no checkboxes any more), after 5 minutes, when 🗑 Delete / ☑ Tick runs, or at the next ⚡.
+     */
+    private static final long WATCH_EVERY_MS = 500;
+    private static final long WATCH_FOR_MS = 5 * 60 * 1000;
+    private int watchGen;
+    private long watchUntil;
+    private int noBoxLooks;
+
+    private void startWatch() {
+        watchGen++;
+        watchUntil = SystemClock.uptimeMillis() + WATCH_FOR_MS;
+        noBoxLooks = 0;
+        watchLook(watchGen);
+    }
+
+    private void stopWatch() {
+        watchGen++;
+    }
+
+    private void watchLook(int g) {
+        if (g != watchGen || running) return;
+        if (!(service instanceof InspectorService)) return;
+        List<String> rows = new ArrayList<>();
+        int i = 0;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            if (!Page.isCheckbox(n)) continue;
+            i++;
+            if (!n.isChecked()) rows.add(String.valueOf(i));
+        }
+        if (i == 0) {
+            // Page 3 left (Continue, Back ...): the list noted last is kept, the look ends.
+            if (++noBoxLooks >= 2) return;
+        } else {
+            noBoxLooks = 0;
+            if (!((InspectorService) service).fastRows(rows)) return; // Delete / Tick took over
+        }
+        if (SystemClock.uptimeMillis() >= watchUntil) return;
+        handler.postDelayed(() -> watchLook(g), WATCH_EVERY_MS);
     }
 
     // ---- one box after another ------------------------------------------------------------

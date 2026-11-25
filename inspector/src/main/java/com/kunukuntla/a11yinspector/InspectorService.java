@@ -1000,6 +1000,40 @@ public class InspectorService extends AccessibilityService {
         return any;
     }
 
+    /** ⚡ Fast started: a new booking's ticking, the lists reset as ☑ Tick does. (Used by FastTick only.) */
+    void fastStarted() {
+        retryUsed = false;
+        tripNumbers = null;
+        tripNames = null;
+        DeleteLedger.clear(this);
+        lastMissed = new ArrayList<>();
+        rowNames = new ArrayList<>();
+        watchedLast = "";
+        if (missedBox != null) missedBox.hide();
+        if (flow != null) flow.holdConfirm(false);
+    }
+
+    /**
+     * ⚡ Fast's look at page 3 after its run: the rows not ☑ into the red box and the saved delete
+     * list, exactly as 👁 Watch does - 🗑 Delete then deletes them as before. False when Delete,
+     * Tick or the retry trip is running (Fast's look then stops). (Used by FastTick only.)
+     */
+    boolean fastRows(List<String> rows) {
+        if (destroyed || deleting() || ticker.isRunning() || retrying) return false;
+        String key = String.join(",", rows);
+        if (key.equals(watchedLast)) return true; // nothing changed since the last look
+        watchedLast = key;
+        missedBox.show(rows);
+        lastMissed = new ArrayList<>(rows);
+        try {
+            rowNames = readRowNames();
+        } catch (RuntimeException e) {
+            rowNames = new ArrayList<>();
+        }
+        ledgerSave();
+        return true;
+    }
+
     // ---- which round buttons are on the screen (chosen in the app) ---------------------
 
     /** The round buttons by name, in their order down the screen. */
