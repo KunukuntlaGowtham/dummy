@@ -1024,7 +1024,7 @@ public class InspectorService extends AccessibilityService {
 
     private boolean fastFinishGone(int g) {
         return g != fastFinishGen || destroyed || deleting() || retrying || ticker.isRunning()
-                || booker.isRunning() || fastRunning();
+                || booker.isRunning() || FastTick.busy();
     }
 
     private void fastClear(int g, int round) {

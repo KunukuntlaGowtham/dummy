@@ -284,6 +284,11 @@ final class FastTick {
         return running;
     }
 
+    /** ⚡ is ticking now (or about to start). */
+    static boolean busy() {
+        return starting != null || shown != null && shown.running;
+    }
+
     void start() {
         if (running) return;
         stopWatch();
