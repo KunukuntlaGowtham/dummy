@@ -32,6 +32,10 @@ final class FastTick {
 
     interface Listener {
         void done(String summary, String log);
+
+        /** Boxes ticked so far this run, of the boxes it set out to tick. */
+        default void progress(int ticked, int total) {
+        }
     }
 
     private static final long WAIT_MS = 500;   // per click, for the box to read ☑
@@ -52,7 +56,7 @@ final class FastTick {
     private final List<Integer> todo = new ArrayList<>();
     /** Places that never read ☑ in this pass: tried again in the next one. */
     private final List<Integer> missed = new ArrayList<>();
-    private int pass, boxesAtStart, alreadyTicked;
+    private int pass, boxesAtStart, alreadyTicked, toTick;
 
     FastTick(AccessibilityService service, Listener listener) {
         this.service = service;
@@ -64,6 +68,8 @@ final class FastTick {
     private static FastTick shown;
     private static TextView button;
     private static String lastReport = "";
+    /** "ticked/total" of the last run, shown on the button. */
+    private static String lastCount = "";
 
     /**
      * Puts the ⚡ Fast button on the screen, left of the other buttons at the bottom right.
@@ -101,12 +107,23 @@ final class FastTick {
         lp.x = dm.widthPixels - (int) ((56 + 14 + 70) * d);
         lp.y = dm.heightPixels - (int) ((56 + 128) * d);
         Handler h = new Handler(Looper.getMainLooper());
-        shown = new FastTick(service, (summary, log) -> {
-            lastReport = log;
-            b.setText("⚡\nFast");
-            String[] lines = summary.split("\n");
-            Toast.makeText(service, lines[0] + (lines.length > 1 ? " · " + lines[1] : "")
-                    + " - long-press ⚡ to copy the report", Toast.LENGTH_LONG).show();
+        shown = new FastTick(service, new Listener() {
+            @Override
+            public void done(String summary, String log) {
+                lastReport = log;
+                // The count stays on the button until the next run: ⚡ and how many ticked.
+                b.setText(lastCount.isEmpty() ? "⚡\nFast" : "⚡\n" + lastCount);
+                String[] lines = summary.split("\n");
+                Toast.makeText(service, lines[0] + (lines.length > 1 ? " · " + lines[1] : "")
+                        + " - long-press ⚡ to copy the report", Toast.LENGTH_LONG).show();
+            }
+
+            @Override
+            public void progress(int ticked, int total) {
+                // Live, on the button: ticked so far / to tick (■ = tap to stop).
+                lastCount = ticked + "/" + total;
+                b.setText("■\n" + lastCount);
+            }
         });
         int slop = ViewConfiguration.get(service).getScaledTouchSlop();
         float[] down = new float[2];
@@ -179,6 +196,7 @@ final class FastTick {
             Toast.makeText(service, "🔒 Sign in first - open the app", Toast.LENGTH_LONG).show();
             return;
         }
+        lastCount = "";
         b.setText("■\nStop");
         shown.start();
     }
@@ -215,6 +233,8 @@ final class FastTick {
         }
         log("page read: " + boxesAtStart + " checkbox(es), " + todo.size() + " to tick"
                 + (alreadyTicked > 0 ? ", " + alreadyTicked + " already ☑" : ""));
+        toTick = todo.size();
+        listener.progress(0, toTick);
         if (boxesAtStart == 0) {
             stop("⚡ No checkboxes found here");
             return;
@@ -302,6 +322,7 @@ final class FastTick {
 
     private void ticked(int idx, long t0, String how) {
         done.add(idx);
+        listener.progress(done.size(), toTick);
         log("row " + (idx + 1) + ": ticked ✓ by a " + how + " (" + (SystemClock.uptimeMillis() - t0) + " ms)");
         later(this::nextBox, 0);
     }
