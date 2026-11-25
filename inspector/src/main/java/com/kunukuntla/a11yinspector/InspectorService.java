@@ -79,7 +79,7 @@ public class InspectorService extends AccessibilityService {
         }
         boolean running = scanning || deleting() || pendingTick != null || retrying || AutoFlow.goActive
                 || (ticker != null && ticker.isRunning()) || (clearer != null && clearer.isRunning())
-                || (booker != null && booker.isRunning());
+                || (booker != null && booker.isRunning()) || (fastTick != null && fastTick.isRunning());
         if (running) return false;
         if (Auth.offlineTooLong(this)) {
             Toast.makeText(this, "🔒 Not checked online - checking now (needs internet)…", Toast.LENGTH_SHORT).show();
@@ -146,6 +146,7 @@ public class InspectorService extends AccessibilityService {
         if (deleter != null) deleter.stop("Stopped");
         if (missedBox != null) missedBox.hide();
         if (clearer != null) clearer.stop("Stopped");
+        if (fastTick != null) fastTick.stop("⚡ Stopped");
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
         getSharedPreferences("settings", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(shownListener);
@@ -362,7 +363,7 @@ public class InspectorService extends AccessibilityService {
         }
         // While a run goes the page isn't read again: Tick's speed comes first. The badge
         // keeps the page the run started on.
-        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || fastRunning()) return;
         PageKind.Facts f;
         try {
             f = PageKind.read(this);
@@ -462,6 +463,12 @@ public class InspectorService extends AccessibilityService {
 
     private TextView tickButton, clearButton, bookButton, goButton;
     private Ticker ticker, clearer;
+    private FastTick fastTick;
+
+    private boolean fastRunning() {
+        return fastTick != null && fastTick.isRunning();
+    }
+    private TextView fastButton;
     private Booker booker;
     /** The rows not added in the Tick run, renumbered as after removing the earlier ones. */
     private MissedBox missedBox;
@@ -594,6 +601,22 @@ public class InspectorService extends AccessibilityService {
             Toast.makeText(this, "Reading the dropdown's options…", Toast.LENGTH_SHORT).show();
             Booker.options(this, handler, this::askBooking);
         });
+        // ⚡ Fast tick: every box one after another, the pop-ups left for you to clear.
+        fastTick = new FastTick(this, (summary, log) -> {
+            saveReport(log);
+            fastButton.setText("⚡\nFast");
+            finished(summary);
+            handler.post(InspectorService.this::checkPage);
+        });
+        fastButton = floating("⚡\nFast", 0xEEEF6C00, 556, v -> {
+            closeCard();
+            if (fastTick.isRunning()) {
+                fastTick.stop("⚡ Stopped");
+            } else if (!busy()) {
+                fastButton.setText("■\nStop");
+                fastTick.start();
+            }
+        });
         showReportButton();
         showAutoButton();
         showDeleteButton();
@@ -715,7 +738,7 @@ public class InspectorService extends AccessibilityService {
             watchQueued = false;
             lastWatch = android.os.SystemClock.uptimeMillis();
             if (!watching || ticker == null || ticker.isRunning() || deleting()
-                    || (booker != null && booker.isRunning())) return;
+                    || (booker != null && booker.isRunning()) || fastRunning()) return;
             if (pageKind != PageKind.Kind.TICKING) return; // only on page 3
             watchRows();
         }, Math.max(60, 150 - since));
@@ -796,7 +819,7 @@ public class InspectorService extends AccessibilityService {
     private void autoTickStart() {
         if (destroyed || !AutoFlow.enabled(this)
                 || !getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_start_page3", true)
-                || ticker.isRunning() || clearer.isRunning() || booker.isRunning()
+                || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || fastRunning()
                 || deleting() || scanning || retrying || (flow != null && flow.busy())) return;
         PageKind.Kind k;
         try {
@@ -933,7 +956,7 @@ public class InspectorService extends AccessibilityService {
         pendingTick = () -> {
             pendingTick = null;
             goButton.setText(goLabel());
-            if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+            if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || fastRunning()) return;
             if (stillPage2()) return;
             tickButton.setText("■\nStop");
             ticker.start();
@@ -956,7 +979,7 @@ public class InspectorService extends AccessibilityService {
 
     /** Go started on page 3 (Auto on): Tick starts now, no 1 s gap. */
     private void tickNow() {
-        if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || fastRunning()) return;
         Toast.makeText(this, "Go: already on page 3 - Tick now", Toast.LENGTH_SHORT).show();
         tickButton.setText("■\nStop");
         ticker.start();
@@ -973,17 +996,17 @@ public class InspectorService extends AccessibilityService {
 
     /** The round buttons by name, in their order down the screen. */
     private View[] shownButtons() {
-        return new View[] {button, tickButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton};
+        return new View[] {button, tickButton, fastButton, clearButton, bookButton, goButton, autoButton, reportButton, deleteButton, watchButton};
     }
 
     /** Down the screen from one round button to the next: 56 dp button + 20 dp gap. */
     private static final int BUTTON_STEP = 76;
 
-    static final String[] SHOWN_KEYS = {"scan", "tick", "clear", "book", "go", "auto", "report", "delete", "watch"};
+    static final String[] SHOWN_KEYS = {"scan", "tick", "fast", "clear", "book", "go", "auto", "report", "delete", "watch"};
 
     /** Shown until you choose otherwise: only ☑ Tick, 🤖 Auto and 🗑 Delete (the others are in Settings). */
     static boolean shownDefault(String key) {
-        return key.equals("tick") || key.equals("auto") || key.equals("delete");
+        return key.equals("tick") || key.equals("fast") || key.equals("auto") || key.equals("delete");
     }
 
     private final android.content.SharedPreferences.OnSharedPreferenceChangeListener shownListener =
@@ -1518,7 +1541,7 @@ public class InspectorService extends AccessibilityService {
     /** Tick ended in test mode with Auto off: on page 3, the test trip now (back, delete, forward). */
     private void startTestTripNow() {
         boolean running = scanning || deleting() || pendingTick != null || ticker.isRunning()
-                || clearer.isRunning() || booker.isRunning();
+                || clearer.isRunning() || booker.isRunning() || fastRunning();
         if (flow == null || flow.busy() || retrying || running) {
             Toast.makeText(this, "🧪 Test trip not started - something else was running", Toast.LENGTH_SHORT).show();
             testTripEnded();
@@ -1788,7 +1811,7 @@ public class InspectorService extends AccessibilityService {
 
     private void autoCheck() {
         // Tick and Clear clear their own pop-ups: never tap the same one twice.
-        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (scanning || deleting() || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || fastRunning()) return;
         AccessibilityNodeInfo ok = Page.newOk(this, autoBaseline);
         if (ok == null && Page.coverCame(this, autoBaseline)) {
             // A web pop-up that hides its OK: its cover came; tap the OK where Tick learned it is.
@@ -1852,7 +1875,7 @@ public class InspectorService extends AccessibilityService {
         autoShotQueued = true;
         handler.postDelayed(() -> autoFinder.find(r -> {
             autoShotQueued = false;
-            if (!autoClear || scanning || r == null || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+            if (!autoClear || scanning || r == null || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || fastRunning()) return;
             long now = android.os.SystemClock.uptimeMillis();
             if (now - autoLastPress < 700) return;
             autoLastPress = now;
@@ -1869,7 +1892,8 @@ public class InspectorService extends AccessibilityService {
 
     /** Another run is on: say so instead of starting a second one over it. */
     private boolean busy() {
-        boolean on = scanning || deleting() || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning();
+        boolean on = scanning || deleting() || pendingTick != null || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || fastRunning()
+                || (fastTick != null && fastTick.isRunning());
         if (on) Toast.makeText(this, "Stop the running one first", Toast.LENGTH_SHORT).show();
         return on;
     }
