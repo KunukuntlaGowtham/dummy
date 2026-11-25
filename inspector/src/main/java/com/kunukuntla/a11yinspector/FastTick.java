@@ -39,7 +39,7 @@ final class FastTick {
     }
 
     private static final long WAIT_MS = 500;   // per click, for the box to read ☑
-    private static final long LOOK_MS = 30;    // how often it is read meanwhile
+    private static final long LOOK_MS = 15;    // how often it is read meanwhile (only the box: cheap)
     private static final int PASSES = 3;       // first pass + 2 more for boxes that didn't tick
 
     private final AccessibilityService service;
@@ -306,6 +306,7 @@ final class FastTick {
         pass = 1;
         log("⚡ Fast tick: every empty box, one after another - pop-ups are left for you to clear");
         List<AccessibilityNodeInfo> boxes = boxes();
+        cached = boxes;
         boxesAtStart = boxes.size();
         alreadyTicked = 0;
         for (int i = 0; i < boxes.size(); i++) {
@@ -540,10 +541,24 @@ final class FastTick {
         return out;
     }
 
-    /** The checkbox at place {@code idx} now (the page may redraw its list after each add). */
+    /** The page's checkboxes as last read (in page order): each box is read on its own from it. */
+    private List<AccessibilityNodeInfo> cached;
+
+    /**
+     * The checkbox at place {@code idx} now. Faster: only that box is read again (refresh), not the
+     * whole page; when the page has redrawn its list (the box is gone from it) the whole page is
+     * read once more and the new list kept.
+     */
     private AccessibilityNodeInfo boxAt(int idx) {
-        List<AccessibilityNodeInfo> b = boxes();
-        return idx < b.size() ? b.get(idx) : null;
+        if (cached != null && idx < cached.size()) {
+            AccessibilityNodeInfo n = cached.get(idx);
+            try {
+                if (n.refresh()) return n;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        cached = boxes();
+        return idx < cached.size() ? cached.get(idx) : null;
     }
 
     private void waitTicked(int idx, long until, java.util.function.Consumer<Boolean> then) {
