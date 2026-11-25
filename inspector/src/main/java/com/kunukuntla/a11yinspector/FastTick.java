@@ -516,7 +516,7 @@ final class FastTick {
 
     private void endOfPass() {
         if (missed.isEmpty()) {
-            stop("⚡ All ticked - clearing the pop-ups, then Continue");
+            stop("⚡ All ticked - Continue and Confirm (pop-ups left up)");
             return;
         }
         if (pass >= PASSES) {

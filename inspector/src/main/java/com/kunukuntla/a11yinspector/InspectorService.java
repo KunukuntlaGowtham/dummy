@@ -1019,7 +1019,9 @@ public class InspectorService extends AccessibilityService {
      */
     void fastFinish() {
         int g = ++fastFinishGen;
-        fastClear(g, 0);
+        // This version: no pop-up cleared - page 3's Continue straight away (pressed through
+        // accessibility, behind the pop-ups), then page 4's Confirm.
+        handler.postDelayed(() -> fastAllTicked(g, 0), 150);
     }
 
     private boolean fastFinishGone(int g) {
@@ -1081,7 +1083,7 @@ public class InspectorService extends AccessibilityService {
             return;
         }
         if (read == 0) {
-            handler.postDelayed(() -> fastAllTicked(g, 1), 400);
+            handler.postDelayed(() -> fastAllTicked(g, 1), 150);
             return;
         }
         fastContinue(g, android.os.SystemClock.uptimeMillis() + 3000);
