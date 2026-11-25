@@ -345,8 +345,13 @@ final class FastTick {
         String report = "⚡ FAST TICK\n" + s + "\n\nSTEPS\n" + log;
         listener.done(s.toString(), report);
         // Not when you stopped it, nor with no boxes: then nothing is noted for 🗑 Delete.
-        if (!why.startsWith("⚡ Stopped") && !why.startsWith("⚡ No")) startWatch();
-        else startAutoBack();
+        if (!why.startsWith("⚡ Stopped") && !why.startsWith("⚡ No")) {
+            startWatch();
+            // The pop-ups cleared, then Continue and Confirm when every box is ticked.
+            if (service instanceof InspectorService) ((InspectorService) service).fastFinish();
+        } else {
+            startAutoBack();
+        }
     }
 
     // ---- after the run: the rows not ticked go to the red box and 🗑 Delete's list ------
@@ -506,7 +511,7 @@ final class FastTick {
 
     private void endOfPass() {
         if (missed.isEmpty()) {
-            stop("⚡ All ticked - clear the pop-ups");
+            stop("⚡ All ticked - clearing the pop-ups, then Continue");
             return;
         }
         if (pass >= PASSES) {

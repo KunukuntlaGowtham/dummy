@@ -59,6 +59,7 @@ final class AutoFlow {
     /** Stops whatever the flow is doing (▶ Go stopped): its waits and Back presses end. */
     void cancel() {
         gen++;
+        forceConfirm = false;
         busy = false;
         missed = false;
         tickEnded = false;
@@ -188,7 +189,7 @@ final class AutoFlow {
         confirmQueued = true;
         handler.post(() -> {
             confirmQueued = false;
-            if (!confirmDone && SystemClock.uptimeMillis() <= watchUntil && enabled(service)) pressConfirm();
+            if (!confirmDone && SystemClock.uptimeMillis() <= watchUntil && (enabled(service) || forceConfirm)) pressConfirm();
         });
     }
 
@@ -247,7 +248,7 @@ final class AutoFlow {
     private void confirmTook(Set<String> before, int wins, long since, int again) {
         int g = gen;
         handler.postDelayed(() -> {
-            if (g != gen || holdConfirm || !enabled(service)) return;
+            if (g != gen || holdConfirm || !(enabled(service) || forceConfirm)) return;
             Set<String> now = texts();
             boolean same = now != null && now.equals(before) && windowCount() == wins;
             AccessibilityNodeInfo button = same ? confirmButton() : null;
@@ -339,6 +340,14 @@ final class AutoFlow {
         watchPkg = pkg;
         watchUntil = SystemClock.uptimeMillis() + WATCH_MS;
         confirmDone = false;
+    }
+
+    /** ⚡ pressed page 3's Continue itself: page 4's Confirm is pressed also with 🤖 Auto off. */
+    private boolean forceConfirm;
+
+    void confirmAfterFast(String pkg) {
+        watchConfirm(pkg);
+        forceConfirm = true;
     }
 
     /** Back to page 1 as for missed rows (page 1 then starts the retry) - Delete's test with 0. */
