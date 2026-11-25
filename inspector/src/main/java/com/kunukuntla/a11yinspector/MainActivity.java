@@ -306,6 +306,7 @@ public class MainActivity extends Activity {
         }
         // Not a round button: the 📍 badge at the top saying which page of the booking is open.
         row.addView(settingChip(sp, "show_page", "📍 Page", "Page badge"), chipLp());
+        row.addView(settingChip(sp, "show_clock", "🕒 Clock", "Live clock"), chipLp());
         HorizontalScrollView wide = new HorizontalScrollView(this);
         wide.setHorizontalScrollBarEnabled(false);
         wide.addView(row);

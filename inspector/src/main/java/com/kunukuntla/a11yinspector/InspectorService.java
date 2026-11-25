@@ -145,6 +145,7 @@ public class InspectorService extends AccessibilityService {
         if (ticker != null) ticker.stop("Stopped");
         if (deleter != null) deleter.stop("Stopped");
         if (missedBox != null) missedBox.hide();
+        LiveClock.hide();
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
@@ -554,6 +555,7 @@ public class InspectorService extends AccessibilityService {
             @Override
             public void accept(Boolean hide) {
                 FastTick.hideForShot(hide); // ⚡ off the calendar's screenshot too
+                LiveClock.hideForShot(hide);
                 View[] round = shownButtons();
                 View[] vs = java.util.Arrays.copyOf(round, round.length + 2);
                 vs[round.length] = pageBadge;
@@ -602,6 +604,7 @@ public class InspectorService extends AccessibilityService {
         applyShown();
         getSharedPreferences("settings", MODE_PRIVATE).registerOnSharedPreferenceChangeListener(shownListener);
         FastTick.showButton(this); // ⚡ Fast tick: its own button, all its code in FastTick.java
+        LiveClock.show(this); // 🕒 the live clock in the top-right corner
     }
 
     // ---- Go then Tick (part of 🤖 Auto) ----------------------------------------------------
