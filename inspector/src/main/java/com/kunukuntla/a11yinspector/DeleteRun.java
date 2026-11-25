@@ -302,8 +302,16 @@ final class DeleteRun {
             return;
         }
         Rect r = SevakDeleter.where(card.bin);
-        if (r != null) {
+        if (r != null && free(r)) {
             tapBin(card, cards.size(), r);
+            return;
+        }
+        if (r != null) {
+            // On screen but under the page's bottom bar (Back / Continue) or one of our buttons:
+            // a tap there would press that instead (page 1's Continue!) - brought up first.
+            log("profile " + original + ": its bin at " + r.centerX() + "," + r.centerY()
+                    + " is under the bottom bar / a button - bringing it up first");
+            bringUpThenTap(card, cards.size());
             return;
         }
         // Off screen: clicked through accessibility first - no scrolling at all. If no pop-up comes
@@ -321,11 +329,13 @@ final class DeleteRun {
         String targetName = card.name;
         when(() -> {
             SevakDeleter.Card c = sameCard(targetNo, targetName);
-            return c != null && c.bin != null && SevakDeleter.where(c.bin) != null;
+            Rect w = c == null || c.bin == null ? null : SevakDeleter.where(c.bin);
+            return w != null && free(w);
         }, SystemClock.uptimeMillis() + 800, shown -> {
             if (g != gen) return;
             SevakDeleter.Card c = sameCard(targetNo, targetName);
             Rect r2 = c == null || c.bin == null ? null : SevakDeleter.where(c.bin);
+            if (r2 != null && !free(r2)) r2 = null; // still under the bar: never tapped there
             if (r2 == null) {
                 log("profile " + original + ": its bin didn't come on screen ✗");
                 notDeleted();
@@ -531,6 +541,77 @@ final class DeleteRun {
      * The profile gone: fewer profiles, the same on two looks in a row, no pop-up up. A pop-up
      * that comes meanwhile (late) is closed first - up to twice - then the profile is looked at.
      */
+    /**
+     * The bin is brought up (the page scrolls it on screen) and tapped once it is clear of the
+     * bottom bar; if it never gets clear, clicked through accessibility instead - never a tap
+     * on the bar (page 1's Continue would be pressed).
+     */
+    private void bringUpThenTap(SevakDeleter.Card card, int count) {
+        card.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+        int g = gen;
+        int targetNo = card.number;
+        String targetName = card.name;
+        when(() -> {
+            SevakDeleter.Card c = sameCard(targetNo, targetName);
+            Rect w = c == null || c.bin == null ? null : SevakDeleter.where(c.bin);
+            return w != null && free(w);
+        }, SystemClock.uptimeMillis() + 1000, clear -> {
+            if (g != gen) return;
+            SevakDeleter.Card c = sameCard(targetNo, targetName);
+            if (c == null || c.bin == null) {
+                log("profile " + original + ": its bin went from the page ✗");
+                notDeleted();
+                return;
+            }
+            Rect w = SevakDeleter.where(c.bin);
+            if (w != null && free(w)) {
+                log("profile " + original + ": brought up");
+                tapBin(c, count, w);
+            } else if (clickThrough(c.bin)) {
+                log("profile " + original + ": still under the bottom bar - clicked through accessibility");
+                tapBin(c, count, null);
+            } else {
+                log("profile " + original + ": its bin stayed under the bottom bar ✗");
+                notDeleted();
+            }
+        });
+    }
+
+    /**
+     * The middle of {@code r} is clear to tap: not on the page's bottom bar (its Back / Continue /
+     * Add Sevak buttons and the strip they sit in) and not on one of our own buttons or boxes.
+     */
+    private boolean free(Rect r) {
+        int x = r.centerX(), y = r.centerY();
+        int pad = Math.round(8 * service.getResources().getDisplayMetrics().density);
+        int screenH = service.getResources().getDisplayMetrics().heightPixels;
+        // The page's bottom bar: the highest of its bottom buttons, in the lower half.
+        int barTop = Integer.MAX_VALUE;
+        for (AccessibilityNodeInfo n : Page.nodes(service)) {
+            String l = PageKind.norm(Page.label(n));
+            if (!l.equals("continue") && !l.equals("back") && !l.equals("add sevak") && !l.equals("confirm")) continue;
+            Rect b = Page.bounds(n);
+            if (b.height() <= 4 || b.width() <= 4 || b.top < screenH / 2) continue;
+            barTop = Math.min(barTop, b.top);
+        }
+        if (barTop != Integer.MAX_VALUE && y >= barTop - pad) return false;
+        // Our own buttons and boxes on top of the page (a tap there goes to them, not the page).
+        try {
+            for (android.view.accessibility.AccessibilityWindowInfo w : service.getWindows()) {
+                if (w.getType() != android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) continue;
+                Rect b = new Rect();
+                w.getBoundsInScreen(b);
+                // Only button-sized ones: a window over most of the screen isn't a button.
+                android.util.DisplayMetrics dm = service.getResources().getDisplayMetrics();
+                if ((long) b.width() * b.height() > (long) dm.widthPixels * dm.heightPixels / 4) continue;
+                b.inset(-pad, -pad);
+                if (b.contains(x, y)) return false;
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return true;
+    }
+
     /** A click on the bin (or the box around it) through accessibility, with the bin anywhere on the page. */
     private boolean clickThrough(AccessibilityNodeInfo bin) {
         AccessibilityNodeInfo n = bin;
@@ -554,19 +635,11 @@ final class DeleteRun {
         int count = now.size(), num = c.number;
         String nm = c.name;
         Rect r = SevakDeleter.where(c.bin);
-        if (r != null) {
+        if (r != null && free(r)) {
             tapBin(c, count, r);
             return true;
         }
-        c.bin.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-        int g = gen;
-        handler.postDelayed(() -> {
-            if (g != gen) return;
-            SevakDeleter.Card c2 = sameCard(num, nm);
-            Rect r2 = c2 == null || c2.bin == null ? null : SevakDeleter.where(c2.bin);
-            if (r2 == null) checkGone();
-            else tapBin(c2, count, r2);
-        }, 350);
+        bringUpThenTap(c, count);
         return true;
     }
 
