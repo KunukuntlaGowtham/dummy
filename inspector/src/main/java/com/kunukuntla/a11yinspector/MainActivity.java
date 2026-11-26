@@ -112,7 +112,21 @@ public class MainActivity extends Activity {
         buttons.addView(pill("Share", v -> share()));
         buttons.addView(pill("Copy", v -> copy()));
         buttons.addView(pill("Save to Downloads", v -> save()));
-        reportTab.addView(buttons);
+        // Everything to find a fault (was long-press ⚡, which now ticks all at once).
+        buttons.addView(pill("⚡ Full report", v -> {
+            String all = FastTick.fullReport();
+            if (all == null) {
+                Toast.makeText(this, "Turn the Gowtham service on first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            android.content.ClipboardManager cb = getSystemService(android.content.ClipboardManager.class);
+            if (cb != null) cb.setPrimaryClip(android.content.ClipData.newPlainText("Gowtham report", all));
+            Toast.makeText(this, "⚡ Full report copied - paste it in a chat", Toast.LENGTH_LONG).show();
+        }));
+        HorizontalScrollView buttonsWide = new HorizontalScrollView(this);
+        buttonsWide.setHorizontalScrollBarEnabled(false);
+        buttonsWide.addView(buttons);
+        reportTab.addView(buttonsWide);
         report = new TextView(this);
         report.setTypeface(Typeface.MONOSPACE);
         report.setTextSize(11);

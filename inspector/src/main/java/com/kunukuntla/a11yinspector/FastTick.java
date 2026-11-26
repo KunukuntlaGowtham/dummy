@@ -89,7 +89,7 @@ final class FastTick {
 
     /**
      * Puts the ⚡ Fast button on the screen, left of the other buttons at the bottom right.
-     * Tap: start / stop. Long press: copies the last run's report. Drag: move it.
+     * Tap: start / stop (box by box). Long press: every box at once, then the same finish. Drag: move it.
      */
     @SuppressLint("ClickableViewAccessibility")
     static void showButton(AccessibilityService service) {
@@ -134,7 +134,7 @@ final class FastTick {
                 b.setText(lastCount.isEmpty() ? "⚡\nFast" : "⚡\n" + lastCount);
                 String[] lines = summary.split("\n");
                 Toast.makeText(service, lines[0] + (lines.length > 1 ? " · " + lines[1] : "")
-                        + " - long-press ⚡ to copy the report", Toast.LENGTH_LONG).show();
+                        + " - full report: app → 📋 Report → ⚡ Full report", Toast.LENGTH_LONG).show();
             }
 
             @Override
@@ -150,27 +150,8 @@ final class FastTick {
         boolean[] dragged = {false}, longDone = {false};
         Runnable longPress = () -> {
             longDone[0] = true;
-            // Everything to find a fault: what Auto / Delete hold now, the last reports (Tick,
-            // the trip, Delete ... newest first) and ⚡'s own last run.
-            StringBuilder all = new StringBuilder("GOWTHAM - FULL REPORT (long-press ⚡)\n=====================================\n");
-            if (service instanceof InspectorService) {
-                try {
-                    all.append(((InspectorService) service).fastState());
-                } catch (RuntimeException e) {
-                    all.append("state not readable: ").append(e).append('\n');
-                }
-            }
-            synchronized (REPORTS) {
-                for (int i = REPORTS.size() - 1; i >= 0; i--) {
-                    all.append("\n\n----- REPORT ").append(REPORTS.size() - i).append(" (newest first) -----\n")
-                            .append(REPORTS.get(i));
-                }
-            }
-            if (!lastReport.isEmpty()) all.append("\n\n----- ⚡ LAST RUN -----\n").append(lastReport);
-            if (FINISH.length() > 0) all.append("\n----- ⚡ AFTER THE TICKING -----\n").append(FINISH);
-            android.content.ClipboardManager cb = service.getSystemService(android.content.ClipboardManager.class);
-            if (cb != null) cb.setPrimaryClip(android.content.ClipData.newPlainText("Gowtham report", all.toString()));
-            Toast.makeText(service, "⚡ Full report copied - paste it in a chat", Toast.LENGTH_SHORT).show();
+            // Long press: every box at once (no wait between them), then the same finish.
+            tapped(service, b, true);
         };
         b.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
@@ -202,7 +183,7 @@ final class FastTick {
                 case MotionEvent.ACTION_UP:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     h.removeCallbacks(longPress);
-                    if (!dragged[0] && !longDone[0]) tapped(service, b);
+                    if (!dragged[0] && !longDone[0]) tapped(service, b, false);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
@@ -222,7 +203,7 @@ final class FastTick {
     /** ⚡ was tapped and starts in a moment (what it stopped lets go of the page first). */
     private static Runnable starting;
 
-    private static void tapped(AccessibilityService service, TextView b) {
+    private static void tapped(AccessibilityService service, TextView b, boolean burst) {
         Handler h = new Handler(Looper.getMainLooper());
         if (starting != null) {
             // Tapped again in the moment before it starts (the button already says ■): that's Stop.
@@ -266,12 +247,39 @@ final class FastTick {
                     + " - Fast tick starting", Toast.LENGTH_SHORT).show();
             starting = () -> {
                 starting = null;
-                if (!shown.isRunning()) shown.start();
+                if (!shown.isRunning()) shown.start(burst);
             };
             h.postDelayed(starting, 300);
         } else {
-            shown.start();
+            shown.start(burst);
         }
+    }
+
+    /**
+     * Everything to find a fault: what Auto / Delete hold now, the last reports (Tick, the trip,
+     * Delete ... newest first), ⚡'s own last run and what came after it. Null before ⚡ is up.
+     * (The app's 📋 Report tab copies it: "⚡ Full report".)
+     */
+    static String fullReport() {
+        if (shown == null) return null;
+        AccessibilityService service = shown.service;
+        StringBuilder all = new StringBuilder("GOWTHAM - FULL REPORT\n=====================\n");
+        if (service instanceof InspectorService) {
+            try {
+                all.append(((InspectorService) service).fastState());
+            } catch (RuntimeException e) {
+                all.append("state not readable: ").append(e).append('\n');
+            }
+        }
+        synchronized (REPORTS) {
+            for (int i = REPORTS.size() - 1; i >= 0; i--) {
+                all.append("\n\n----- REPORT ").append(REPORTS.size() - i).append(" (newest first) -----\n")
+                        .append(REPORTS.get(i));
+            }
+        }
+        if (!lastReport.isEmpty()) all.append("\n\n----- ⚡ LAST RUN -----\n").append(lastReport);
+        if (FINISH.length() > 0) all.append("\n----- ⚡ AFTER THE TICKING -----\n").append(FINISH);
+        return all.toString();
     }
 
     /** The calendar's screenshot is taken (▶ Go, 📅 Book): ⚡ hidden meanwhile, then as it was. */
@@ -319,8 +327,16 @@ final class FastTick {
         return starting != null || shown != null && shown.running;
     }
 
-    void start() {
+    /** Long press: the first pass clicks every box straight after the other, no wait for its ☑. */
+    private boolean burst;
+    /** The boxes the burst clicked, checked together once it is done. */
+    private final List<Integer> burstClicked = new ArrayList<>();
+    /** Up to this long after the burst for its boxes to read ☑ (the page takes them one by one). */
+    private static final long BURST_WAIT_MS = 2000;
+
+    void start(boolean burst) {
         if (running) return;
+        this.burst = burst;
         stopWatch();
         autoBackGen++; // looked for again when this run (and its look at page 3) ends
         // A new booking's ticking, as ☑ Tick does: the red box and the saved delete list start empty.
@@ -334,7 +350,9 @@ final class FastTick {
         todo.clear();
         missed.clear();
         pass = 1;
-        log("⚡ Fast tick: every empty box, one after another - pop-ups are left for you to clear");
+        log(burst ? "⚡ Fast tick ALL AT ONCE (long press): every empty box clicked straight after the other, then all checked"
+                : "⚡ Fast tick: every empty box, one after another - pop-ups are left for you to clear");
+        burstClicked.clear();
         List<AccessibilityNodeInfo> boxes = boxes();
         cached = boxes;
         gapMs = service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).getLong("fast_gap_ms", 0);
@@ -361,7 +379,7 @@ final class FastTick {
             stop("⚡ No checkboxes found here");
             return;
         }
-        later(this::nextBox, 0);
+        later(burst ? this::burstNext : this::nextBox, 0);
     }
 
     void stop(String why) {
@@ -545,6 +563,56 @@ final class FastTick {
         listener.progress(Math.min(tickedCount, toTick), toTick);
         log("row " + (idx + 1) + ": ticked ✓ by a " + how + " (" + (SystemClock.uptimeMillis() - t0) + " ms)");
         later(this::nextBox, gapMs);
+    }
+
+    /** The burst: each empty box clicked, the next one straight after (⚙ speed's pause only). */
+    private void burstNext() {
+        if (todo.isEmpty()) {
+            log("all " + burstClicked.size() + " clicked - waiting for them to read ☑");
+            burstCheck(SystemClock.uptimeMillis());
+            return;
+        }
+        int idx = todo.remove(0);
+        String row = String.valueOf(idx + 1);
+        AccessibilityNodeInfo n = boxAt(idx);
+        if (n == null) {
+            log("row " + row + ": not on the page now - tried again after");
+            missed.add(idx);
+        } else if (n.isChecked()) {
+            done.add(idx);
+        } else {
+            boolean sent = n.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            burstClicked.add(idx);
+            log("row " + row + ": clicked" + (sent ? "" : " (the page didn't take the click)"));
+        }
+        later(this::burstNext, gapMs);
+    }
+
+    /** Every clicked box read until all are ☑ (or 2 s): those that never were go to the careful pass. */
+    private void burstCheck(long since) {
+        int on = 0;
+        for (int idx : burstClicked) {
+            AccessibilityNodeInfo n = boxAt(idx);
+            if (n != null && n.isChecked()) on++;
+        }
+        listener.progress(Math.min(on, toTick), toTick);
+        if (on < burstClicked.size() && SystemClock.uptimeMillis() - since < BURST_WAIT_MS) {
+            later(() -> burstCheck(since), 60);
+            return;
+        }
+        for (int idx : burstClicked) {
+            AccessibilityNodeInfo n = boxAt(idx);
+            if (n != null && n.isChecked()) {
+                done.add(idx);
+                tickedCount++;
+            } else {
+                missed.add(idx);
+            }
+        }
+        log("checked after " + (SystemClock.uptimeMillis() - since) + " ms: " + on + " of " + burstClicked.size()
+                + " read ☑" + (missed.isEmpty() ? "" : " - row " + rows(missed) + " clicked again one by one"));
+        burstClicked.clear();
+        endOfPass(); // the rest: one by one, each waited for (as a tap on ⚡ does)
     }
 
     private void endOfPass() {
