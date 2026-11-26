@@ -107,9 +107,17 @@ public class MainActivity extends Activity {
         setContentView(loadingView("Loading phones…"));
         rpc("admin_list_devices", new JSONObject(), (code, arr, obj) -> {
             if (code != 200 || arr == null) {
-                setContentView(errorView(code == 403 || code == 401
-                        ? "This login isn't an admin. Add it: insert into public.admins (email) values ('you@email');"
-                        : "Couldn't load (code " + code + ")"));
+                String msg = obj == null ? "" : obj.optString("message", "");
+                String hint;
+                if (msg.toLowerCase().contains("not an admin")) {
+                    hint = "This login isn't an admin.\nIn Supabase run:\ninsert into public.admins (email) values ('"
+                            + "YOUR-LOGIN-EMAIL');\nUse the SAME email you signed in with here.";
+                } else if (code == 404) {
+                    hint = "The admin functions aren't on the server. Run the WHOLE admin_controls.sql file once.";
+                } else {
+                    hint = "Couldn't load (code " + code + ")" + (msg.isEmpty() ? "" : "\n" + msg);
+                }
+                setContentView(errorView(hint));
                 return;
             }
             showDevices(arr);
