@@ -1,6 +1,9 @@
 name: Build engine (loadable)
 
 on:
+  push:
+    branches: ["seva-fast-direct"]
+    paths: ["engine/**", "engineapi/**", ".github/workflows/engine.yml"]
   workflow_dispatch:
 
 permissions:
