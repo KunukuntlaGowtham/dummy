@@ -222,6 +222,11 @@ final class FastTick {
             Toast.makeText(service, "🔒 Sign in first - open the app", Toast.LENGTH_LONG).show();
             return;
         }
+        if (trialOver(service)) {
+            Toast.makeText(service, "⚡ Trial ended (" + TRIAL + " uses) - this app no longer ticks",
+                    Toast.LENGTH_LONG).show();
+            return;
+        }
         // Only on page 3: on page 1, 2 or 4 nothing is stopped, ticked or cleared (page 2's
         // declaration box is never ticked, 🗑's saved list is never wiped). A page that can't be
         // told (still drawing, a pop-up) is let through: it may be page 3.
@@ -400,14 +405,39 @@ final class FastTick {
         log("— " + s.toString().replace('\n', ' '));
         String report = "⚡ FAST TICK\n" + s + "\n\nSTEPS\n" + log;
         listener.done(s.toString(), report);
-        // Not when you stopped it, nor with no boxes: then nothing is noted for 🗑 Delete.
+        // This version only ticks - no clearing, no Continue / Confirm, no delete. You finish by hand.
         if (!why.startsWith("⚡ Stopped") && !why.startsWith("⚡ No")) {
-            startWatch();
-            // The pop-ups cleared, then Continue and Confirm when every box is ticked.
-            if (service instanceof InspectorService) ((InspectorService) service).fastFinish();
-        } else {
-            startAutoBack();
+            int used = bumpTrial();
+            if (used >= TRIAL) {
+                android.widget.Toast.makeText(service,
+                        "⚡ Trial ended (" + TRIAL + " uses) - this app no longer ticks", android.widget.Toast.LENGTH_LONG).show();
+            } else {
+                android.widget.Toast.makeText(service,
+                        "⚡ Ticked - " + (TRIAL - used) + " uses left. Clear the pop-ups and press Continue yourself.",
+                        android.widget.Toast.LENGTH_LONG).show();
+            }
         }
+    }
+
+    // ---- trial: ticks TRIAL times, then stops for good ----------------------------------
+
+    private static final int TRIAL = 10;
+
+    static int trialUsed(AccessibilityService service) {
+        return service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE).getInt("fast_uses", 0);
+    }
+
+    static boolean trialOver(AccessibilityService service) {
+        return trialUsed(service) >= TRIAL;
+    }
+
+    /** One more use counted (returns the new total). Survives clearing data? No - kept simple. */
+    private int bumpTrial() {
+        android.content.SharedPreferences sp =
+                service.getSharedPreferences("settings", android.content.Context.MODE_PRIVATE);
+        int n = sp.getInt("fast_uses", 0) + 1;
+        sp.edit().putInt("fast_uses", n).apply();
+        return n;
     }
 
     // ---- after the run: the rows not ticked go to the red box and 🗑 Delete's list ------

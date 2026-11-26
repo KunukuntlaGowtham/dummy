@@ -76,27 +76,6 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         stLp.topMargin = dp(8);
         head.addView(status, stLp);
-        // ⬆ A newer build of this app is out: tap to update (checked each time the app opens).
-        TextView updateBanner = new TextView(this);
-        updateBanner.setTextColor(Color.WHITE);
-        updateBanner.setTypeface(Typeface.DEFAULT_BOLD);
-        updateBanner.setPadding(dp(14), dp(8), dp(14), dp(8));
-        GradientDrawable ub = new GradientDrawable();
-        ub.setCornerRadius(dp(18));
-        ub.setColor(0xFFEF6C00);
-        updateBanner.setBackground(ub);
-        updateBanner.setVisibility(View.GONE);
-        updateBanner.setOnClickListener(v -> Updater.install(this, m -> Toast.makeText(this, m, Toast.LENGTH_LONG).show()));
-        LinearLayout.LayoutParams ubLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        ubLp.topMargin = dp(8);
-        head.addView(updateBanner, ubLp);
-        Updater.latest(n -> {
-            if (n > Updater.current()) {
-                updateBanner.setText("⬆ Build " + n + " is ready (you have " + Updater.current() + ") - tap to update");
-                updateBanner.setVisibility(View.VISIBLE);
-            }
-        });
         LinearLayout tabs = new LinearLayout(this);
         LinearLayout.LayoutParams tabsLp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
@@ -148,7 +127,6 @@ public class MainActivity extends Activity {
         settings.setOrientation(LinearLayout.VERTICAL);
         settings.setPadding(0, dp(4), 0, dp(24));
         settings.addView(card("👤 Account", 0xFF5856D6, account()));
-        settings.addView(card("⬆ Updates", 0xFFEF6C00, updates()));
         settings.addView(card("🗑 Delete list (this booking only)", 0xFFC62828, deleteList()));
         settings.addView(card("Round buttons on the screen", 0xFF2E7D32, shownChooser()));
         settings.addView(card("🤖 Auto flow (the 🤖 button turns it on / off)", 0xFF37474F, autoFlow()));
@@ -157,12 +135,8 @@ public class MainActivity extends Activity {
         ScrollView settingsTab = new ScrollView(this);
         settingsTab.addView(settings);
 
-        // Tab 3: how to use - the flows drawn step by step, and every button.
-        ScrollView helpTab = new ScrollView(this);
-        helpTab.addView(helpGuide());
-
-        View[] panes = {reportTab, settingsTab, helpTab};
-        String[] names = {"📋 Report", "⚙ Settings", "❓ Help"};
+        View[] panes = {reportTab, settingsTab};
+        String[] names = {"📋 Report", "⚙ Settings"};
         LinearLayout body = new LinearLayout(this);
         body.setOrientation(LinearLayout.VERTICAL);
         for (View v : panes) {
