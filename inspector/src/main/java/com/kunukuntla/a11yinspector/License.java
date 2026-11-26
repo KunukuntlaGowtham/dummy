@@ -86,6 +86,7 @@ final class License {
                 e.putLong("yes_at", now).putLong("seen", now).remove("error").apply();
                 done.accept(true);
             } else if (code == 200 && json != null && json.optBoolean("ok", false)) {
+                saveOrders(c, json);
                 e.putLong("yes_at", now).putLong("seen", now).remove("error").apply();
                 done.accept(true);
             } else if (code == 200 && json != null) {
@@ -95,6 +96,59 @@ final class License {
             } else {
                 // No connection / server fault / expired session: nothing changes (the 24 h still run).
                 done.accept(ok(c));
+            }
+        });
+    }
+
+    // ---- admin orders: the server says this phone is stopped, or which buttons are off ----
+
+    static void saveOrders(Context c, JSONObject json) {
+        SharedPreferences.Editor e = prefs(c).edit();
+        e.putBoolean("stopped", json.optBoolean("stopped", false));
+        e.putString("adminMsg", json.optString("msg", ""));
+        org.json.JSONArray off = json.optJSONArray("off");
+        StringBuilder keys = new StringBuilder(",");
+        if (off != null) for (int i = 0; i < off.length(); i++) keys.append(off.optString(i)).append(',');
+        e.putString("off", keys.toString());
+        e.putLong("orders_at", System.currentTimeMillis());
+        e.apply();
+    }
+
+    /** The admin stopped this phone (every button does nothing, the message is shown). */
+    static boolean stopped(Context c) {
+        return enforced() && prefs(c).getBoolean("stopped", false);
+    }
+
+    /** This button was turned off by the admin ("tick", "fast", "auto", "delete" ...). */
+    static boolean buttonOff(Context c, String key) {
+        if (!enforced()) return false;
+        return prefs(c).getString("off", ",").contains("," + key + ",");
+    }
+
+    static String adminMessage(Context c) {
+        String m = prefs(c).getString("adminMsg", "");
+        return m.isEmpty() ? "⛔ This app was stopped by the admin" : m;
+    }
+
+    /** The fast poll (every ~30 s while the service is on): just the orders, one small call. */
+    static void poll(Context c, Runnable changed) {
+        String access = Auth.accessToken(c);
+        if (!enforced() || access.isEmpty()) return;
+        JSONObject body = new JSONObject();
+        try {
+            body.put("p_device", Auth.deviceId(c));
+        } catch (JSONException e) {
+            return;
+        }
+        boolean wasStopped = prefs(c).getBoolean("stopped", false);
+        String wasOff = prefs(c).getString("off", ",");
+        Auth.post(c, "/rest/v1/rpc/device_commands", body, access, (code, json) -> {
+            if (code == 200 && json != null) {
+                saveOrders(c, json);
+                if (changed != null && (wasStopped != prefs(c).getBoolean("stopped", false)
+                        || !wasOff.equals(prefs(c).getString("off", ",")))) {
+                    changed.run();
+                }
             }
         });
     }

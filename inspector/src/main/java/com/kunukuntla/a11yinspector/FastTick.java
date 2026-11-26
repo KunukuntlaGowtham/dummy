@@ -222,6 +222,15 @@ final class FastTick {
             Toast.makeText(service, "🔒 Sign in first - open the app", Toast.LENGTH_LONG).show();
             return;
         }
+        // The admin stopped this phone, or turned ⚡ off.
+        if (License.stopped(service)) {
+            Toast.makeText(service, License.adminMessage(service), Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (License.buttonOff(service, "fast")) {
+            Toast.makeText(service, "⚡ turned off by the admin", Toast.LENGTH_LONG).show();
+            return;
+        }
         // Only on page 3: on page 1, 2 or 4 nothing is stopped, ticked or cleared (page 2's
         // declaration box is never ticked, 🗑's saved list is never wiped). A page that can't be
         // told (still drawing, a pop-up) is let through: it may be page 3.
@@ -297,6 +306,11 @@ final class FastTick {
 
     boolean isRunning() {
         return running;
+    }
+
+    /** The admin stopped this phone: end a ⚡ run that is going. */
+    static void stopIfRunning() {
+        if (shown != null && shown.isRunning()) shown.stop("⚡ Stopped");
     }
 
     /** What happened after the ticking (clear, decide, Continue), with times - in the long-press report. */

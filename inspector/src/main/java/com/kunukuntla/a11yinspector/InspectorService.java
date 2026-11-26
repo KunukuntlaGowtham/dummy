@@ -56,6 +56,32 @@ public class InspectorService extends AccessibilityService {
         Auth.check(this, ok -> { });
         handler.postDelayed(accountCheck, Auth.CHECK_EVERY_MS);
         showButton();
+        handler.postDelayed(orderPoll, 3000); // the admin's orders (stop / buttons off), checked fast
+    }
+
+    /** The admin's orders, polled every ~30 s while the service is on. */
+    private final Runnable orderPoll = new Runnable() {
+        @Override
+        public void run() {
+            if (destroyed) return;
+            License.poll(InspectorService.this, () -> {
+                applyShown();   // a button turned off by the admin goes at once
+                if (License.stopped(InspectorService.this)) {
+                    if (ticker != null && ticker.isRunning()) ticker.stop("Stopped");
+                    if (deleter != null && deleter.isRunning()) deleter.stop("Stopped");
+                    FastTick.stopIfRunning();
+                    Toast.makeText(InspectorService.this, License.adminMessage(InspectorService.this), Toast.LENGTH_LONG).show();
+                }
+            });
+            handler.postDelayed(this, 30000);
+        }
+    };
+
+    /** The admin stopped this phone: say so, and block the tap. */
+    private boolean adminStopped() {
+        if (!License.stopped(this)) return false;
+        Toast.makeText(this, License.adminMessage(this), Toast.LENGTH_LONG).show();
+        return true;
     }
 
     /** Every 15 minutes in the background: the account (and its licence) checked with Supabase. */
@@ -1329,6 +1355,8 @@ public class InspectorService extends AccessibilityService {
             View v = views[i];
             if (v == null) continue;
             boolean on = sp.getBoolean("show_" + SHOWN_KEYS[i], shownDefault(SHOWN_KEYS[i]));
+            // The admin turned this button off, or stopped the whole phone: it goes.
+            if (License.buttonOff(this, SHOWN_KEYS[i]) || License.stopped(this)) on = false;
             // 🗑 only in test mode: no stray tap can delete.
             v.setVisibility(on ? View.VISIBLE : View.GONE);
             try {
@@ -2222,7 +2250,7 @@ public class InspectorService extends AccessibilityService {
         boolean[] dragged = {false}, longDone = {false};
         Runnable longPress = () -> {
             longDone[0] = true;
-            if (onLong != null && !locked()) onLong.onClick(b);
+            if (onLong != null && !locked() && !adminStopped()) onLong.onClick(b);
         };
         b.setOnTouchListener((v, e) -> {
             switch (e.getActionMasked()) {
@@ -2251,7 +2279,7 @@ public class InspectorService extends AccessibilityService {
                 case MotionEvent.ACTION_UP:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
                     handler.removeCallbacks(longPress);
-                    if (!dragged[0] && !longDone[0] && !locked()) onTap.onClick(v);
+                    if (!dragged[0] && !longDone[0] && !locked() && !adminStopped()) onTap.onClick(v);
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                     v.animate().scaleX(1f).scaleY(1f).setDuration(80).start();
