@@ -61,10 +61,10 @@ public class MainActivity extends Activity {
         box.addView(in);
         in.setOnClickListener(v -> {
             in.setEnabled(false);
-            signIn(email.getText().toString().trim(), pass.getText().toString(), ok -> {
+            signIn(email.getText().toString().trim(), pass.getText().toString(), err -> {
                 in.setEnabled(true);
-                if (ok) load();
-                else toast("Sign-in failed - check the email and password");
+                if (err.isEmpty()) load();
+                else toast("Sign-in failed: " + err);
             });
         });
         ScrollView sc = new ScrollView(this);
@@ -72,22 +72,32 @@ public class MainActivity extends Activity {
         setContentView(sc);
     }
 
-    private void signIn(String email, String password, java.util.function.Consumer<Boolean> done) {
+    private void signIn(String email, String password, java.util.function.Consumer<String> done) {
         new Thread(() -> {
-            boolean ok = false;
+            String err = "no answer from the server (check internet)";
             try {
                 JSONObject body = new JSONObject().put("email", email).put("password", password);
                 HttpURLConnection c = open("POST", "/auth/v1/token?grant_type=password", null, body);
-                if (c.getResponseCode() == 200) {
-                    JSONObject j = new JSONObject(read(c));
-                    token = j.optString("access_token", "");
-                    ok = !token.isEmpty();
-                }
+                int code = c.getResponseCode();
+                String s = read(c);
                 c.disconnect();
-            } catch (Exception ignored) {
+                if (code == 200) {
+                    token = new JSONObject(s).optString("access_token", "");
+                    err = token.isEmpty() ? "no token returned" : "";
+                } else {
+                    String msg = "";
+                    try {
+                        JSONObject j = new JSONObject(s);
+                        msg = j.optString("error_description", j.optString("msg", j.optString("error", "")));
+                    } catch (Exception ignored) {
+                    }
+                    err = "(" + code + ") " + (msg.isEmpty() ? s : msg);
+                }
+            } catch (Exception e) {
+                err = e.getMessage() == null ? e.toString() : e.getMessage();
             }
-            boolean r = ok;
-            main.post(() -> done.accept(r));
+            String fe = err;
+            main.post(() -> done.accept(fe));
         }).start();
     }
 
