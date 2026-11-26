@@ -19,7 +19,8 @@ import java.util.Calendar;
 import java.util.Locale;
 
 /**
- * 🕒 A live clock in the top-right corner (the phone's time, to a tenth of a second), for
+ * 🕒 A live clock in the top-right corner (the true time from the internet - the same on every
+ * phone - to a tenth of a second; ✓ = checked, ⚠ = still the phone's own time), for
  * pressing at the exact moment a booking opens. Drag it to move it (the place is kept);
  * ⚙ Settings "🕒 Clock" shows / hides it.
  */
@@ -75,6 +76,21 @@ final class LiveClock {
                     }
                     return true;
                 case MotionEvent.ACTION_UP:
+                    if (Math.abs(e.getRawX() - down[0]) < 12 * d && Math.abs(e.getRawY() - down[1]) < 12 * d) {
+                        // A tap (not a drag): how far off this phone's own clock is.
+                        String msg;
+                        if (!NetTime.synced()) {
+                            msg = "🕒 ⚠ Phone time - the internet time wasn't reached yet (it keeps trying)";
+                        } else {
+                            long a = NetTime.phoneAheadMs();
+                            msg = "🕒 ✓ Internet time from " + NetTime.source() + ". This phone's clock is "
+                                    + (Math.abs(a) < 50 ? "right" : String.format(Locale.ROOT, "%.1f s %s", Math.abs(a) / 1000.0,
+                                    a > 0 ? "ahead" : "behind")) + " - the clock here shows the true time.";
+                        }
+                        android.widget.Toast.makeText(service, msg, android.widget.Toast.LENGTH_LONG).show();
+                    }
+                    sp.edit().putInt("clock_x", lp.x).putInt("clock_y", lp.y).apply();
+                    return true;
                 case MotionEvent.ACTION_CANCEL:
                     sp.edit().putInt("clock_x", lp.x).putInt("clock_y", lp.y).apply();
                     return true;
@@ -95,15 +111,19 @@ final class LiveClock {
                 boolean on = sp.getBoolean("show_clock", true);
                 t.setVisibility(on ? View.VISIBLE : View.GONE);
                 if (on) {
+                    // The true time from the internet (the same on every phone), not the phone's own clock.
+                    NetTime.checkIfDue();
                     Calendar c = Calendar.getInstance();
+                    c.setTimeInMillis(NetTime.now());
                     int h = c.get(Calendar.HOUR);
                     if (h == 0) h = 12;
-                    t.setText(String.format(Locale.ROOT, "%d:%02d:%02d.%d %s", h, c.get(Calendar.MINUTE),
+                    t.setText(String.format(Locale.ROOT, "%d:%02d:%02d.%d %s %s", h, c.get(Calendar.MINUTE),
                             c.get(Calendar.SECOND), c.get(Calendar.MILLISECOND) / 100,
-                            c.get(Calendar.AM_PM) == Calendar.AM ? "AM" : "PM"));
+                            c.get(Calendar.AM_PM) == Calendar.AM ? "AM" : "PM",
+                            NetTime.synced() ? "✓" : "⚠"));
                 }
                 // Each tenth of a second, lined up with the clock's own tenths; hidden: once a second.
-                long ms = System.currentTimeMillis() % 100;
+                long ms = NetTime.now() % 100;
                 HANDLER.postDelayed(this, on ? 100 - ms : 1000);
             }
         };
