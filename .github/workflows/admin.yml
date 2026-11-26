@@ -1,0 +1,45 @@
+name: Build Gowtham Admin APK
+
+on:
+  push:
+    branches: ["main", "seva-fast-direct"]
+    paths: ["admin/**", ".github/workflows/admin.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: admin-apk
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build debug APK
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon :admin:assembleDebug -PversionCode=${{ github.run_number }}
+          cp admin/build/outputs/apk/debug/admin-debug.apk GowthamAdmin.apk
+          ls -l GowthamAdmin.apk
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: admin-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Gowtham Admin build ${{ github.run_number }}
+          body: |
+            Gowtham Admin - built from ${{ github.sha }}.
+            Download: https://github.com/${{ github.repository }}/releases/download/admin-${{ github.run_number }}/GowthamAdmin.apk
+          files: GowthamAdmin.apk
+          make_latest: "false"
