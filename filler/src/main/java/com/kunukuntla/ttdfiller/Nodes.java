@@ -168,7 +168,7 @@ final class Nodes {
         Path p = new Path();
         p.moveTo(Math.max(0, x), Math.max(0, y));
         return s.dispatchGesture(new GestureDescription.Builder()
-                .addStroke(new GestureDescription.StrokeDescription(p, 0, 50)).build(), null, null);
+                .addStroke(new GestureDescription.StrokeDescription(p, 0, 30)).build(), null, null);
     }
 
     /** Clicked through accessibility (itself, or its nearest clickable parent); a tap on it when that is refused. */

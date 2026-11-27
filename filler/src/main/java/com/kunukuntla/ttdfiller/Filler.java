@@ -39,7 +39,7 @@ final class Filler {
         void finished(boolean ok, String report, String details);
     }
 
-    private static final long POLL = 30;
+    private static final long POLL = 20;
 
     private static final class Step {
         final String title;
@@ -56,9 +56,11 @@ final class Filler {
         // the list while this step works it
         Set<String> before;
         long openedAt;
+        int polls;
         AccessibilityNodeInfo item;
         String itemText, tapInfo;
         int pressWay, wayAt, pressStart;
+        long pressedAt;
         boolean reopened;
         int[] ways;
         java.util.Set<AccessibilityNodeInfo> optsBefore = new java.util.HashSet<>();
@@ -462,7 +464,7 @@ final class Filler {
             return;
         }
         int way = st.ways[st.wayAt];
-        long wait = way == CLICK ? (st.careful ? 500 : 300) : (st.careful ? 900 : 700);
+        long wait = st.careful ? (way == CLICK ? 500 : 900) : st.wayAt == 0 ? 650 : 250;
         if (way == CLICK) {
             st.openedAt = SystemClock.uptimeMillis();
             if (!f.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
@@ -472,7 +474,7 @@ final class Filler {
             }
             watchNew(st, st.openedAt + wait);
         } else if (way == TAP) {
-            tapNode(f, true, info -> {
+            tapBox(f, scrollTarget(st), info -> {
                 st.tapInfo = info;
                 st.openedAt = SystemClock.uptimeMillis();
                 watchNew(st, st.openedAt + wait);
@@ -496,7 +498,8 @@ final class Filler {
         }
         List<AccessibilityNodeInfo> fresh = new ArrayList<>();
         for (AccessibilityNodeInfo n : Form.optionsAll(s)) if (!st.optsBefore.contains(n)) fresh.add(n);
-        if (fresh.isEmpty()) fresh = Form.newFitting(Form.near(f), st.before, st.options);
+        st.polls++;
+        if (fresh.isEmpty() && st.polls % 3 == 0) fresh = Form.newFitting(Form.near(f), st.before, st.options);
         if (!fresh.isEmpty()) {
             int way = st.ways[st.wayAt];
             lastListBox = f;
@@ -547,6 +550,7 @@ final class Filler {
             return;
         }
         long wait = st.careful ? 700 : 400;
+        st.pressedAt = SystemClock.uptimeMillis();
         if (way == 0) {
             if (!item.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                 st.pressWay++;
@@ -571,6 +575,14 @@ final class Filler {
             st.problem = null;
             st.how += ", \"" + st.itemText + "\" by " + (st.pressWay == 0 ? "click" : st.pressWay == 1 ? "tap" : "select");
             lastListBox = null; // it closed with the choice
+            st.then.run();
+            return;
+        }
+        if (!st.careful && SystemClock.uptimeMillis() - st.pressedAt > 60 && !stillThere(st.item)) {
+            // The list closed with the click: on to the next box now (the check reads this one again).
+            st.problem = "chose \"" + st.itemText + "\" but the box didn't show it yet";
+            st.how += ", \"" + st.itemText + "\" clicked";
+            lastListBox = null;
             st.then.run();
             return;
         }
@@ -639,6 +651,62 @@ final class Filler {
             if (Nodes.onScreen(s, r2)) then.accept("scrolled, " + tapIn(r2));
             else then.accept("no place on screen " + (r2 == null ? Nodes.bounds(n).toShortString() : r2.toShortString()));
         }, 320);
+    }
+
+    /** What to scroll to so this pilgrim's whole block is in view: its last box (one scroll per pilgrim). */
+    private AccessibilityNodeInfo scrollTarget(Step st) {
+        if (st.pilgrim < 0 || form == null) return null;
+        AccessibilityNodeInfo[] p = st.pilgrim < form.pilgrims.size() ? form.pilgrims.get(st.pilgrim) : null;
+        if (p == null) return null;
+        return p[Form.IDNUM] != null ? p[Form.IDNUM] : p[Form.PROOF];
+    }
+
+    /**
+     * A box tapped where it really is. Out of view: the page scrolled to {@code below} first (its
+     * pilgrim's last box, so the rest of the block comes into view with it), then to the box
+     * itself if that wasn't enough - each time looked at every 25 ms until it holds still.
+     */
+    private void tapBox(AccessibilityNodeInfo n, AccessibilityNodeInfo below, java.util.function.Consumer<String> then) {
+        Rect r = rectOf(n);
+        if (Nodes.onScreen(s, r)) {
+            then.accept(tapIn(r));
+            return;
+        }
+        AccessibilityNodeInfo first = below != null && !below.equals(n) ? below : n;
+        first.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+        settle(n, SystemClock.uptimeMillis() + 450, null, r1 -> {
+            if (Nodes.onScreen(s, r1)) {
+                then.accept("scrolled, " + tapIn(r1));
+                return;
+            }
+            if (first == n) {
+                then.accept("no place on screen " + (r1 == null ? Nodes.bounds(n).toShortString() : r1.toShortString()));
+                return;
+            }
+            n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+            settle(n, SystemClock.uptimeMillis() + 400, null, r2 -> {
+                if (Nodes.onScreen(s, r2)) then.accept("scrolled twice, " + tapIn(r2));
+                else then.accept("no place on screen " + (r2 == null ? Nodes.bounds(n).toShortString() : r2.toShortString()));
+            });
+        });
+    }
+
+    /** Until the box is on screen and in the same place on two looks (the scroll is over), or {@code until}. */
+    private void settle(AccessibilityNodeInfo n, long until, Rect last, java.util.function.Consumer<Rect> then) {
+        Rect r = rectOf(n);
+        if (Nodes.onScreen(s, r) && r.equals(last) || SystemClock.uptimeMillis() >= until) {
+            then.accept(r);
+            return;
+        }
+        later(() -> settle(n, until, r, then), 25);
+    }
+
+    private static Rect rectOf(AccessibilityNodeInfo n) {
+        try {
+            n.refresh();
+        } catch (RuntimeException ignored) {
+        }
+        return Nodes.realRect(n);
     }
 
     private String tapIn(Rect r) {

@@ -68,6 +68,10 @@ public class FillService extends AccessibilityService {
     private boolean reportOk;
     private long reportUntil;
 
+    private final Runnable secondLook = () -> {
+        if (!checkQueued) check();
+    };
+
     private SharedPreferences prefs() {
         return Booking.prefs(this);
     }
@@ -135,7 +139,11 @@ public class FillService extends AccessibilityService {
             lastBoxes = boxes;
             maybeAuto();
             // A page that went quiet after one look still gets its second look (for "by itself").
-            if (!autoDone && formLooks < 2) h.postDelayed(this::queueCheck, 320);
+            // The second look soon (the boxes holding still), not after the usual 0.3 s.
+            if (!autoDone && formLooks < 2) {
+                h.removeCallbacks(secondLook);
+                h.postDelayed(secondLook, 120);
+            }
         } else {
             formLooks = 0;
             lastBoxes = 0;
