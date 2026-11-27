@@ -186,6 +186,7 @@ final class Filler {
     private void type(Step st, int tries) {
         AccessibilityNodeInfo n = node(st);
         if (n == null) {
+            if (pageGone(tries)) return;
             if (tries < 15) {
                 later(() -> type(st, tries + 1), 100);
                 return;
@@ -212,6 +213,13 @@ final class Filler {
         boolean done = st.retry ? paste(n, st.want) || setText(n, st.want) : setText(n, st.want) || paste(n, st.want);
         if (!done) st.problem = "the page didn't take the text";
         next();
+    }
+
+    /** The pilgrim boxes all went (another page came): stopped at once rather than box by box. */
+    private boolean pageGone(int tries) {
+        if (tries < 4 || !Form.read(s).pilgrims.isEmpty()) return false;
+        end(false, "✗ The pilgrim page went away - stopped. Open it again and press 📝 Fill.");
+        return true;
     }
 
     private static boolean setText(AccessibilityNodeInfo n, String v) {
@@ -242,6 +250,7 @@ final class Filler {
     private void choose(Step st, int tries) {
         AccessibilityNodeInfo f = node(st);
         if (f == null) {
+            if (pageGone(tries)) return;
             if (tries < 15) {
                 later(() -> choose(st, tries + 1), 100);
                 return;

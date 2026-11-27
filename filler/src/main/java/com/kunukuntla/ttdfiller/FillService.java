@@ -15,6 +15,7 @@ import android.text.InputType;
 import android.text.TextWatcher;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -288,13 +289,22 @@ public class FillService extends AccessibilityService {
     private void showInfo() {
         if (info == null || filler != null && filler.running()) return;
         if (!report.isEmpty() && SystemClock.uptimeMillis() < reportUntil) {
-            say(report, reportOk ? 0xFFA5D6A7 : 0xFFFFAB91);
+            say(shortReport(), reportOk ? 0xFFA5D6A7 : 0xFFFFAB91);
             return;
         }
         Booking b = Booking.picked(this);
         if (!Supa.signedIn(this)) say("Open TTD Filler and sign in", 0xFFFFAB91);
         else if (b == null) say("No booking picked - tap 👥", 0xFFFFE082);
         else say(b.title() + (prefs().getBoolean("auto", true) ? "\nfills by itself on the pilgrim page" : ""), Color.WHITE);
+    }
+
+    /** The report as it fits under the button: its first 4 lines (all of it is in the app). */
+    private String shortReport() {
+        String[] lines = report.split("\n");
+        if (lines.length <= 4) return report;
+        StringBuilder b = new StringBuilder();
+        for (int i = 0; i < 4; i++) b.append(i > 0 ? "\n" : "").append(lines[i]);
+        return b.append("\n… ").append(lines.length - 4).append(" more - see the TTD Filler app").toString();
     }
 
     // ---- 👥 the picker, over the TTD page ----
@@ -305,7 +315,17 @@ public class FillService extends AccessibilityService {
             return;
         }
         DisplayMetrics dm = getResources().getDisplayMetrics();
-        LinearLayout panel = new LinearLayout(this);
+        // Back closes it (it holds the keys while its search box is open).
+        LinearLayout panel = new LinearLayout(this) {
+            @Override
+            public boolean dispatchKeyEvent(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+                    if (e.getAction() == KeyEvent.ACTION_UP) closePicker();
+                    return true;
+                }
+                return super.dispatchKeyEvent(e);
+            }
+        };
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(12), dp(12), dp(12), dp(12));
         GradientDrawable bg = new GradientDrawable();
