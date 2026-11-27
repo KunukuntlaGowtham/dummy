@@ -179,7 +179,8 @@ public class MainActivity extends Activity {
             Button copy = small("📋 Copy", 0xFF5E35B1);
             copy.setOnClickListener(v -> {
                 android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("TTD Filler report", last));
+                String all = last + "\n\n" + prefs().getString("last_details", "");
+                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("TTD Filler report", all.trim()));
                 toast("Report copied - paste it to Claude");
             });
             rh.addView(copy);
@@ -187,6 +188,13 @@ public class MainActivity extends Activity {
             TextView body = text(last, 0xFF212121);
             body.setTextIsSelectable(true);
             r.addView(body);
+            String details = prefs().getString("last_details", "");
+            if (!details.isEmpty()) {
+                TextView dv = text(details, 0xFF757575);
+                dv.setTextSize(11);
+                dv.setTextIsSelectable(true);
+                r.addView(dv);
+            }
             box.addView(r);
         }
 

@@ -268,6 +268,40 @@ final class Form {
         return out;
     }
 
+    /** The list's lines among {@code near} (what {@link #near} gave: one read used for every look). */
+    static List<AccessibilityNodeInfo> optionsIn(List<AccessibilityNodeInfo> near) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        for (AccessibilityNodeInfo n : near) if (Nodes.isOption(n) && !Nodes.label(n).isEmpty()) out.add(n);
+        return out;
+    }
+
+    /** List lines anywhere on the page (a list the page draws away from its box). */
+    static List<AccessibilityNodeInfo> optionsAll(AccessibilityService s) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        for (AccessibilityNodeInfo n : Nodes.all(s)) if (Nodes.isOption(n) && !Nodes.label(n).isEmpty()) out.add(n);
+        return out;
+    }
+
+    /** Words among {@code near} that weren't there in {@code before} and fit one of {@code wants}. */
+    static List<AccessibilityNodeInfo> newFitting(List<AccessibilityNodeInfo> near, java.util.Set<String> before, String[] wants) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        for (AccessibilityNodeInfo n : near) {
+            if (Nodes.isField(n)) continue;
+            String l = Nodes.label(n);
+            if (l.isEmpty() || before.contains(signature(n, l)) || !Match.fits(l, wants)) continue;
+            out.add(n);
+        }
+        return out;
+    }
+
+    /** The choice a list box shows: its value, else the line under it ({@code name}: the box's own name, not a choice). */
+    static String chosen(AccessibilityNodeInfo field, String name) {
+        if (field == null) return "";
+        String v = value(field);
+        if (!v.isEmpty() && !Match.squash(v).equals(name)) return v;
+        return shown(field);
+    }
+
     /** Something else to press that may open the list: a clickable part of its container, else its arrow. */
     static AccessibilityNodeInfo opener(AccessibilityNodeInfo field) {
         AccessibilityNodeInfo icon = null;

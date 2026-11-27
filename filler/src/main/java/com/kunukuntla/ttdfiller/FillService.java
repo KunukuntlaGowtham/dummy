@@ -58,6 +58,9 @@ public class FillService extends AccessibilityService {
     private Filler filler;
 
     private boolean checkQueued, autoDone;
+    /** The page as the last look read it (a fill started right after uses it instead of reading again). */
+    private Form lastForm;
+    private long lastFormAt;
     private long lastCheck;
     private int formLooks, lastBoxes, goneLooks;
     private String report = "";
@@ -118,7 +121,11 @@ public class FillService extends AccessibilityService {
         String front = Nodes.frontPackage(this);
         boolean ttd = TTD.equals(front);
         int boxes = 0;
-        if (!busy && (ttd || BROWSERS.contains(front))) boxes = Form.read(this).pilgrims.size();
+        if (!busy && (ttd || BROWSERS.contains(front))) {
+            lastForm = Form.read(this);
+            lastFormAt = SystemClock.uptimeMillis();
+            boxes = lastForm.pilgrims.size();
+        }
         setPillShown(ttd || boxes > 0 || busy || picker != null);
         if (busy) return;
         if (boxes > 0) {
@@ -156,18 +163,21 @@ public class FillService extends AccessibilityService {
             }
 
             @Override
-            public void finished(boolean ok, String r) {
+            public void finished(boolean ok, String r, String details) {
                 report = r;
                 reportOk = ok;
                 reportUntil = SystemClock.uptimeMillis() + 15_000;
-                prefs().edit().putString("last_report", r).putLong("last_report_at", System.currentTimeMillis()).apply();
+                prefs().edit().putString("last_report", r).putString("last_details", details)
+                        .putLong("last_report_at", System.currentTimeMillis()).apply();
                 fillBtn.setText("📝 Fill");
                 showInfo();
                 h.postDelayed(FillService.this::showInfo, 15_100);
             }
         });
         fillBtn.setText("⏹ Stop");
-        filler.start();
+        Form recent = lastForm != null && SystemClock.uptimeMillis() - lastFormAt < 1500 ? lastForm : null;
+        lastForm = null;
+        filler.start(recent);
     }
 
     private void fillTapped() {
