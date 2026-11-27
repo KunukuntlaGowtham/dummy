@@ -68,7 +68,9 @@ public class RegistryActivity extends Activity {
     private WebView web;
     private ProgressBar bar;
     private View errorView;
-    private TextView awakeButton;
+    private TextView awakeButton, phoneButton;
+    /** The phone layout laid over the site (assets/registry-mobile.css). */
+    private String mobileCss = "";
     private Dialog popup;
     private boolean mainError;
 
@@ -92,11 +94,18 @@ public class RegistryActivity extends Activity {
         tools.setBackgroundColor(0xFF0F0F0F);
         tools.setPadding(dp(12), dp(6), dp(6), dp(6));
         TextView title = new TextView(this);
-        title.setText("🧾 Sevak Registry");
+        title.setText("🧾 Registry");
         title.setTextColor(0xFFFFE500);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         title.setTextSize(16);
         tools.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        phoneButton = tool("");
+        phoneButton.setOnClickListener(v -> {
+            prefs().edit().putBoolean("phone", !phoneLayout()).apply();
+            showPhoneButton();
+            applyLayout(web);
+        });
+        tools.addView(phoneButton);
         awakeButton = tool("");
         awakeButton.setOnClickListener(v -> setAwake(!awake()));
         tools.addView(awakeButton);
@@ -125,6 +134,8 @@ public class RegistryActivity extends Activity {
         root.addView(content, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
         setContentView(root);
 
+        mobileCss = readAsset("registry-mobile.css");
+        showPhoneButton();
         setAwake(awake());
         if (saved == null || web.restoreState(saved) == null) web.loadUrl(SITE);
     }
@@ -191,6 +202,51 @@ public class RegistryActivity extends Activity {
         else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         awakeButton.setText(on ? "☀ Awake" : "☾ Sleep ok");
         awakeButton.setTextColor(on ? 0xFFFFE500 : 0xFFA5A5A5);
+    }
+
+    // ---- the phone layout ----
+
+    private boolean phoneLayout() {
+        return prefs().getBoolean("phone", true);
+    }
+
+    private void showPhoneButton() {
+        phoneButton.setText(phoneLayout() ? "📱 Phone" : "🖥 Desktop");
+    }
+
+    private String readAsset(String name) {
+        try (java.io.InputStream in = getAssets().open(name)) {
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            return out.toString("UTF-8");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * The site laid out for the phone (or back to the laptop layout): a style sheet put into the
+     * page - the site itself is unchanged - and the chosen tab kept in view in the swipeable tab strip.
+     */
+    private void applyLayout(WebView view) {
+        String js;
+        if (!phoneLayout() || mobileCss.isEmpty()) {
+            js = "(function(){var s=document.getElementById('gowtham-mobile');if(s)s.remove();})();";
+        } else {
+            js = "(function(){var s=document.getElementById('gowtham-mobile');"
+                    + "if(!s){s=document.createElement('style');s.id='gowtham-mobile';(document.head||document.documentElement).appendChild(s);}"
+                    + "s.textContent=" + org.json.JSONObject.quote(mobileCss) + ";"
+                    + "if(window.__gowthamTabs)return;window.__gowthamTabs=1;"
+                    + "document.addEventListener('click',function(){setTimeout(function(){"
+                    + "if(!document.getElementById('gowtham-mobile'))return;"
+                    + "var n=document.querySelector('.nav-tabs'),a=n&&n.querySelector('.tab-btn.active');if(!a)return;"
+                    + "var ar=a.getBoundingClientRect(),nr=n.getBoundingClientRect();"
+                    + "n.scrollBy({left:(ar.left+ar.width/2)-(nr.left+nr.width/2),behavior:'smooth'});},80);},true);"
+                    + "})();";
+        }
+        view.evaluateJavascript(js, null);
     }
 
     // ---- the WebView, set up for the site ----
@@ -269,8 +325,14 @@ public class RegistryActivity extends Activity {
         }
 
         @Override
+        public void onPageCommitVisible(WebView view, String url) {
+            if (main) applyLayout(view); // as soon as the page shows, not only once it has finished loading
+        }
+
+        @Override
         public void onPageFinished(WebView view, String url) {
             view.evaluateJavascript(HOOK, null);
+            if (main) applyLayout(view);
             if (main) {
                 bar.setVisibility(View.GONE);
                 if (!mainError) hideError();
