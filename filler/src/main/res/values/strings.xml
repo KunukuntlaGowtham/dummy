@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TTD Filler</string>
+    <string name="a11y_description">Fills the pilgrim details (name, age, gender, photo ID proof and ID number) on the TTD booking page from the booking you pick, read from your ttd_db table. It reads only the TTD page in front of you and types into its boxes.</string>
+</resources>
