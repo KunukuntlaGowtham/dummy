@@ -128,6 +128,22 @@ final class SlotPage {
         return null;
     }
 
+    /** The review page's "No. of Tickets" (the number after those words), -1 when not shown. */
+    static int reviewTickets(List<AccessibilityNodeInfo> nodes) {
+        boolean after = false;
+        for (AccessibilityNodeInfo n : nodes) {
+            String l = Nodes.label(n);
+            if (l.isEmpty()) continue;
+            String q = Match.squash(l);
+            if (q.equals("nooftickets") || q.equals("numberoftickets")) {
+                after = true;
+                continue;
+            }
+            if (after) return l.trim().matches("\\d{1,2}") ? Integer.parseInt(l.trim()) : -1;
+        }
+        return -1;
+    }
+
     static boolean isSlotPage(List<AccessibilityNodeInfo> nodes) {
         return !dayCells(nodes).isEmpty();
     }

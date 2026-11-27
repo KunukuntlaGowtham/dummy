@@ -245,10 +245,15 @@ final class GoRun {
         String[] wants = new String[need];
         for (int i = 0; i < need; i++) wants[i] = String.valueOf(need - i);
         ListPick.choose(s, h, alive, box, wants, (ok, how) -> {
-            tickets = Match.age(Form.value(box)).isEmpty() ? need : Integer.parseInt(Match.age(Form.value(box)));
+            int shown = ticketsShown(box);
             log("tickets: " + how);
-            if (!ok) note("Number of Tickets: " + how);
-            else if (tickets < need) note("only " + tickets + " tickets offered - the first " + tickets + " people are filled");
+            if (!ok || shown <= 0) {
+                // Never on with the wrong number of tickets: that would book the wrong people.
+                end(false, "✗ Couldn't set Number of Tickets to " + need + " - " + how + "\nStopped before Continue.");
+                return;
+            }
+            tickets = shown;
+            if (tickets < need) note("the list offers up to " + tickets + " tickets" + " - the first " + tickets + " people are filled");
             then.run();
         });
     }
@@ -269,8 +274,24 @@ final class GoRun {
         tapNode(target, () -> later(this::pressContinue, 200));
     }
 
+    private static int ticketsShown(AccessibilityNodeInfo box) {
+        try {
+            box.refresh();
+        } catch (RuntimeException ignored) {
+        }
+        String d = Match.age(Form.value(box));
+        return d.isEmpty() ? -1 : Integer.parseInt(d);
+    }
+
     private void pressContinue() {
-        AccessibilityNodeInfo c = SlotPage.button(Nodes.all(s), "Continue");
+        List<AccessibilityNodeInfo> nodes = Nodes.all(s);
+        // The tickets once more, just before Continue (the page may have put them back).
+        AccessibilityNodeInfo tb = SlotPage.ticketsBox(nodes);
+        if (tb != null && tickets > 0 && ticketsShown(tb) != tickets) {
+            end(false, "✗ Number of Tickets shows " + ticketsShown(tb) + ", not " + tickets + " - stopped before Continue.");
+            return;
+        }
+        AccessibilityNodeInfo c = SlotPage.button(nodes, "Continue");
         if (c == null) {
             end(false, "✗ No Continue button on the slot page");
             return;
@@ -337,7 +358,15 @@ final class GoRun {
                 end(false, "✗ The review page (Pay Now) didn't come" + pageMessage());
                 return;
             }
-            String head = summary();
+            // The review page's own "No. of Tickets" must be what was chosen - else no Pay Now.
+            int onReview = SlotPage.reviewTickets(Nodes.all(s));
+            int expected = tickets > 0 ? tickets : need;
+            if (onReview >= 0 && onReview != expected) {
+                end(false, "✗ The review page shows " + onReview + " ticket" + (onReview == 1 ? "" : "s") + ", not "
+                        + expected + " - Pay Now NOT pressed. Go Back and fix it.");
+                return;
+            }
+            String head = summary() + (onReview >= 0 ? " · review shows " + onReview : "");
             if (!payNow) {
                 end(true, "✅ " + head + "\n➡ Review page is up - press Pay Now yourself");
                 return;

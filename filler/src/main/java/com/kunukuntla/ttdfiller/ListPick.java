@@ -32,7 +32,7 @@ final class ListPick {
     private final Done done;
     private Set<AccessibilityNodeInfo> before;
     private AccessibilityNodeInfo item;
-    private String itemText = "";
+    private String itemText = "", seen = "";
 
     private ListPick(AccessibilityService s, Handler h, BooleanSupplier alive, AccessibilityNodeInfo box, String[] wants, Done done) {
         this.s = s;
@@ -49,7 +49,9 @@ final class ListPick {
     }
 
     private void start() {
-        if (Match.fits(value(), wants)) {
+        // Already right only when it shows the FIRST choice (the others are only fallbacks for a
+        // list that doesn't offer it - a box showing "1" is not "5").
+        if (Match.fits(value(), new String[]{wants[0]})) {
             done.done(true, "already " + value());
             return;
         }
@@ -74,6 +76,7 @@ final class ListPick {
         for (AccessibilityNodeInfo n : Form.optionsAll(s)) if (!before.contains(n)) fresh.add(n);
         if (!fresh.isEmpty()) {
             List<String> texts = Form.labels(fresh);
+            seen = " (its list: " + String.join(" | ", texts) + ")";
             int i = Match.best(texts, wants);
             if (i < 0) {
                 close();
@@ -100,7 +103,7 @@ final class ListPick {
 
     private void confirm(long until, boolean tapped) {
         if (Match.fits(value(), new String[]{itemText})) {
-            done.done(true, "chose " + itemText);
+            done.done(true, "chose " + itemText + seen);
             return;
         }
         if (SystemClock.uptimeMillis() < until) {
