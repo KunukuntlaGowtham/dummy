@@ -308,6 +308,22 @@ final class FastTick {
         return running;
     }
 
+    /** The admin's orders on ⚡: hidden (taps go through to the page) when stopped or turned off. */
+    static void applyAdmin(AccessibilityService service) {
+        if (button == null) return;
+        boolean off = License.stopped(service) || License.buttonOff(service, "fast");
+        int want = off ? View.GONE : View.VISIBLE;
+        if (button.getVisibility() == want) return;
+        button.setVisibility(want);
+        try {
+            WindowManager.LayoutParams lp = (WindowManager.LayoutParams) button.getLayoutParams();
+            if (off) lp.flags |= WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            else lp.flags &= ~WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+            button.getContext().getSystemService(WindowManager.class).updateViewLayout(button, lp);
+        } catch (RuntimeException ignored) {
+        }
+    }
+
     /** The admin stopped this phone: end a ⚡ run that is going. */
     static void stopIfRunning() {
         if (shown != null && shown.isRunning()) shown.stop("⚡ Stopped");

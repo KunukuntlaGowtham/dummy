@@ -57,31 +57,117 @@ public class InspectorService extends AccessibilityService {
         handler.postDelayed(accountCheck, Auth.CHECK_EVERY_MS);
         showButton();
         handler.postDelayed(orderPoll, 3000); // the admin's orders (stop / buttons off), checked fast
+        applyAdmin(); // the orders kept from last time apply at once (before the first poll answers)
     }
+
+    // ---- the admin's orders: a stopped phone, buttons turned off -------------------------
 
     /** The admin's orders, polled every ~30 s while the service is on. */
     private final Runnable orderPoll = new Runnable() {
         @Override
         public void run() {
             if (destroyed) return;
-            License.poll(InspectorService.this, () -> {
-                applyShown();   // a button turned off by the admin goes at once
-                if (License.stopped(InspectorService.this)) {
-                    if (ticker != null && ticker.isRunning()) ticker.stop("Stopped");
-                    if (deleter != null && deleter.isRunning()) deleter.stop("Stopped");
-                    FastTick.stopIfRunning();
-                    Toast.makeText(InspectorService.this, License.adminMessage(InspectorService.this), Toast.LENGTH_LONG).show();
-                }
-            });
+            License.poll(InspectorService.this, InspectorService.this::applyAdmin);
             handler.postDelayed(this, 30000);
         }
     };
+
+    /** What the screen shows now (so a change is acted on once, from the poll or the 15-min check). */
+    private boolean appliedStopped;
+    private String appliedOff = null;
+
+    /**
+     * The orders onto the screen: buttons off / on, ⚡ hidden when off, the red notice when the
+     * phone is stopped - and everything running stopped the moment it is.
+     */
+    private void applyAdmin() {
+        if (destroyed) return;
+        boolean stopped = License.stopped(this);
+        String off = License.offKeys(this);
+        boolean changed = stopped != appliedStopped || !off.equals(appliedOff);
+        if (stopped && !appliedStopped) {
+            adminStopRuns();
+            Toast.makeText(this, License.adminMessage(this), Toast.LENGTH_LONG).show();
+        } else if (!stopped && appliedStopped) {
+            Toast.makeText(this, "✅ The admin allowed this phone again", Toast.LENGTH_SHORT).show();
+        }
+        appliedStopped = stopped;
+        appliedOff = off;
+        if (changed) applyShown();
+        FastTick.applyAdmin(this);
+        showAdminBanner(stopped);
+    }
+
+    /** Everything running stops (Tick, ⚡, Delete, the trip, Go / Book, Clear, Auto's steps). */
+    private void adminStopRuns() {
+        AutoFlow.goActive = false;
+        cancelLinkedTick();
+        fastFinishGen++; // ⚡'s finish (clear, Continue, the trip) gives up
+        if (booker != null && booker.isRunning()) booker.stop("Stopped");
+        if (ticker != null && ticker.isRunning()) ticker.stop("Stopped");
+        if (clearer != null && clearer.isRunning()) clearer.stop("Stopped");
+        if (deleter != null && deleter.isRunning()) deleter.stop("Stopped");
+        if (flow != null) flow.cancel();
+        if (retrying) {
+            retrying = false;
+            testTripEnded();
+            saveRetryLog("↻ Retry stopped: the admin stopped this phone");
+        }
+        endGo();
+        FastTick.stopIfRunning();
+    }
+
+    /** The admin stopped this phone, or turned this button off: its automatic steps don't run either. */
+    private boolean adminBlocks(String key) {
+        return License.stopped(this) || (key != null && License.buttonOff(this, key));
+    }
 
     /** The admin stopped this phone: say so, and block the tap. */
     private boolean adminStopped() {
         if (!License.stopped(this)) return false;
         Toast.makeText(this, License.adminMessage(this), Toast.LENGTH_LONG).show();
         return true;
+    }
+
+    /** The red notice at the top while the phone is stopped (taps go through it to the page). */
+    private TextView adminBanner;
+
+    private void showAdminBanner(boolean show) {
+        if (windowManager == null) return;
+        if (!show) {
+            if (adminBanner != null) adminBanner.setVisibility(View.GONE);
+            return;
+        }
+        if (adminBanner == null) {
+            adminBanner = new TextView(this);
+            adminBanner.setTextColor(Color.WHITE);
+            adminBanner.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            adminBanner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            adminBanner.setPadding(dp(14), dp(7), dp(14), dp(7));
+            adminBanner.setMaxWidth(getResources().getDisplayMetrics().widthPixels - dp(48));
+            GradientDrawable bg = new GradientDrawable();
+            bg.setCornerRadius(dp(16));
+            bg.setColor(0xEEC62828);
+            adminBanner.setBackground(bg);
+            adminBanner.setElevation(dp(6));
+            WindowManager.LayoutParams lp = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+            lp.y = dp(108); // under the 📍 badge and the 🕒 clock
+            try {
+                windowManager.addView(adminBanner, lp);
+            } catch (RuntimeException e) {
+                adminBanner = null;
+                return;
+            }
+        }
+        adminBanner.setText(License.adminMessage(this));
+        adminBanner.setVisibility(View.VISIBLE);
     }
 
     /** Every 15 minutes in the background: the account (and its licence) checked with Supabase. */
@@ -140,7 +226,7 @@ public class InspectorService extends AccessibilityService {
                 pageCheckSoon();
                 if (watching) watchSoon(); // 👁 Watch: the red box follows a hand tick at once
                 // Right after page 3's Continue: page 4's Confirm pressed the moment it comes.
-                if (flow != null) flow.onEvent(evPkg.toString());
+                if (flow != null && !License.stopped(this)) flow.onEvent(evPkg.toString());
             }
             // Which screen of which app is open (for the app details), and the event recorder.
             if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getClassName() != null
@@ -172,6 +258,13 @@ public class InspectorService extends AccessibilityService {
         if (deleter != null) deleter.stop("Stopped");
         if (missedBox != null) missedBox.hide();
         LiveClock.hide();
+        if (adminBanner != null) {
+            try {
+                windowManager.removeView(adminBanner);
+            } catch (RuntimeException ignored) {
+            }
+            adminBanner = null;
+        }
         if (clearer != null) clearer.stop("Stopped");
         if (booker != null) booker.stop("Stopped");
         cancelLinkedTick();
@@ -433,7 +526,7 @@ public class InspectorService extends AccessibilityService {
         }
         if (watching && kind == PageKind.Kind.TICKING) watchSoon(); // page 3 came: its red box at once
         // During the retry its own steps press Continue: Auto's would press it twice.
-        if (auto && flow != null && !retrying) flow.onPage(kind, f, sp.getString("booking_pkg", ""), confirmInOrder);
+        if (auto && flow != null && !retrying && !adminBlocks("auto")) flow.onPage(kind, f, sp.getString("booking_pkg", ""), confirmInOrder);
         if (!show) return;
         if (kind == PageKind.Kind.OTHER) {
             pageBadge.setVisibility(View.GONE);
@@ -825,7 +918,7 @@ public class InspectorService extends AccessibilityService {
 
     /** 700 ms after page 3 came (Auto on): still page 3 and nothing running - the automatic Tick starts. */
     private void autoTickStart() {
-        if (destroyed || !AutoFlow.enabled(this)
+        if (destroyed || !AutoFlow.enabled(this) || adminBlocks("auto") || adminBlocks("tick")
                 || !getSharedPreferences("settings", MODE_PRIVATE).getBoolean("auto_start_page3", true)
                 || ticker.isRunning() || clearer.isRunning() || booker.isRunning()
                 || deleting() || scanning || retrying || (flow != null && flow.busy())) return;
@@ -964,7 +1057,7 @@ public class InspectorService extends AccessibilityService {
         pendingTick = () -> {
             pendingTick = null;
             goButton.setText(goLabel());
-            if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+            if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || adminBlocks("tick")) return;
             if (stillPage2()) return;
             tickButton.setText("■\nStop");
             ticker.start();
@@ -987,7 +1080,7 @@ public class InspectorService extends AccessibilityService {
 
     /** Go started on page 3 (Auto on): Tick starts now, no 1 s gap. */
     private void tickNow() {
-        if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning()) return;
+        if (!linkOn() || ticker.isRunning() || clearer.isRunning() || booker.isRunning() || adminBlocks("tick")) return;
         Toast.makeText(this, "Go: already on page 3 - Tick now", Toast.LENGTH_SHORT).show();
         tickButton.setText("■\nStop");
         ticker.start();
@@ -1058,7 +1151,7 @@ public class InspectorService extends AccessibilityService {
     }
 
     private boolean fastFinishGone(int g) {
-        return g != fastFinishGen || destroyed || deleting() || retrying || ticker.isRunning()
+        return g != fastFinishGen || destroyed || License.stopped(this) || deleting() || retrying || ticker.isRunning()
                 || booker.isRunning() || FastTick.busy();
     }
 
@@ -1340,6 +1433,7 @@ public class InspectorService extends AccessibilityService {
         int shown = 0;
         for (int i = 0; i < views.length; i++) {
             if (views[i] == null || !sp.getBoolean("show_" + SHOWN_KEYS[i], shownDefault(SHOWN_KEYS[i]))) continue;
+            if (License.buttonOff(this, SHOWN_KEYS[i]) || License.stopped(this)) continue; // hidden by the admin
             shown++;
         }
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
@@ -1704,6 +1798,11 @@ public class InspectorService extends AccessibilityService {
     /** 🗑 Delete: the trip now - test mode's numbers, else the rows the last Tick didn't add. */
     private void deleteNow() {
         if (flow == null) return;
+        if (adminBlocks("delete")) {
+            Toast.makeText(this, License.stopped(this) ? License.adminMessage(this)
+                    : "🗑 Delete is turned off by the admin - not going back", Toast.LENGTH_LONG).show();
+            return;
+        }
         if (flow.busy()) {
             // Never a silent stop: said, and in the report.
             Toast.makeText(this, "🗑 Not going back: a Back or Continue is still going - tap 🗑 again in a moment",

@@ -127,11 +127,19 @@ final class License {
 
     static String adminMessage(Context c) {
         String m = prefs(c).getString("adminMsg", "");
-        return m.isEmpty() ? "⛔ This app was stopped by the admin" : m;
+        return "⛔ " + (m.isEmpty() ? "Stopped by the admin" : m);
     }
 
-    /** The fast poll (every ~30 s while the service is on): just the orders, one small call. */
-    static void poll(Context c, Runnable changed) {
+    /** The buttons turned off, as ",tick,auto," - to see whether anything changed. */
+    static String offKeys(Context c) {
+        return enforced() ? prefs(c).getString("off", ",") : ",";
+    }
+
+    /**
+     * The fast poll (every ~30 s while the service is on): just the orders, one small call.
+     * {@code after} runs after every answer (the service compares with what it shows).
+     */
+    static void poll(Context c, Runnable after) {
         String access = Auth.accessToken(c);
         if (!enforced() || access.isEmpty()) return;
         JSONObject body = new JSONObject();
@@ -140,15 +148,10 @@ final class License {
         } catch (JSONException e) {
             return;
         }
-        boolean wasStopped = prefs(c).getBoolean("stopped", false);
-        String wasOff = prefs(c).getString("off", ",");
         Auth.post(c, "/rest/v1/rpc/device_commands", body, access, (code, json) -> {
             if (code == 200 && json != null) {
                 saveOrders(c, json);
-                if (changed != null && (wasStopped != prefs(c).getBoolean("stopped", false)
-                        || !wasOff.equals(prefs(c).getString("off", ",")))) {
-                    changed.run();
-                }
+                if (after != null) after.run();
             }
         });
     }
