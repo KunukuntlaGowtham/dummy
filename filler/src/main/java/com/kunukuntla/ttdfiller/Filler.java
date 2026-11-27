@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -12,15 +13,21 @@ import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Consumer;
-import java.util.function.Supplier;
+import java.util.Set;
 
 /**
- * One fill of the page in front from one booking. Pilgrim by pilgrim: Name and Age typed in,
- * Gender and Photo ID Proof opened and the option clicked, then the Photo Id Number typed once
- * the page unlocks it. Boxes already holding the right value are left alone (so a second press
- * only fixes what is wrong). At the end every box is read back; whatever didn't take is done
- * once more (typed by paste this time), and what still isn't right is reported.
+ * One fill of the page in front from one booking, as fast as the page takes it:
+ * <ol>
+ * <li>every pilgrim's Name and Age typed in at once;</li>
+ * <li>each pilgrim's Gender and Photo ID Proof chosen in their lists;</li>
+ * <li>the Photo Id Numbers typed (unlocked by then).</li>
+ * </ol>
+ * A list is opened by an accessibility click - never by scrolling the page first: on the TTD
+ * page every box reports as out of view, and a scroll closes an open list. When that doesn't
+ * open it, a real tap on the box; then a click on its arrow. The option is clicked the same
+ * way, and a real tap when the box didn't take it. Each box is kept and refreshed, not
+ * looked up in the whole page again. Boxes already right are left alone; at the end
+ * everything is read back, what didn't take is done once more, and the rest is reported.
  */
 final class Filler {
 
@@ -30,6 +37,8 @@ final class Filler {
         void finished(boolean ok, String report);
     }
 
+    private static final long POLL = 40;
+
     private static final class Step {
         final String title;
         final int pilgrim, slot;
@@ -37,14 +46,19 @@ final class Filler {
         final String want;
         final String[] options;
         final boolean list;
-        boolean retry, impossible;
-        String problem;
-        // the list's state while this step runs
-        boolean opened, shown;
+        AccessibilityNodeInfo box;
+        String problem, detail;
+        /** Can't be done on this page (not in the list, the list won't open): not tried again. */
+        boolean hopeless;
+        boolean retry;
+        // the list while this step works it
+        Set<String> before;
         long openedAt;
-        int opens;
-        /** What the screen showed before the list was opened (its new lines are the options). */
-        java.util.Set<String> before;
+        int polls;
+        AccessibilityNodeInfo item;
+        String itemText;
+        boolean reopened;
+        int pressFrom;
 
         Step(String title, int pilgrim, int slot, String contact, String want, String[] options, boolean list) {
             this.title = title;
@@ -65,6 +79,7 @@ final class Filler {
 
     private boolean running;
     private int gen;
+    private Form form;
     private final List<Step> plan = new ArrayList<>();
     private final List<String> notes = new ArrayList<>();
     private List<Step> list = new ArrayList<>();
@@ -88,13 +103,13 @@ final class Filler {
         running = true;
         gen++;
         started = SystemClock.uptimeMillis();
-        Form f = Form.read(s);
-        if (f.pilgrims.isEmpty()) {
+        form = Form.read(s);
+        if (form.pilgrims.isEmpty()) {
             end(false, "✗ No pilgrim boxes on this screen.\nOpen the Pilgrim Details page, then press 📝 Fill.");
             return;
         }
         List<Booking.Person> ps = booking.people();
-        boxes = f.pilgrims.size();
+        boxes = form.pilgrims.size();
         people = ps.size();
         if (people == 0) {
             end(false, "✗ " + booking.code() + " has nobody in it (no names in ttd_db).");
@@ -107,34 +122,42 @@ final class Filler {
         } else if (people > boxes) {
             notes.add("Booking has " + people + " people, page has " + boxes + " boxes: filled the first " + boxes);
         }
+        List<Step> typed = new ArrayList<>(), lists = new ArrayList<>(), ids = new ArrayList<>();
         for (int i = 0; i < filledPeople; i++) {
             Booking.Person p = ps.get(i);
             String who = "Pilgrim " + (i + 1) + " ";
-            plan.add(new Step(who + "Name", i, Form.NAME, null, Match.name(p.name), null, false));
+            typed.add(new Step(who + "Name", i, Form.NAME, null, Match.name(p.name), null, false));
             String age = Match.age(p.age);
-            if (!age.isEmpty()) plan.add(new Step(who + "Age", i, Form.AGE, null, age, null, false));
+            if (!age.isEmpty()) typed.add(new Step(who + "Age", i, Form.AGE, null, age, null, false));
             else notes.add(who + "has no age in ttd_db");
             if (!p.gender.isEmpty()) {
-                plan.add(new Step(who + "Gender", i, Form.GENDER, null, p.gender, Match.genders(p.gender), true));
+                lists.add(new Step(who + "Gender", i, Form.GENDER, null, p.gender, Match.genders(p.gender), true));
             } else {
                 notes.add(who + "has no gender in ttd_db");
             }
             String proof = Match.proofName(p.idType);
-            plan.add(new Step(who + "ID proof", i, Form.PROOF, null, proof, Match.proofs(proof), true));
+            lists.add(new Step(who + "ID proof", i, Form.PROOF, null, proof, Match.proofs(proof), true));
             String id = Match.idNumber(p.idNumber);
-            if (!id.isEmpty()) plan.add(new Step(who + "ID number", i, Form.IDNUM, null, id, null, false));
+            if (!id.isEmpty()) ids.add(new Step(who + "ID number", i, Form.IDNUM, null, id, null, false));
             else notes.add(who + "has no ID number in ttd_db");
         }
+        plan.addAll(typed);
+        plan.addAll(lists);
+        plan.addAll(ids);
+        // Every box taken from this one read of the page (each is only refreshed from now on).
+        for (Step st : plan) st.box = Form.box(form, st.pilgrim, st.slot);
         for (String key : Booking.CONTACTS) {
-            AccessibilityNodeInfo n = f.contact.get(key);
+            AccessibilityNodeInfo n = form.contact.get(key);
             String v = Match.contact(key, booking.s(key));
             if (n == null || v.isEmpty()) continue;
-            boolean list = n.isEnabled() && !Form.typable(n);
+            boolean isList = n.isEnabled() && !Form.typable(n);
             String title = Character.toUpperCase(key.charAt(0)) + key.substring(1);
-            plan.add(new Step(title, -1, -1, key, v, list ? new String[]{v} : null, list));
+            Step c = new Step(title, -1, -1, key, v, isList ? new String[]{v} : null, isList);
+            c.box = n;
+            plan.add(c);
         }
         out.progress("Filling " + filledPeople + " pilgrim" + (filledPeople == 1 ? "" : "s") + "…");
-        run(new ArrayList<>(plan), () -> later(() -> verify(0), 250));
+        run(new ArrayList<>(plan), () -> later(() -> verify(0), 120));
     }
 
     void cancel() {
@@ -158,37 +181,52 @@ final class Filler {
             return;
         }
         Step st = list.get(at);
-        out.progress(st.title + "…");
-        st.opened = false;
-        st.shown = false;
-        st.opens = 0;
-        st.before = null;
-        if (st.list) choose(st, 0);
-        else type(st, 0);
+        st.item = null;
+        st.reopened = false;
+        st.pressFrom = 0;
+        if (st.list) {
+            out.progress(st.title + "…");
+            choose(st, 0);
+        } else {
+            type(st, 0);
+        }
     }
 
     private void next() {
         at++;
-        later(this::step, 15);
+        h.post(() -> {
+            if (running) step();
+        });
     }
 
-    private AccessibilityNodeInfo node(Form f, Step st) {
-        if (st.contact != null) return f.contact.get(st.contact);
-        return Form.box(f, st.pilgrim, st.slot);
+    /** The step's box: the one kept (refreshed), else looked up again in the page. */
+    private AccessibilityNodeInfo box(Step st) {
+        if (st.box != null) {
+            try {
+                if (st.box.refresh()) return st.box;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        form = Form.read(s);
+        st.box = st.contact != null ? form.contact.get(st.contact) : Form.box(form, st.pilgrim, st.slot);
+        return st.box;
     }
 
-    private AccessibilityNodeInfo node(Step st) {
-        return node(Form.read(s), st);
+    /** The pilgrim boxes all went (another page came): stopped at once rather than box by box. */
+    private boolean pageGone(int tries) {
+        if (tries < 3 || !Form.read(s).pilgrims.isEmpty()) return false;
+        end(false, "✗ The pilgrim page went away - stopped. Open it again and press 📝 Fill.");
+        return true;
     }
 
     // ---- a box typed into ----
 
     private void type(Step st, int tries) {
-        AccessibilityNodeInfo n = node(st);
+        AccessibilityNodeInfo n = box(st);
         if (n == null) {
             if (pageGone(tries)) return;
-            if (tries < 15) {
-                later(() -> type(st, tries + 1), 100);
+            if (tries < 8) {
+                later(() -> type(st, tries + 1), 80);
                 return;
             }
             st.problem = "box not found";
@@ -196,9 +234,14 @@ final class Filler {
             return;
         }
         if (!n.isEnabled()) {
-            // The ID number unlocks once a proof is chosen: up to 3 s.
-            if (tries < 40) {
-                later(() -> type(st, tries + 1), 80);
+            if (st.slot == Form.IDNUM && proofFailed(st)) {
+                st.problem = "locked - its ID proof isn't chosen";
+                st.hopeless = true;
+                next();
+                return;
+            }
+            if (tries < 30) { // the ID number unlocks once its proof is chosen: up to ~1.5 s
+                later(() -> type(st, tries + 1), 50);
                 return;
             }
             st.problem = "the box stayed locked";
@@ -211,15 +254,15 @@ final class Filler {
             return;
         }
         boolean done = st.retry ? paste(n, st.want) || setText(n, st.want) : setText(n, st.want) || paste(n, st.want);
-        if (!done) st.problem = "the page didn't take the text";
+        st.problem = done ? null : "the page didn't take the text";
         next();
     }
 
-    /** The pilgrim boxes all went (another page came): stopped at once rather than box by box. */
-    private boolean pageGone(int tries) {
-        if (tries < 4 || !Form.read(s).pilgrims.isEmpty()) return false;
-        end(false, "✗ The pilgrim page went away - stopped. Open it again and press 📝 Fill.");
-        return true;
+    private boolean proofFailed(Step idStep) {
+        for (Step p : plan) {
+            if (p.pilgrim == idStep.pilgrim && p.slot == Form.PROOF) return p.problem != null;
+        }
+        return false;
     }
 
     private static boolean setText(AccessibilityNodeInfo n, String v) {
@@ -248,11 +291,11 @@ final class Filler {
     // ---- a box chosen in its list ----
 
     private void choose(Step st, int tries) {
-        AccessibilityNodeInfo f = node(st);
+        AccessibilityNodeInfo f = box(st);
         if (f == null) {
             if (pageGone(tries)) return;
-            if (tries < 15) {
-                later(() -> choose(st, tries + 1), 100);
+            if (tries < 8) {
+                later(() -> choose(st, tries + 1), 80);
                 return;
             }
             st.problem = "box not found";
@@ -261,83 +304,201 @@ final class Filler {
         }
         if (Match.fits(Form.shown(f), st.options)) {
             st.problem = null;
-            if (st.opened) waitFor(() -> Form.options(s, null).isEmpty(), 700, gone -> next());
-            else next();
-            return;
-        }
-        List<AccessibilityNodeInfo> items = Form.options(s, f);
-        if (st.opened && !items.isEmpty()) {
-            List<String> texts = Form.labels(items);
-            int pick = Match.best(texts, st.options);
-            if (pick < 0) {
-                st.problem = "\"" + st.want + "\" isn't in its list (" + String.join(" | ", texts) + ")";
-                st.impossible = true;
-                Nodes.click(s, f); // the list closed again
-                later(this::next, 250);
-                return;
-            }
-            Nodes.clickOption(s, items.get(pick));
-            chosen(st, texts.get(pick));
-            return;
-        }
-        long now = SystemClock.uptimeMillis();
-        if (st.opened && items.isEmpty() && st.before != null && now - st.openedAt > 350) {
-            // A list whose lines the page doesn't mark as options: the matching words that came with it.
-            List<AccessibilityNodeInfo> loose = Form.newWords(s, st.before, st.options);
-            if (!loose.isEmpty()) {
-                List<String> texts = Form.labels(loose);
-                int pick = Match.best(texts, st.options);
-                if (pick >= 0) {
-                    Nodes.click(s, loose.get(pick));
-                    chosen(st, texts.get(pick));
-                    return;
-                }
-            }
-        }
-        if (tries >= 35) {
-            st.problem = "its list didn't open";
             next();
             return;
         }
-        if (!st.opened || items.isEmpty() && now - st.openedAt > 800 && st.opens < 3) {
-            if (!st.shown && !f.isVisibleToUser()) {
-                // Out of view: brought on screen first (the list opens where the box is).
-                st.shown = true;
-                f.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
-                later(() -> choose(st, tries + 1), 220);
-                return;
-            }
-            // One click opens it (a second would close it): a real tap only if that didn't open it.
-            if (st.opens == 0) st.before = Form.signatures(s);
-            if (st.opens == 0 || !Nodes.tapOn(s, f)) Nodes.click(s, f);
-            st.opened = true;
-            st.openedAt = now;
-            st.opens++;
-        }
-        later(() -> choose(st, tries + 1), 70);
+        st.before = Form.wordsNear(f);
+        open(st, 0);
     }
 
-    /** An option was clicked: until the box shows it (1.5 s), then until the list has closed. */
-    private void chosen(Step st, String text) {
-        String[] chosen = {text};
-        waitFor(() -> {
-            AccessibilityNodeInfo g = node(st);
-            return g != null && Match.fits(Form.shown(g), chosen);
-        }, 1500, ok -> {
-            st.problem = ok ? null : "chose \"" + text + "\" but the box didn't take it";
-            waitFor(() -> Form.options(s, null).isEmpty(), 700, gone -> next());
-        });
+    /** Way 0: an accessibility click on the box; 1: a real tap on it; 2: focus, then a click on its arrow. */
+    private void open(Step st, int way) {
+        AccessibilityNodeInfo f = box(st);
+        if (f == null) {
+            st.problem = "box not found";
+            next();
+            return;
+        }
+        if (way >= 3) {
+            st.problem = "its list didn't open";
+            st.detail = Form.around(f);
+            st.hopeless = true;
+            next();
+            return;
+        }
+        if (way > 0) out.progress(st.title + " (way " + (way + 1) + ")…");
+        st.openedAt = SystemClock.uptimeMillis();
+        st.polls = 0;
+        if (way == 0) {
+            if (!f.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                open(st, 1);
+                return;
+            }
+            watch(st, way, st.openedAt + 450);
+        } else if (way == 1) {
+            tapReal(f, () -> {
+                st.openedAt = SystemClock.uptimeMillis();
+                watch(st, 1, st.openedAt + 600);
+            });
+        } else {
+            f.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+            AccessibilityNodeInfo o = Form.opener(f);
+            if (o != null) Nodes.click(s, o);
+            watch(st, way, st.openedAt + 600);
+        }
+    }
+
+    /** Looks every 40 ms for the list's lines next to the box (now and then on the whole page). */
+    private void watch(Step st, int way, long until) {
+        AccessibilityNodeInfo f = box(st);
+        if (f == null) {
+            st.problem = "box not found";
+            next();
+            return;
+        }
+        if (Match.fits(Form.shown(f), st.options)) {
+            st.problem = null;
+            next();
+            return;
+        }
+        st.polls++;
+        List<AccessibilityNodeInfo> items = Form.options(s, f, st.polls % 5 == 4);
+        if (!items.isEmpty()) {
+            pick(st, items);
+            return;
+        }
+        // Lines the page doesn't mark as options: the words that came next to the box.
+        List<AccessibilityNodeInfo> fresh = Form.newWordsNear(f, st.before);
+        if (!fresh.isEmpty()) {
+            List<AccessibilityNodeInfo> fit = new ArrayList<>();
+            for (AccessibilityNodeInfo n : fresh) if (Match.fits(Nodes.label(n), st.options)) fit.add(n);
+            if (!fit.isEmpty()) {
+                pick(st, fit);
+                return;
+            }
+            // A list has two lines or more (one new line alone may be an error message under the box).
+            if (fresh.size() >= 2 && SystemClock.uptimeMillis() - st.openedAt > 250) {
+                notInList(st, f, Form.labels(fresh));
+                return;
+            }
+        }
+        long now = SystemClock.uptimeMillis();
+        if (now < until) {
+            later(() -> watch(st, way, until), POLL);
+            return;
+        }
+        open(st, way + 1);
+    }
+
+    private void notInList(Step st, AccessibilityNodeInfo f, List<String> texts) {
+        st.problem = "\"" + st.want + "\" isn't in its list (" + String.join(" | ", texts) + ")";
+        st.hopeless = true;
+        f.performAction(AccessibilityNodeInfo.ACTION_CLICK); // its list closed again
+        later(this::next, 150);
+    }
+
+    private void pick(Step st, List<AccessibilityNodeInfo> items) {
+        List<String> texts = Form.labels(items);
+        int i = Match.best(texts, st.options);
+        if (i < 0) {
+            AccessibilityNodeInfo f = box(st);
+            if (f != null) notInList(st, f, texts);
+            else next();
+            return;
+        }
+        st.item = items.get(i);
+        st.itemText = texts.get(i);
+        press(st, st.pressFrom);
+    }
+
+    /** Way 0: an accessibility click on the line; 1: a real tap on it; 2: focus, select, click. */
+    private void press(Step st, int way) {
+        if (way >= 3) {
+            st.problem = "chose \"" + st.itemText + "\" but the box didn't take it";
+            st.detail = st.box == null ? null : Form.around(st.box);
+            next();
+            return;
+        }
+        AccessibilityNodeInfo item = st.item;
+        if (way == 0) {
+            if (!item.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                press(st, 1);
+                return;
+            }
+            confirm(st, way, SystemClock.uptimeMillis() + 400);
+        } else if (way == 1) {
+            tapReal(item, () -> confirm(st, 1, SystemClock.uptimeMillis() + 450));
+        } else {
+            // Focused and selected first (some lists take the choice that way), then clicked.
+            item.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
+            item.performAction(AccessibilityNodeInfo.ACTION_SELECT);
+            Nodes.click(s, item);
+            confirm(st, 2, SystemClock.uptimeMillis() + 450);
+        }
+    }
+
+    /** Until the box shows the choice; if it doesn't, the next way on the same line (opened again when it closed). */
+    private void confirm(Step st, int way, long until) {
+        AccessibilityNodeInfo f = box(st);
+        String[] chosen = {st.itemText};
+        if (f != null && (Match.fits(Form.shown(f), chosen) || Match.fits(Form.shown(f), st.options))) {
+            st.problem = null;
+            next();
+            return;
+        }
+        if (SystemClock.uptimeMillis() < until) {
+            later(() -> confirm(st, way, until), POLL);
+            return;
+        }
+        boolean stillOpen;
+        try {
+            stillOpen = st.item.refresh();
+        } catch (RuntimeException e) {
+            stillOpen = false;
+        }
+        if (stillOpen) {
+            press(st, way + 1);
+        } else if (!st.reopened && f != null && way < 2) {
+            // The list closed without the choice: opened again, and the next way on its line.
+            st.reopened = true;
+            st.pressFrom = way + 1;
+            st.before = Form.wordsNear(f);
+            open(st, 0);
+        } else {
+            press(st, 3);
+        }
+    }
+
+    /** A real tap on it where it really is (brought into view first when it isn't). */
+    private void tapReal(AccessibilityNodeInfo n, Runnable then) {
+        Rect r = Nodes.realRect(n);
+        if (Nodes.onScreen(s, r)) {
+            Nodes.tapAt(s, r.centerX(), r.centerY());
+            later(then, 60);
+            return;
+        }
+        n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
+        later(() -> {
+            try {
+                n.refresh();
+            } catch (RuntimeException ignored) {
+            }
+            Rect r2 = Nodes.realRect(n);
+            if (Nodes.onScreen(s, r2)) Nodes.tapAt(s, r2.centerX(), r2.centerY());
+            later(then, 60);
+        }, 350);
     }
 
     // ---- read back, once more, report ----
 
     private void verify(int round) {
         if (!running) return;
-        Form f = Form.read(s);
+        form = Form.read(s);
         List<Step> bad = new ArrayList<>();
         for (Step st : plan) {
-            if (st.impossible) continue;
-            AccessibilityNodeInfo n = node(f, st);
+            if (st.hopeless) continue;
+            st.box = st.contact != null ? form.contact.get(st.contact) : Form.box(form, st.pilgrim, st.slot);
+            AccessibilityNodeInfo n = st.box;
             String v = st.list ? Form.shown(n) : Form.value(n);
             boolean good = n != null && (st.list ? Match.fits(v, st.options) : Match.same(v, st.want));
             if (good) {
@@ -350,15 +511,18 @@ final class Filler {
         if (!bad.isEmpty() && round == 0) {
             for (Step st : bad) st.retry = true;
             out.progress("Once more: " + bad.size() + " box" + (bad.size() == 1 ? "" : "es") + "…");
-            run(bad, () -> later(() -> verify(1), 300));
+            run(bad, () -> later(() -> verify(1), 150));
             return;
         }
-        finish(f);
+        finish();
     }
 
-    private void finish(Form f) {
+    private void finish() {
         List<String> problems = new ArrayList<>();
-        for (Step st : plan) if (st.problem != null) problems.add(st.title + ": " + st.problem);
+        for (Step st : plan) {
+            if (st.problem == null) continue;
+            problems.add(st.title + ": " + st.problem + (st.detail == null ? "" : "\n    [next to it: " + st.detail + "]"));
+        }
         double secs = (SystemClock.uptimeMillis() - started) / 1000.0;
         boolean ok = problems.isEmpty();
         StringBuilder r = new StringBuilder();
@@ -368,10 +532,11 @@ final class Filler {
         for (String p : problems) r.append("\n✗ ").append(p);
         for (String n : notes) r.append("\n• ").append(n);
         if (pressContinue) {
+            AccessibilityNodeInfo c = form.continueButton;
             if (!ok || people < boxes) {
                 r.append("\n➡ Continue not pressed (fix the boxes above first)");
-            } else if (f.continueButton != null && f.continueButton.isEnabled()) {
-                Nodes.click(s, f.continueButton);
+            } else if (c != null && c.isEnabled()) {
+                if (!c.performAction(AccessibilityNodeInfo.ACTION_CLICK)) Nodes.click(s, c);
                 r.append("\n➡ Pressed Continue");
             } else {
                 r.append("\n➡ Continue not found or not on yet");
@@ -384,22 +549,6 @@ final class Filler {
         running = false;
         gen++;
         out.finished(ok, report);
-    }
-
-    // ---- timing ----
-
-    private void waitFor(Supplier<Boolean> test, long ms, Consumer<Boolean> then) {
-        boolean ok;
-        try {
-            ok = test.get();
-        } catch (RuntimeException e) {
-            ok = false;
-        }
-        if (ok || ms <= 0) {
-            then.accept(ok);
-            return;
-        }
-        later(() -> waitFor(test, ms - 60, then), 60);
     }
 
     private void later(Runnable r, long ms) {

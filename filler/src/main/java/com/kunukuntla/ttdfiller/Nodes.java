@@ -134,6 +134,43 @@ final class Nodes {
         return null;
     }
 
+    /**
+     * Where it really is on screen. Chrome cuts each element's box to the part it thinks is in
+     * view and keeps the whole box in extras; on the TTD pilgrim page it thinks nothing is in view
+     * (every box comes as 0 high), so the whole box is the one to go by there.
+     */
+    static Rect realRect(AccessibilityNodeInfo n) {
+        Rect r = bounds(n);
+        if (r.width() > 4 && r.height() > 4) return r;
+        try {
+            android.os.Bundle e = n.getExtras();
+            String k = "AccessibilityNodeInfo.unclipped";
+            if (e != null && e.containsKey(k + "Top")) {
+                int top = e.getInt(k + "Top", r.top), left = e.getInt(k + "Left", r.left);
+                int bottom = e.containsKey(k + "Bottom") ? e.getInt(k + "Bottom") : top + e.getInt(k + "Height", 0);
+                int right = e.containsKey(k + "Right") ? e.getInt(k + "Right") : left + e.getInt(k + "Width", 0);
+                if (right - left > 4 && bottom - top > 4) return new Rect(left, top, right, bottom);
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return null;
+    }
+
+    /** Its real place is on the screen, clear of the status bar and the bottom edge. */
+    static boolean onScreen(AccessibilityService s, Rect r) {
+        if (r == null) return false;
+        android.util.DisplayMetrics dm = s.getResources().getDisplayMetrics();
+        int y = r.centerY(), x = r.centerX();
+        return y > Math.round(40 * dm.density) && y < dm.heightPixels - Math.round(30 * dm.density) && x > 0 && x < dm.widthPixels;
+    }
+
+    static boolean tapAt(AccessibilityService s, int x, int y) {
+        Path p = new Path();
+        p.moveTo(Math.max(0, x), Math.max(0, y));
+        return s.dispatchGesture(new GestureDescription.Builder()
+                .addStroke(new GestureDescription.StrokeDescription(p, 0, 50)).build(), null, null);
+    }
+
     /** Clicked through accessibility (itself, or its nearest clickable parent); a tap on it when that is refused. */
     static void click(AccessibilityService s, AccessibilityNodeInfo n) {
         AccessibilityNodeInfo c = n;

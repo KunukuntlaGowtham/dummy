@@ -163,10 +163,6 @@ final class Form {
     /** What the box holds now ("" when empty - a hint the page shows in it is not a value). */
     static String value(AccessibilityNodeInfo n) {
         if (n == null) return "";
-        try {
-            if (n.isShowingHintText()) return "";
-        } catch (RuntimeException ignored) {
-        }
         CharSequence t = n.getText();
         String v = t == null ? "" : t.toString().trim();
         CharSequence h = n.getHintText();
@@ -180,14 +176,18 @@ final class Form {
      * ("Gender") is not a choice.
      */
     static String shown(AccessibilityNodeInfo field) {
+        if (field == null) return "";
         String v = value(field);
-        if (!v.isEmpty() || field == null) return v;
+        String name = Match.squash(labelOf(field));
+        if (!v.isEmpty() && !Match.squash(v).equals(name)) return v;
         AccessibilityNodeInfo box = field.getParent();
         if (box == null || fieldsIn(box, 0) > 1) return "";
-        String name = Match.squash(labelOf(field));
         for (int i = 0; i < box.getChildCount(); i++) {
             AccessibilityNodeInfo c = box.getChild(i);
-            if (c == null || c.equals(field) || Nodes.role(c).contains("labeltext")) continue;
+            if (c == null || c.equals(field)) continue;
+            // Only a line of words (the TTD page keeps one under each box), never the list or the label.
+            boolean words = Nodes.role(c).equals("statictext") || Nodes.cls(c).endsWith("TextView") && Nodes.role(c).isEmpty();
+            if (!words || c.isClickable()) continue;
             String t = clean(Nodes.label(c));
             if (Match.useful(t) && !Match.squash(t).equals(name)) return t;
         }
@@ -203,45 +203,100 @@ final class Form {
         return false;
     }
 
-    // ---- an open list ----
+    // ---- an open list: looked for next to its box (the TTD list opens inside the box's own container) ----
 
-    /** The lines of the list that is open now (below {@code field} when the page shows where). */
-    static List<AccessibilityNodeInfo> options(AccessibilityService s, AccessibilityNodeInfo field) {
-        List<AccessibilityNodeInfo> all = new ArrayList<>(), below = new ArrayList<>();
-        Rect fr = field == null ? null : Nodes.bounds(field);
-        boolean placed = fr != null && fr.height() > 4;
-        for (AccessibilityNodeInfo n : Nodes.all(s)) {
-            if (!Nodes.isOption(n) || Nodes.label(n).isEmpty()) continue;
-            all.add(n);
-            if (placed && Nodes.bounds(n).top >= fr.bottom - 8) below.add(n);
+    /** The box's own container, read fresh (its list is added there when it opens). */
+    static AccessibilityNodeInfo container(AccessibilityNodeInfo field) {
+        AccessibilityNodeInfo b = field.getParent();
+        if (b == null) return null;
+        try {
+            b.refresh();
+        } catch (RuntimeException ignored) {
         }
-        return below.isEmpty() ? all : below;
+        return b;
     }
 
-    /** Every bit of words on screen now, to tell later which came new. */
-    static java.util.Set<String> signatures(AccessibilityService s) {
+    /** Everything inside the box's container (the box itself left out). */
+    static List<AccessibilityNodeInfo> near(AccessibilityNodeInfo field) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        AccessibilityNodeInfo b = container(field);
+        if (b == null) return out;
+        List<AccessibilityNodeInfo> stack = new ArrayList<>();
+        for (int i = b.getChildCount() - 1; i >= 0; i--) stack.add(b.getChild(i));
+        while (!stack.isEmpty() && out.size() < 300) {
+            AccessibilityNodeInfo n = stack.remove(stack.size() - 1);
+            if (n == null || n.equals(field)) continue;
+            out.add(n);
+            for (int i = n.getChildCount() - 1; i >= 0; i--) stack.add(n.getChild(i));
+        }
+        return out;
+    }
+
+    /** The lines of the box's open list: next to it; with {@code wide}, anywhere on the page too. */
+    static List<AccessibilityNodeInfo> options(AccessibilityService s, AccessibilityNodeInfo field, boolean wide) {
+        List<AccessibilityNodeInfo> out = new ArrayList<>();
+        for (AccessibilityNodeInfo n : near(field)) if (Nodes.isOption(n) && !Nodes.label(n).isEmpty()) out.add(n);
+        if (!out.isEmpty() || !wide) return out;
+        for (AccessibilityNodeInfo n : Nodes.all(s)) if (Nodes.isOption(n) && !Nodes.label(n).isEmpty()) out.add(n);
+        return out;
+    }
+
+    /** The words next to the box now, to tell later which came with its list. */
+    static java.util.Set<String> wordsNear(AccessibilityNodeInfo field) {
         java.util.Set<String> out = new java.util.HashSet<>();
-        for (AccessibilityNodeInfo n : Nodes.all(s)) {
+        for (AccessibilityNodeInfo n : near(field)) {
             String l = Nodes.label(n);
             if (!l.isEmpty()) out.add(signature(n, l));
         }
         return out;
     }
 
+    // Not where it is: the page reports places wrong on this screen.
     private static String signature(AccessibilityNodeInfo n, String label) {
-        return label + "|" + Nodes.bounds(n).toShortString() + "|" + Nodes.cls(n);
+        return label + "|" + Nodes.cls(n) + "|" + Nodes.role(n);
     }
 
-    /** Words on screen now, not there in {@code before}, that fit one of {@code wants} (not boxes). */
-    static List<AccessibilityNodeInfo> newWords(AccessibilityService s, java.util.Set<String> before, String[] wants) {
+    /** Words next to the box that were not there in {@code before} (what its list brought), not boxes. */
+    static List<AccessibilityNodeInfo> newWordsNear(AccessibilityNodeInfo field, java.util.Set<String> before) {
         List<AccessibilityNodeInfo> out = new ArrayList<>();
-        for (AccessibilityNodeInfo n : Nodes.all(s)) {
-            if (Nodes.isField(n) || !n.isVisibleToUser()) continue;
+        for (AccessibilityNodeInfo n : near(field)) {
+            if (Nodes.isField(n)) continue;
             String l = Nodes.label(n);
-            if (l.isEmpty() || before.contains(signature(n, l)) || !Match.fits(l, wants)) continue;
+            if (l.isEmpty() || l.equals("*") || before.contains(signature(n, l))) continue;
             out.add(n);
         }
         return out;
+    }
+
+    /** Something else to press that may open the list: a clickable part of its container, else its arrow. */
+    static AccessibilityNodeInfo opener(AccessibilityNodeInfo field) {
+        AccessibilityNodeInfo icon = null;
+        for (AccessibilityNodeInfo n : near(field)) {
+            if (Nodes.isField(n)) continue;
+            if (n.isClickable()) return n;
+            if (icon == null && Match.squash(Nodes.label(n)).contains("dropdown")) icon = n;
+        }
+        if (icon != null) return icon;
+        return field.getParent();
+    }
+
+    /** What is next to the box, short (for the report when its list can't be worked). */
+    static String around(AccessibilityNodeInfo field) {
+        StringBuilder b = new StringBuilder();
+        int n = 0;
+        for (AccessibilityNodeInfo x : near(field)) {
+            String l = Nodes.label(x), r = Nodes.role(x);
+            if (l.isEmpty() && !x.isClickable() && !Nodes.isOption(x)) continue;
+            if (++n > 14) {
+                b.append(" …");
+                break;
+            }
+            String c = Nodes.cls(x);
+            b.append(n > 1 ? "; " : "").append(r.isEmpty() ? c.substring(c.lastIndexOf('.') + 1) : r);
+            if (!l.isEmpty()) b.append(" \"").append(l.length() > 24 ? l.substring(0, 24) + "…" : l).append('"');
+            if (x.isClickable()) b.append(" clk");
+        }
+        return n == 0 ? "nothing next to it" : b.toString();
     }
 
     static List<String> labels(List<AccessibilityNodeInfo> nodes) {

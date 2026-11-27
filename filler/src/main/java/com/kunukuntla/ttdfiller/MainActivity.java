@@ -172,8 +172,21 @@ public class MainActivity extends Activity {
         String last = prefs().getString("last_report", "");
         if (!last.isEmpty()) {
             LinearLayout r = card(last.startsWith("✅") ? 0xFFE8F5E9 : 0xFFFFF3E0);
-            r.addView(bold("Last fill · " + ago(prefs().getLong("last_report_at", 0))));
-            r.addView(text(last, 0xFF212121));
+            LinearLayout rh = new LinearLayout(this);
+            rh.setGravity(Gravity.CENTER_VERTICAL);
+            rh.addView(bold("Last fill · " + ago(prefs().getLong("last_report_at", 0))),
+                    new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+            Button copy = small("📋 Copy", 0xFF5E35B1);
+            copy.setOnClickListener(v -> {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("TTD Filler report", last));
+                toast("Report copied - paste it to Claude");
+            });
+            rh.addView(copy);
+            r.addView(rh);
+            TextView body = text(last, 0xFF212121);
+            body.setTextIsSelectable(true);
+            r.addView(body);
             box.addView(r);
         }
 

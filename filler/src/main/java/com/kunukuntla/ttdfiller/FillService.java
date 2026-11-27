@@ -102,12 +102,12 @@ public class FillService extends AccessibilityService {
         super.onDestroy();
     }
 
-    // ---- what is in front, looked at most every 0.4 s ----
+    // ---- what is in front, looked at most every 0.3 s ----
 
     private void queueCheck() {
         if (checkQueued) return;
         checkQueued = true;
-        long wait = Math.max(0, 400 - (SystemClock.uptimeMillis() - lastCheck));
+        long wait = Math.max(0, 300 - (SystemClock.uptimeMillis() - lastCheck));
         h.postDelayed(this::check, wait);
     }
 
@@ -127,7 +127,7 @@ public class FillService extends AccessibilityService {
             lastBoxes = boxes;
             maybeAuto();
             // A page that went quiet after one look still gets its second look (for "by itself").
-            if (!autoDone && formLooks < 2) h.postDelayed(this::queueCheck, 450);
+            if (!autoDone && formLooks < 2) h.postDelayed(this::queueCheck, 320);
         } else {
             formLooks = 0;
             lastBoxes = 0;
