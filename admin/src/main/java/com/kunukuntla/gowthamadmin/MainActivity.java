@@ -276,6 +276,11 @@ public class MainActivity extends Activity {
         top.addView(again, weight(6, 0));
         box.addView(top);
 
+        Button registry = button("🧾 Sevak Registry", 0xFF0F0F0F);
+        registry.setTextColor(0xFFFFE500);
+        registry.setOnClickListener(v -> startActivity(new android.content.Intent(this, RegistryActivity.class)));
+        box.addView(registry);
+
         if (arr.length() == 0) box.addView(label("No phones yet. A phone shows here after it signs in once."));
         for (Map.Entry<String, List<JSONObject>> p : people.entrySet()) box.addView(personCard(p.getKey(), p.getValue()));
 
