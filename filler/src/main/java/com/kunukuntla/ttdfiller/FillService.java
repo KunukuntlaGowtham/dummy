@@ -57,6 +57,8 @@ public class FillService extends AccessibilityService {
     private boolean pillShown;
     private View picker;
     private Filler filler;
+    private GoRun go;
+    private Button goBtn;
 
     private boolean checkQueued, autoDone;
     /** The page as the last look read it (a fill started right after uses it instead of reading again). */
@@ -82,6 +84,9 @@ public class FillService extends AccessibilityService {
         instance = this;
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
         buildPill();
+        NetTime.checkIfDue();
+        LiveClock.show(this);
+        LiveClock.setShown(false);
         queueCheck();
     }
 
@@ -96,7 +101,9 @@ public class FillService extends AccessibilityService {
 
     @Override
     public void onDestroy() {
+        if (go != null) go.cancel();
         if (filler != null) filler.cancel();
+        LiveClock.hide();
         closePicker();
         if (pillShown) {
             try {
@@ -122,7 +129,7 @@ public class FillService extends AccessibilityService {
     private void check() {
         checkQueued = false;
         lastCheck = SystemClock.uptimeMillis();
-        boolean busy = filler != null && filler.running();
+        boolean busy = filler != null && filler.running() || goRunning();
         String front = Nodes.frontPackage(this);
         boolean ttd = TTD.equals(front);
         int boxes = 0;
@@ -155,7 +162,7 @@ public class FillService extends AccessibilityService {
 
     /** Fill by itself: once per visit of the page, when its boxes held still for two looks. */
     private void maybeAuto() {
-        if (autoDone || formLooks < 2 || picker != null || !prefs().getBoolean("auto", true)) return;
+        if (autoDone || formLooks < 2 || picker != null || goRunning() || !prefs().getBoolean("auto", true)) return;
         Booking b = Booking.picked(this);
         if (b == null) return;
         autoDone = true;
@@ -189,7 +196,15 @@ public class FillService extends AccessibilityService {
         filler.start(recent);
     }
 
+    private boolean goRunning() {
+        return go != null && go.running();
+    }
+
     private void fillTapped() {
+        if (goRunning()) {
+            go.cancel();
+            return;
+        }
         if (filler != null && filler.running()) {
             filler.cancel();
             return;
@@ -200,6 +215,42 @@ public class FillService extends AccessibilityService {
             return;
         }
         startFill(b);
+    }
+
+    /** ▶ Go: on the slot page - date, tickets, slot, Continue, the pilgrims, Continue, Pay Now. A tap while it runs stops it. */
+    private void goTapped() {
+        if (goRunning()) {
+            go.cancel();
+            return;
+        }
+        if (filler != null && filler.running()) filler.cancel();
+        Booking b = Booking.picked(this);
+        if (b == null) {
+            openPicker();
+            return;
+        }
+        autoDone = true;
+        go = new GoRun(this, b, new GoRun.Listener() {
+            @Override
+            public void progress(String text) {
+                say("▶ " + text, 0xFFFFE082);
+            }
+
+            @Override
+            public void finished(boolean ok, String r, String details) {
+                report = r;
+                reportOk = ok;
+                reportUntil = SystemClock.uptimeMillis() + 20_000;
+                prefs().edit().putString("last_report", r).putString("last_details", details)
+                        .putLong("last_report_at", System.currentTimeMillis()).apply();
+                goBtn.setText("▶ Go");
+                fillBtn.setText("📝 Fill");
+                showInfo();
+                h.postDelayed(FillService.this::showInfo, 20_100);
+            }
+        });
+        goBtn.setText("⏹ Stop");
+        go.start();
     }
 
     // ---- the button ----
@@ -217,10 +268,14 @@ public class FillService extends AccessibilityService {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         fillBtn = chip("📝 Fill", 0xFF7E57C2);
+        goBtn = chip("▶ Go", 0xFF2E7D32);
         Button pick = chip("👥", 0xFF5E35B1);
         LinearLayout.LayoutParams gap = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
         gap.leftMargin = dp(6);
+        LinearLayout.LayoutParams gap2 = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40));
+        gap2.leftMargin = dp(6);
         row.addView(fillBtn, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(40)));
+        row.addView(goBtn, gap2);
         row.addView(pick, gap);
         pill.addView(row);
 
@@ -241,6 +296,7 @@ public class FillService extends AccessibilityService {
         pillLp.y = prefs().getInt("btn_y", dp(260));
 
         dragger(fillBtn, this::fillTapped);
+        dragger(goBtn, this::goTapped);
         dragger(pick, this::openPicker);
         dragger(info, () -> {
             // A tap on the words: the last report in full for a while.
@@ -298,6 +354,7 @@ public class FillService extends AccessibilityService {
     }
 
     private void setPillShown(boolean show) {
+        LiveClock.setShown(show); // the clock comes and goes with the button
         if (show == pillShown || wm == null) return;
         try {
             if (show) wm.addView(pill, pillLp);
@@ -314,7 +371,7 @@ public class FillService extends AccessibilityService {
 
     /** The words under the button: the last fill's report for 15 s, else the booking picked. */
     private void showInfo() {
-        if (info == null || filler != null && filler.running()) return;
+        if (info == null || filler != null && filler.running() || goRunning()) return;
         if (!report.isEmpty() && SystemClock.uptimeMillis() < reportUntil) {
             say(shortReport(), reportOk ? 0xFFA5D6A7 : 0xFFFFAB91);
             return;

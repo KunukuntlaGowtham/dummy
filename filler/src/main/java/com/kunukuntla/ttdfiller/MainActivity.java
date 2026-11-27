@@ -166,7 +166,62 @@ public class MainActivity extends Activity {
         cont.setOnCheckedChangeListener((v, c) -> prefs().edit().putBoolean("continue", c).apply());
         s.addView(auto);
         s.addView(cont);
+        CheckBox clock = check("🕒 Show the clock (internet time, the same on every phone)", prefs().getBoolean("show_clock", true));
+        clock.setOnCheckedChangeListener((v, c) -> prefs().edit().putBoolean("show_clock", c).apply());
+        s.addView(clock);
         box.addView(s);
+
+        // 3b) ▶ Go: the slot page to Pay Now
+        LinearLayout g = card(0xFFE8F5E9);
+        g.addView(bold("▶ Go - from the Darshan Slots page to Pay Now"));
+        g.addView(text("Open the slot page (the calendar) and press ▶ Go: your date, Number of Tickets = the people in "
+                + "the picked booking, the best slot in your hours, Continue, every pilgrim filled, Continue, Pay Now. "
+                + "No slot on any date: Refresh and try again until the time below runs out. Tap ⏹ to stop.", 0xFF424242));
+        g.addView(text("Dates, in the order to try:", 0xFF212121));
+        EditText dates = field("22/12/2026, 23/12/2026", InputType.TYPE_CLASS_TEXT);
+        dates.setText(prefs().getString("go_dates", ""));
+        TextView datesSeen = text("", 0xFF2E7D32);
+        datesSeen.setTextSize(12);
+        Runnable showDates = () -> {
+            java.util.List<int[]> ds = SlotPage.parseDates(dates.getText().toString(), System.currentTimeMillis());
+            StringBuilder b = new StringBuilder();
+            for (int[] d : ds) b.append(b.length() > 0 ? " → " : "").append(SlotPage.text(d));
+            datesSeen.setText(ds.isEmpty() ? "No date yet (day/month/year)" : "Tries " + b);
+            datesSeen.setTextColor(ds.isEmpty() ? 0xFFC62828 : 0xFF2E7D32);
+        };
+        showDates.run();
+        dates.addTextChangedListener(saver(e -> {
+            prefs().edit().putString("go_dates", e).apply();
+            showDates.run();
+        }));
+        g.addView(dates);
+        g.addView(datesSeen);
+        LinearLayout hours = new LinearLayout(this);
+        hours.setGravity(Gravity.CENTER_VERTICAL);
+        hours.addView(text("Slots from ", 0xFF212121));
+        hours.addView(numField("slot_from", 12), new LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.WRAP_CONTENT));
+        hours.addView(text(" to ", 0xFF212121));
+        hours.addView(numField("slot_to", 22), new LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.WRAP_CONTENT));
+        g.addView(hours);
+        TextView hint = text("24-hour clock: 12 = 12 PM, 22 = 10 PM (a slot starting at 10 PM counts)", 0xFF757575);
+        hint.setTextSize(12);
+        g.addView(hint);
+        CheckBox earliest = check("Earliest slot (instead of the one with the most tickets left)", prefs().getBoolean("slot_earliest", false));
+        earliest.setOnCheckedChangeListener((v, c) -> prefs().edit().putBoolean("slot_earliest", c).apply());
+        CheckBox anyTime = check("No slot in those hours: take one at another time", prefs().getBoolean("slot_any", false));
+        anyTime.setOnCheckedChangeListener((v, c) -> prefs().edit().putBoolean("slot_any", c).apply());
+        g.addView(earliest);
+        g.addView(anyTime);
+        LinearLayout retry = new LinearLayout(this);
+        retry.setGravity(Gravity.CENTER_VERTICAL);
+        retry.addView(text("Keep trying for ", 0xFF212121));
+        retry.addView(numField("go_retry_s", 120), new LinearLayout.LayoutParams(dp(72), ViewGroup.LayoutParams.WRAP_CONTENT));
+        retry.addView(text(" seconds", 0xFF212121));
+        g.addView(retry);
+        CheckBox pay = check("Press Pay Now at the end", prefs().getBoolean("pay_now", true));
+        pay.setOnCheckedChangeListener((v, c) -> prefs().edit().putBoolean("pay_now", c).apply());
+        g.addView(pay);
+        box.addView(g);
 
         // 4) the last fill
         String last = prefs().getString("last_report", "");
@@ -307,6 +362,36 @@ public class MainActivity extends Activity {
     }
 
     // ---- small things ----
+
+    /** A number box kept in the settings under {@code key}. */
+    private EditText numField(String key, int def) {
+        EditText e = field(String.valueOf(def), InputType.TYPE_CLASS_NUMBER);
+        e.setText(String.valueOf(prefs().getInt(key, def)));
+        e.addTextChangedListener(saver(t -> {
+            try {
+                prefs().edit().putInt(key, Integer.parseInt(t.trim())).apply();
+            } catch (NumberFormatException ignored) {
+            }
+        }));
+        return e;
+    }
+
+    private static TextWatcher saver(java.util.function.Consumer<String> save) {
+        return new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence c, int a, int b, int d) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence c, int a, int b, int d) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable e) {
+                save.accept(e.toString());
+            }
+        };
+    }
 
     private void confirm(String title, String msg, Runnable yes) {
         new AlertDialog.Builder(this).setTitle(title).setMessage(msg)
