@@ -5,6 +5,7 @@ import android.annotation.SuppressLint;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
@@ -278,6 +279,14 @@ public class FillService extends AccessibilityService {
                     return false;
             }
         });
+    }
+
+    /** Where the 📝 button is on screen (a tap there would hit it, not the page); null when hidden. */
+    Rect pillRect() {
+        if (!pillShown || pill == null) return null;
+        int[] at = new int[2];
+        pill.getLocationOnScreen(at);
+        return new Rect(at[0], at[1], at[0] + pill.getWidth(), at[1] + pill.getHeight());
     }
 
     private void setPillShown(boolean show) {

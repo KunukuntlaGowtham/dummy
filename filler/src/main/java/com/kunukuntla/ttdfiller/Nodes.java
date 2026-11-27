@@ -180,18 +180,6 @@ final class Nodes {
         if (c != n && n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
         tapOn(s, n);
     }
-
-    /**
-     * One line of an open list clicked: itself through accessibility (never its list - that would
-     * choose nothing), else a tap on it when it is on screen, else its clickable parent.
-     */
-    static void clickOption(AccessibilityService s, AccessibilityNodeInfo n) {
-        if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return;
-        Rect r = bounds(n);
-        if (r.width() > 4 && r.height() > 4 && tapOn(s, n)) return;
-        click(s, n);
-    }
-
     /** A real finger tap in its middle (when it is on screen). */
     static boolean tapOn(AccessibilityService s, AccessibilityNodeInfo n) {
         Rect r = visible(n);

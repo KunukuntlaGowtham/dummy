@@ -56,11 +56,13 @@ final class Filler {
         // the list while this step works it
         Set<String> before;
         long openedAt;
-        int polls;
         AccessibilityNodeInfo item;
-        String itemText;
+        String itemText, tapInfo;
+        int pressWay, wayAt, pressStart;
         boolean reopened;
-        int pressFrom;
+        int[] ways;
+        java.util.Set<AccessibilityNodeInfo> optsBefore = new java.util.HashSet<>();
+        Runnable then;
 
         Step(String title, int pilgrim, int slot, String contact, String want, String[] options, boolean list) {
             this.title = title;
@@ -242,86 +244,10 @@ final class Filler {
         Step st = lists.get(i);
         out.progress(st.title + "…");
         st.t0 = SystemClock.uptimeMillis();
-        quick(st, () -> {
+        listStep(st, () -> {
             st.ms += SystemClock.uptimeMillis() - st.t0;
             fastList(i + 1);
         });
-    }
-
-    private void quick(Step st, Runnable then) {
-        AccessibilityNodeInfo f = box(st);
-        if (f == null) {
-            st.problem = "box not found";
-            then.run();
-            return;
-        }
-        if (Match.fits(Form.chosen(f, st.name), st.options)) {
-            st.problem = null;
-            st.how = "already right";
-            then.run();
-            return;
-        }
-        st.before = Form.wordsNear(f);
-        if (!f.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-            st.problem = "its list didn't open";
-            then.run();
-            return;
-        }
-        st.openedAt = SystemClock.uptimeMillis();
-        st.polls = 0;
-        quickWatch(st, then);
-    }
-
-    private void quickWatch(Step st, Runnable then) {
-        AccessibilityNodeInfo f = st.box;
-        st.polls++;
-        List<AccessibilityNodeInfo> near = Form.near(f);
-        List<AccessibilityNodeInfo> items = Form.optionsIn(near);
-        if (items.isEmpty() && st.polls % 6 == 0) items = Form.optionsAll(s);
-        if (items.isEmpty()) items = Form.newFitting(near, st.before, st.options);
-        if (!items.isEmpty()) {
-            List<String> texts = Form.labels(items);
-            int i = Match.best(texts, st.options);
-            if (i < 0) {
-                notInList(st, f, texts);
-                later(then, 120);
-                return;
-            }
-            st.item = items.get(i);
-            st.itemText = texts.get(i);
-            st.how = "chose \"" + st.itemText + "\" after " + (SystemClock.uptimeMillis() - st.openedAt) + " ms";
-            if (!st.item.performAction(AccessibilityNodeInfo.ACTION_CLICK)) Nodes.click(s, st.item);
-            quickConfirm(st, SystemClock.uptimeMillis() + 350, then);
-            return;
-        }
-        if (SystemClock.uptimeMillis() - st.openedAt < 700) {
-            later(() -> quickWatch(st, then), POLL);
-            return;
-        }
-        st.problem = "its list didn't open";
-        then.run();
-    }
-
-    /** A short look that the box took the choice (a slow one is caught by the check). */
-    private void quickConfirm(Step st, long until, Runnable then) {
-        AccessibilityNodeInfo f = box(st);
-        if (f != null && Match.fits(Form.chosen(f, st.name), st.options)) {
-            st.problem = null;
-            then.run();
-            return;
-        }
-        if (SystemClock.uptimeMillis() < until) {
-            later(() -> quickConfirm(st, until, then), POLL);
-            return;
-        }
-        st.problem = "chose \"" + st.itemText + "\" but the box didn't take it";
-        then.run();
-    }
-
-    private void notInList(Step st, AccessibilityNodeInfo f, List<String> texts) {
-        st.problem = "\"" + st.want + "\" isn't in its list (" + String.join(" | ", texts) + ")";
-        st.hopeless = true;
-        if (f != null) f.performAction(AccessibilityNodeInfo.ACTION_CLICK); // its list closed again
     }
 
     // ---- the check, the careful pass ----
@@ -367,12 +293,15 @@ final class Filler {
         Step st = list.get(at);
         st.t0 = SystemClock.uptimeMillis();
         st.item = null;
+        st.pressWay = 0;
+        st.wayAt = 0;
+        st.pressStart = 0;
         st.reopened = false;
-        st.pressFrom = 0;
         st.problem = null;
         if (st.list) {
             out.progress(st.title + " (carefully)…");
-            choose(st, 0);
+            st.careful = true;
+            listStep(st, this::next);
         } else {
             type(st, 0);
         }
@@ -457,173 +386,220 @@ final class Filler {
         }
     }
 
-    // ---- a list, carefully ----
+    // ---- a list ----
+    //
+    // On the TTD pilgrim page an accessibility click on a list box only puts the focus in it
+    // (Chrome does that for every text box); its list opens on a real tap. So the box is tapped
+    // where it really is, and the way that opened a list is remembered for the next ones.
+    // Only list lines that came AFTER the box was opened count: a list left open by another
+    // box is never read as this box's list (that is how "Aadhaar Card isn't in its list
+    // (Female | Male | Transgender)" happened), and it is closed first - it may lie over the box.
 
-    private void choose(Step st, int tries) {
+    private static final int CLICK = 0, TAP = 1, FOCUS = 2;
+    private static final String[] WAY_NAMES = {"click", "tap", "focus + arrow"};
+
+    /** The box whose list was opened last, and how (to close it again when it was left open). */
+    private AccessibilityNodeInfo lastListBox;
+    private int lastOpenWay = TAP;
+
+    private int[] ways(boolean careful) {
+        int first = Booking.prefs(s).getInt("open_way", TAP);
+        if (first != CLICK) first = TAP;
+        int second = first == TAP ? CLICK : TAP;
+        return careful ? new int[]{first, second, FOCUS} : new int[]{first, second};
+    }
+
+    private void listStep(Step st, Runnable then) {
+        st.then = then;
         AccessibilityNodeInfo f = box(st);
         if (f == null) {
-            if (pageGone(tries)) return;
-            if (tries < 8) {
-                later(() -> choose(st, tries + 1), 80);
-                return;
-            }
             st.problem = "box not found";
-            next();
+            then.run();
             return;
         }
         if (Match.fits(Form.chosen(f, st.name), st.options)) {
-            next();
+            st.problem = null;
+            if (st.how.isEmpty()) st.how = "already right";
+            then.run();
             return;
         }
-        // Its list may still be open from the fast pass: chosen from as it is (a click would close it).
-        List<AccessibilityNodeInfo> open = Form.optionsIn(Form.near(f));
-        if (!open.isEmpty()) {
-            st.openedAt = SystemClock.uptimeMillis();
-            pick(st, open);
+        if (lastListBox != null && !lastListBox.equals(f) && !Form.optionsAll(s).isEmpty()) {
+            // A list left open by the box before: closed first.
+            toggle(lastListBox, lastOpenWay);
+            lastListBox = null;
+            later(() -> beginOpen(st), 250);
             return;
         }
-        st.before = Form.wordsNear(f);
-        open(st, 0);
+        beginOpen(st);
     }
 
-    /** Way 0: an accessibility click on the box; 1: a real tap on it; 2: focus, then a click on its arrow. */
-    private void open(Step st, int way) {
+    private void beginOpen(Step st) {
         AccessibilityNodeInfo f = box(st);
         if (f == null) {
             st.problem = "box not found";
-            next();
+            st.then.run();
             return;
         }
-        if (way >= 3) {
+        st.optsBefore = new java.util.HashSet<>(Form.optionsAll(s));
+        st.before = Form.wordsNear(f);
+        st.ways = ways(st.careful);
+        st.wayAt = 0;
+        st.tapInfo = null;
+        tryWay(st);
+    }
+
+    private void tryWay(Step st) {
+        AccessibilityNodeInfo f = box(st);
+        if (f == null) {
+            st.problem = "box not found";
+            st.then.run();
+            return;
+        }
+        if (st.wayAt >= st.ways.length) {
             st.problem = "its list didn't open";
-            st.detail = Form.around(f);
-            next();
+            st.detail = (st.tapInfo == null ? "" : st.tapInfo + "; ") + Form.around(f);
+            st.then.run();
             return;
         }
-        st.openedAt = SystemClock.uptimeMillis();
-        st.polls = 0;
-        if (way == 0) {
+        int way = st.ways[st.wayAt];
+        long wait = way == CLICK ? (st.careful ? 500 : 300) : (st.careful ? 900 : 700);
+        if (way == CLICK) {
+            st.openedAt = SystemClock.uptimeMillis();
             if (!f.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                open(st, 1);
+                st.wayAt++;
+                tryWay(st);
                 return;
             }
-            watch(st, way, st.openedAt + 700);
-        } else if (way == 1) {
-            tapReal(f, () -> {
+            watchNew(st, st.openedAt + wait);
+        } else if (way == TAP) {
+            tapNode(f, true, info -> {
+                st.tapInfo = info;
                 st.openedAt = SystemClock.uptimeMillis();
-                watch(st, 1, st.openedAt + 800);
+                watchNew(st, st.openedAt + wait);
             });
         } else {
+            st.openedAt = SystemClock.uptimeMillis();
             f.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
             AccessibilityNodeInfo o = Form.opener(f);
-            if (o != null) Nodes.click(s, o);
-            watch(st, way, st.openedAt + 800);
+            if (o != null) o.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+            watchNew(st, st.openedAt + wait);
         }
     }
 
-    private void watch(Step st, int way, long until) {
+    /** Every 30 ms: list lines that weren't on the page before this box was opened. */
+    private void watchNew(Step st, long until) {
         AccessibilityNodeInfo f = box(st);
         if (f == null) {
             st.problem = "box not found";
-            next();
+            st.then.run();
             return;
         }
-        if (Match.fits(Form.chosen(f, st.name), st.options)) {
-            next();
-            return;
-        }
-        st.polls++;
-        List<AccessibilityNodeInfo> near = Form.near(f);
-        List<AccessibilityNodeInfo> items = Form.optionsIn(near);
-        if (items.isEmpty() && st.polls % 5 == 0) items = Form.optionsAll(s);
-        if (!items.isEmpty()) {
-            pick(st, items);
-            return;
-        }
-        List<AccessibilityNodeInfo> fit = Form.newFitting(near, st.before, st.options);
-        if (!fit.isEmpty()) {
-            pick(st, fit);
-            return;
-        }
-        // Two new lines or more next to the box and none fits: its list, without the choice.
-        List<AccessibilityNodeInfo> fresh = Form.newWordsNear(f, st.before);
-        if (fresh.size() >= 2 && SystemClock.uptimeMillis() - st.openedAt > 300) {
-            notInList(st, f, Form.labels(fresh));
-            later(this::next, 120);
+        List<AccessibilityNodeInfo> fresh = new ArrayList<>();
+        for (AccessibilityNodeInfo n : Form.optionsAll(s)) if (!st.optsBefore.contains(n)) fresh.add(n);
+        if (fresh.isEmpty()) fresh = Form.newFitting(Form.near(f), st.before, st.options);
+        if (!fresh.isEmpty()) {
+            int way = st.ways[st.wayAt];
+            lastListBox = f;
+            lastOpenWay = way;
+            if (way != FOCUS) Booking.prefs(s).edit().putInt("open_way", way).apply();
+            st.how = "opened by " + WAY_NAMES[way] + " in " + (SystemClock.uptimeMillis() - st.openedAt) + " ms";
+            pickNew(st, fresh);
             return;
         }
         if (SystemClock.uptimeMillis() < until) {
-            later(() -> watch(st, way, until), POLL);
+            later(() -> watchNew(st, until), POLL);
             return;
         }
-        open(st, way + 1);
+        st.wayAt++;
+        tryWay(st);
     }
 
-    private void pick(Step st, List<AccessibilityNodeInfo> items) {
-        List<String> texts = Form.labels(items);
+    private void pickNew(Step st, List<AccessibilityNodeInfo> fresh) {
+        List<String> texts = Form.labels(fresh);
         int i = Match.best(texts, st.options);
         if (i < 0) {
-            notInList(st, box(st), texts);
-            later(this::next, 120);
+            st.problem = "\"" + st.want + "\" isn't in its list (" + String.join(" | ", texts) + ")";
+            st.hopeless = true;
+            closeOwn(st);
             return;
         }
-        st.item = items.get(i);
+        st.item = fresh.get(i);
         st.itemText = texts.get(i);
-        press(st, st.pressFrom);
+        st.pressWay = st.pressStart;
+        pressItem(st);
     }
 
-    /** Way 0: an accessibility click on the line; 1: a real tap on it (only while it is still there); 2: focus, select, click. */
-    private void press(Step st, int way) {
-        if (way >= 3) {
-            st.problem = "chose \"" + st.itemText + "\" but the box didn't take it";
-            st.detail = st.box == null ? null : Form.around(st.box);
-            next();
+    /** Way 0: an accessibility click on the line; 1: a real tap on it (only while it is there); 2: focus, select, click. */
+    private void pressItem(Step st) {
+        int way = st.pressWay;
+        AccessibilityNodeInfo item = st.item;
+        if (way > 0 && way < 3 && st.careful && !st.reopened && !stillThere(item)) {
+            // The click closed the list without the choice: opened again, and its line tapped.
+            st.reopened = true;
+            st.pressStart = 1;
+            beginOpen(st);
             return;
         }
-        AccessibilityNodeInfo item = st.item;
-        st.how = "careful way " + (way + 1) + " on \"" + st.itemText + "\"";
+        if (way >= (st.careful ? 3 : 2) || way > 0 && !stillThere(item)) {
+            st.problem = "chose \"" + st.itemText + "\" but the box didn't take it";
+            st.detail = st.tapInfo;
+            closeOwn(st);
+            return;
+        }
+        long wait = st.careful ? 700 : 400;
         if (way == 0) {
             if (!item.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                press(st, 1);
+                st.pressWay++;
+                pressItem(st);
                 return;
             }
-            confirm(st, way, SystemClock.uptimeMillis() + 900);
+            confirmItem(st, SystemClock.uptimeMillis() + wait);
         } else if (way == 1) {
-            if (!stillThere(item)) {
-                press(st, 2);
-                return;
-            }
-            tapReal(item, () -> confirm(st, 1, SystemClock.uptimeMillis() + 900));
+            tapNode(item, false, info -> confirmItem(st, SystemClock.uptimeMillis() + wait));
         } else {
             item.performAction(AccessibilityNodeInfo.ACTION_FOCUS);
             item.performAction(AccessibilityNodeInfo.ACTION_SELECT);
             Nodes.click(s, item);
-            confirm(st, 2, SystemClock.uptimeMillis() + 900);
+            confirmItem(st, SystemClock.uptimeMillis() + wait);
         }
     }
 
-    private void confirm(Step st, int way, long until) {
+    private void confirmItem(Step st, long until) {
         AccessibilityNodeInfo f = box(st);
-        if (f != null && Match.fits(Form.chosen(f, st.name), st.options)) {
+        String[] chosen = {st.itemText};
+        if (f != null && (Match.fits(Form.chosen(f, st.name), chosen) || Match.fits(Form.chosen(f, st.name), st.options))) {
             st.problem = null;
-            next();
+            st.how += ", \"" + st.itemText + "\" by " + (st.pressWay == 0 ? "click" : st.pressWay == 1 ? "tap" : "select");
+            lastListBox = null; // it closed with the choice
+            st.then.run();
             return;
         }
         if (SystemClock.uptimeMillis() < until) {
-            later(() -> confirm(st, way, until), POLL);
+            later(() -> confirmItem(st, until), POLL);
             return;
         }
-        if (stillThere(st.item)) {
-            press(st, way + 1);
-        } else if (!st.reopened && f != null && way < 2) {
-            // The list closed without the choice: opened again, and the next way on its line.
-            st.reopened = true;
-            st.pressFrom = way + 1;
-            st.before = Form.wordsNear(f);
-            open(st, 0);
-        } else {
-            press(st, 3);
+        st.pressWay++;
+        pressItem(st);
+    }
+
+    /** The box's own list, when still open, closed the way it was opened; then the step ends. */
+    private void closeOwn(Step st) {
+        AccessibilityNodeInfo f = box(st);
+        boolean open = false;
+        for (AccessibilityNodeInfo n : Form.optionsAll(s)) if (!st.optsBefore.contains(n)) open = true;
+        if (open && f != null) {
+            toggle(f, lastOpenWay);
+            lastListBox = null;
+            later(st.then, 200);
+            return;
         }
+        st.then.run();
+    }
+
+    private void toggle(AccessibilityNodeInfo box, int way) {
+        if (way == TAP) tapNode(box, false, info -> {
+        });
+        else box.performAction(AccessibilityNodeInfo.ACTION_CLICK);
     }
 
     private static boolean stillThere(AccessibilityNodeInfo n) {
@@ -634,12 +610,23 @@ final class Filler {
         }
     }
 
-    /** A real tap on it where it really is (brought into view first when it isn't). */
-    private void tapReal(AccessibilityNodeInfo n, Runnable then) {
+    /**
+     * A real tap in it where it really is, clear of the 📝 button. {@code bringUp}: when it is out
+     * of view it is scrolled into view first (a box - never a list's line: a scroll closes the list).
+     * {@code then} gets where it tapped (for the report).
+     */
+    private void tapNode(AccessibilityNodeInfo n, boolean bringUp, java.util.function.Consumer<String> then) {
+        try {
+            n.refresh();
+        } catch (RuntimeException ignored) {
+        }
         Rect r = Nodes.realRect(n);
         if (Nodes.onScreen(s, r)) {
-            Nodes.tapAt(s, r.centerX(), r.centerY());
-            later(then, 60);
+            then.accept(tapIn(r));
+            return;
+        }
+        if (!bringUp) {
+            then.accept("not on screen " + (r == null ? Nodes.bounds(n).toShortString() : r.toShortString()));
             return;
         }
         n.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.getId());
@@ -649,9 +636,17 @@ final class Filler {
             } catch (RuntimeException ignored) {
             }
             Rect r2 = Nodes.realRect(n);
-            if (Nodes.onScreen(s, r2)) Nodes.tapAt(s, r2.centerX(), r2.centerY());
-            later(then, 60);
-        }, 350);
+            if (Nodes.onScreen(s, r2)) then.accept("scrolled, " + tapIn(r2));
+            else then.accept("no place on screen " + (r2 == null ? Nodes.bounds(n).toShortString() : r2.toShortString()));
+        }, 320);
+    }
+
+    private String tapIn(Rect r) {
+        int x = r.centerX(), y = r.centerY();
+        Rect avoid = FillService.instance == null ? null : FillService.instance.pillRect();
+        if (avoid != null && avoid.contains(x, y)) x = r.right - Math.max(10, r.width() / 8);
+        Nodes.tapAt(s, x, y);
+        return "tapped " + x + "," + y + " of " + r.toShortString();
     }
 
     // ---- report ----

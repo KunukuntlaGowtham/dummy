@@ -231,16 +231,6 @@ final class Form {
         }
         return out;
     }
-
-    /** The lines of the box's open list: next to it; with {@code wide}, anywhere on the page too. */
-    static List<AccessibilityNodeInfo> options(AccessibilityService s, AccessibilityNodeInfo field, boolean wide) {
-        List<AccessibilityNodeInfo> out = new ArrayList<>();
-        for (AccessibilityNodeInfo n : near(field)) if (Nodes.isOption(n) && !Nodes.label(n).isEmpty()) out.add(n);
-        if (!out.isEmpty() || !wide) return out;
-        for (AccessibilityNodeInfo n : Nodes.all(s)) if (Nodes.isOption(n) && !Nodes.label(n).isEmpty()) out.add(n);
-        return out;
-    }
-
     /** The words next to the box now, to tell later which came with its list. */
     static java.util.Set<String> wordsNear(AccessibilityNodeInfo field) {
         java.util.Set<String> out = new java.util.HashSet<>();
@@ -255,26 +245,6 @@ final class Form {
     private static String signature(AccessibilityNodeInfo n, String label) {
         return label + "|" + Nodes.cls(n) + "|" + Nodes.role(n);
     }
-
-    /** Words next to the box that were not there in {@code before} (what its list brought), not boxes. */
-    static List<AccessibilityNodeInfo> newWordsNear(AccessibilityNodeInfo field, java.util.Set<String> before) {
-        List<AccessibilityNodeInfo> out = new ArrayList<>();
-        for (AccessibilityNodeInfo n : near(field)) {
-            if (Nodes.isField(n)) continue;
-            String l = Nodes.label(n);
-            if (l.isEmpty() || l.equals("*") || before.contains(signature(n, l))) continue;
-            out.add(n);
-        }
-        return out;
-    }
-
-    /** The list's lines among {@code near} (what {@link #near} gave: one read used for every look). */
-    static List<AccessibilityNodeInfo> optionsIn(List<AccessibilityNodeInfo> near) {
-        List<AccessibilityNodeInfo> out = new ArrayList<>();
-        for (AccessibilityNodeInfo n : near) if (Nodes.isOption(n) && !Nodes.label(n).isEmpty()) out.add(n);
-        return out;
-    }
-
     /** List lines anywhere on the page (a list the page draws away from its box). */
     static List<AccessibilityNodeInfo> optionsAll(AccessibilityService s) {
         List<AccessibilityNodeInfo> out = new ArrayList<>();
@@ -339,10 +309,4 @@ final class Form {
         return out;
     }
 
-    static String describe(Form f) {
-        StringBuilder b = new StringBuilder();
-        b.append(f.pilgrims.size()).append(" pilgrim box(es)");
-        if (!f.contact.isEmpty()) b.append(", also ").append(String.join(", ", f.contact.keySet()));
-        return b.toString().toLowerCase(Locale.ROOT);
-    }
 }
