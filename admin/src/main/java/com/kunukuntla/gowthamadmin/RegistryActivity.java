@@ -203,7 +203,6 @@ public class RegistryActivity extends Activity {
         s.setSupportMultipleWindows(true);      // print / PDF pop-ups, WhatsApp links
         s.setJavaScriptCanOpenWindowsAutomatically(true);
         s.setSupportZoom(false);
-        s.setBuiltInControls(false);
         s.setDisplayZoomControls(false);
         s.setTextZoom(Math.round(getResources().getConfiguration().fontScale * 100)); // the phone's font size
         s.setAllowFileAccess(false);
