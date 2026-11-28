@@ -104,13 +104,18 @@
   #pg-list .pag { flex-wrap: wrap; gap: 8px; padding: 10px 12px !important; }
 
   /* ── pop-ups: full-screen sheets you scroll, not floating boxes cut at the edges ── */
-  .overlay { padding: 0 !important; align-items: stretch !important; }
+  /* flex-start, not stretch: stretched, a sheet was exactly one screen tall and what didn't fit
+     hung below it with no background, so the page showed through. */
+  .overlay { padding: 0 !important; align-items: flex-start !important; }
   .overlay .modal {
     width: 100% !important; max-width: 100% !important; min-height: 100%;
     margin: 0 !important; border-radius: 0 !important; padding: 16px 14px 28px !important;
     box-sizing: border-box;
   }
   .modal-title { font-size: 26px !important; margin-bottom: 14px !important; padding-bottom: 10px !important; }
+  /* Full-screen, a pop-up is solid: the site's see-through glass let the page behind show through it. */
+  .overlay .modal { background: #f7f4ff !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+  :root[data-theme="dark"] .overlay .modal { background: #1b1730 !important; }
 
   /* The connection bar and its diagnosis. */
   #cfg-bar { flex-wrap: wrap !important; padding: 8px 10px !important; }
@@ -121,4 +126,7 @@
 
   /* The sign-in card fits any phone. */
   .auth-card { padding: 26px 18px 20px !important; }
+}
+@media (max-width: 820px) and (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .overlay .modal { background: #1b1730 !important; }
 }
